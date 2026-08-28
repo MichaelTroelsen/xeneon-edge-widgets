@@ -107,7 +107,26 @@ function get(pathname, token) {
               detail = ' — ' + parsed.error.message;
             }
           } catch (err) { /* non-JSON error body */ }
-          reject(new Error('HTTP ' + res.statusCode + detail));
+
+          /* A rate limit usually says when to come back. Guessing a backoff when
+             the server already told us is how a penalty window gets extended. */
+          const retryAfter = res.headers['retry-after'];
+          const resetAt = res.headers['anthropic-ratelimit-unified-reset'] ||
+                          res.headers['x-ratelimit-reset'];
+          if (retryAfter) detail += ' (retry-after ' + retryAfter + 's)';
+          else if (resetAt) detail += ' (resets ' + resetAt + ')';
+
+          const error = new Error('HTTP ' + res.statusCode + detail);
+          error.statusCode = res.statusCode;
+          /* Observed in practice: a 429 carrying "retry-after: 0" while still
+             refusing. Taken literally that means retry immediately, which is
+             the one thing not to do to a rate limiter. Anything under a minute
+             is treated as no guidance and the local backoff decides instead. */
+          const seconds = Number(String(retryAfter).trim());
+          if (Number.isFinite(seconds) && seconds >= 60) {
+            error.retryAfterMs = seconds * 1000;
+          }
+          reject(error);
           return;
         }
         try {
@@ -264,6 +283,7 @@ async function fetchOfficial() {
   }
 
   const failures = [];
+  let retryAfterMs = null;
   for (const source of sources) {
     let result = await trySource(source);
 
@@ -280,6 +300,7 @@ async function fetchOfficial() {
 
     if (result.ok) return result;
     failures.push(result.error);
+    if (result.retryAfterMs) retryAfterMs = result.retryAfterMs;
 
     /* A 429 is about the caller, not the credential. Trying the next token
        would add load and then report the wrong cause - the first run after
@@ -291,6 +312,7 @@ async function fetchOfficial() {
     ok: false,
     fetchedAt: Date.now(),
     error: failures.join(' | '),
+    retryAfterMs: retryAfterMs,
     lastRefresh: lastRefresh
   };
 }
@@ -341,6 +363,7 @@ async function trySource(cred) {
       tokenExpiresAt: cred.expiresAt || null,
       /* A 401 on an expired token is the ordinary case, worth saying plainly:
          Claude Code rewrites the file when it next refreshes. */
+      retryAfterMs: err.retryAfterMs || null,
       error: cred.name + ': ' + (expired
         ? 'access token expired ' + new Date(cred.expiresAt).toISOString() + ' (' + err.message + ')'
         : err.message)

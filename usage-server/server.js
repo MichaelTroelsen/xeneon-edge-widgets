@@ -50,8 +50,11 @@ let lastQuota = null; /* most recent 429 quotaLimits record seen, if any */
    cadence, and utilisation moves slowly enough that this loses nothing. */
 const OFFICIAL_INTERVAL_MS = 5 * 60 * 1000;
 const OFFICIAL_MAX_BACKOFF_MS = 30 * 60 * 1000;
-/* A rate limit deserves a bigger first step than an ordinary failure. */
+/* A rate limit deserves a bigger first step than an ordinary failure, and its
+   own ceiling: these windows are commonly hourly, and a 30-minute retry that
+   keeps landing inside the window just keeps the penalty alive. */
 const OFFICIAL_RATE_LIMIT_MS = 15 * 60 * 1000;
+const OFFICIAL_RATE_LIMIT_MAX_MS = 60 * 60 * 1000;
 /* Past this, a cached reading stops being worth showing. */
 const OFFICIAL_STALE_MS = 30 * 60 * 1000;
 
@@ -64,13 +67,19 @@ let officialTimer = null;
 /* Retrying a dead token every minute is how a 401 turns into a 429 — which is
    exactly what happened. Failures back off exponentially to half an hour;
    success returns to the normal cadence. */
-function scheduleOfficial(rateLimited) {
+function scheduleOfficial(rateLimited, retryAfterMs) {
   if (officialTimer) clearTimeout(officialTimer);
   let delay;
+  /* If the server said when to come back, believe it over any local guess. */
+  if (retryAfterMs) {
+    officialTimer = setTimeout(refreshOfficial, retryAfterMs + 5000);
+    if (officialTimer.unref) officialTimer.unref();
+    return;
+  }
   if (officialFailures === 0) {
     delay = OFFICIAL_INTERVAL_MS;
   } else if (rateLimited) {
-    delay = Math.min(OFFICIAL_RATE_LIMIT_MS * officialFailures, OFFICIAL_MAX_BACKOFF_MS);
+    delay = Math.min(OFFICIAL_RATE_LIMIT_MS * officialFailures, OFFICIAL_RATE_LIMIT_MAX_MS);
   } else {
     delay = Math.min(OFFICIAL_INTERVAL_MS * Math.pow(2, officialFailures), OFFICIAL_MAX_BACKOFF_MS);
   }
@@ -82,11 +91,13 @@ function refreshOfficial() {
   if (officialInFlight) return;
   officialInFlight = true;
   let rateLimited = false;
+  let retryAfterMs = null;
   official.fetchOfficial()
     .then(result => {
       officialState = result;
       officialFailures = result.ok ? 0 : officialFailures + 1;
       rateLimited = !result.ok && /HTTP 429/.test(result.error || '');
+      retryAfterMs = result.retryAfterMs || null;
       /* Keep the last good reading. Utilisation only climbs within a window and
          the reset times are absolute, so a few-minute-old figure is far better
          than dropping to a different metric because one poll was throttled. */
@@ -98,7 +109,7 @@ function refreshOfficial() {
     })
     .then(() => {
       officialInFlight = false;
-      scheduleOfficial(rateLimited);
+      scheduleOfficial(rateLimited, retryAfterMs);
     });
 }
 

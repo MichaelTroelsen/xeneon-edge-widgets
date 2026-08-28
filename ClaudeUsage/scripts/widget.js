@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.6.0';
+  var WIDGET_VERSION = '1.7.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -125,24 +125,28 @@
     return 'state-' + String(state || 'queued').toLowerCase().replace(/[^a-z_]/g, '');
   }
 
-  /* The heading carries the total, so you can tell at a glance whether the
-     visible rows are all of them or the top of a longer list. */
+  /* The heading carries the count of what is running, so you can tell at a
+     glance whether the visible rows are all of them or the top of a longer
+     list - and, when there are none, that the empty list is the real state
+     rather than a feed that failed. */
   function setHeading(ul, total) {
     var h = ul.parentNode && ul.parentNode.querySelector('h2');
     if (!h) return;
     if (!h.getAttribute('data-base')) h.setAttribute('data-base', h.textContent);
     var base = h.getAttribute('data-base');
-    h.textContent = total ? base + ' · ' + total : base;
+    h.textContent = base + ' · ' + (total ? total + ' active' : 'none active');
   }
 
-  function renderList(ul, items, describe) {
+  function renderList(ul, items, describe, emptyNote) {
     var scrollTop = ul.scrollTop; /* keep the reader's place across a refresh */
     ul.textContent = '';
     setHeading(ul, items ? items.length : 0);
     if (!items || !items.length) {
       var empty = document.createElement('li');
       empty.className = 'empty';
-      empty.textContent = 'Nothing recent';
+      /* "Nothing running" rather than "Nothing recent": the lists no longer
+         carry finished work, so an empty one means idle, not missing data. */
+      empty.textContent = emptyNote || 'Nothing running';
       ul.appendChild(empty);
       return;
     }
@@ -249,12 +253,17 @@
       return s.project + ' · ' + s.messages;
     };
 
+    /* A backlog is worth saying out loud: an empty subtask list with 86 tasks
+       waiting is a different situation from an empty one with none. */
+    var queued = (data.counts && data.counts.queued) || 0;
+    var noSubtasks = queued ? 'Nothing running · ' + queued + ' queued' : 'Nothing running';
+
     renderList(els.workflows, data.workflows, describeWorkflow);
-    renderList(els.subtasks, data.subtasks, describeSubtask);
+    renderList(els.subtasks, data.subtasks, describeSubtask, noSubtasks);
 
     renderList(els.dSessions, data.sessions, describeSession);
     renderList(els.dWorkflows, data.workflows, describeWorkflow);
-    renderList(els.dSubtasks, data.subtasks, describeSubtask);
+    renderList(els.dSubtasks, data.subtasks, describeSubtask, noSubtasks);
 
     showState('content');
     markScrollable();

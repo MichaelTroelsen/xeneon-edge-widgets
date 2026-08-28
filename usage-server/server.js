@@ -33,6 +33,30 @@ const MAX_SUBTASKS = 40;
 const MAX_SESSIONS = 20;
 const SESSION_ACTIVE_MS = 15 * 60 * 1000; /* a session is "live" if it spoke this recently */
 
+/* The activity lists show what is running now, not a history of what ran. A
+   finished run is not activity, and a list of six-day-old completed workflows
+   told you nothing about the machine in front of you.
+
+   Terminal states are matched by name rather than "running" by name, so a
+   status this code has never seen is treated as still in flight and shows up,
+   instead of being silently dropped. Every wf_*.json on the machine this was
+   written against had status "completed" and every step was "done" or "error",
+   so the in-flight spellings are unverified - erring toward showing an unknown
+   state is the safer direction of the two. */
+const FINISHED_WORKFLOW = new Set([
+  'completed', 'complete', 'done', 'finished', 'failed', 'error', 'errored',
+  'cancelled', 'canceled', 'aborted', 'stopped', 'timeout', 'timed_out'
+]);
+const FINISHED_TASK = new Set([
+  'done', 'complete', 'completed', 'error', 'errored', 'failed', 'cancelled',
+  'canceled', 'skipped', 'stopped', 'timeout', 'timed_out'
+]);
+/* A crashed run can leave a non-terminal status on disk forever. Requiring the
+   file to have been touched recently bounds that, at the cost of hiding a run
+   whose file goes untouched for longer than this - workflows here have taken
+   minutes, so the trade favours not showing a ghost as live. */
+const WORKFLOW_ACTIVE_MS = 60 * 60 * 1000;
+
 let config = null;
 let configMtime = 0;
 
@@ -541,12 +565,16 @@ function collectWorkflows() {
       path.dirname(path.dirname(path.dirname(entry.file)))
     ));
     const startedAt = wf.startTime || Date.parse(wf.timestamp) || entry.mtime;
+    const status = wf.status || 'unknown';
+    const wfActive = !FINISHED_WORKFLOW.has(String(status).toLowerCase()) &&
+      (Date.now() - entry.mtime) <= WORKFLOW_ACTIVE_MS;
 
     workflows.push({
+      active: wfActive,
       id: wf.runId || path.basename(entry.file, '.json'),
       name: wf.workflowName || 'workflow',
       summary: wf.summary || '',
-      status: wf.status || 'unknown',
+      status: status,
       project,
       startedAt,
       durationMs: wf.durationMs || 0,
@@ -558,6 +586,9 @@ function collectWorkflows() {
     for (const step of wf.workflowProgress || []) {
       if (step.type !== 'workflow_agent') continue;
       subtasks.push({
+        /* A step cannot be running if the workflow around it has finished,
+           whatever the step's own recorded state says. */
+        active: wfActive && !FINISHED_TASK.has(String(step.state || '').toLowerCase()),
         label: step.label || step.agentId || 'agent',
         model: (step.model || '').replace(/^claude-/, '').replace(/-\d{8}$/, ''),
         state: step.state || 'queued',
@@ -636,6 +667,7 @@ function build(nowOverride) {
   const sessions = collected.sessions.map(s => Object.assign({}, s, {
     state: (now - s.lastAt) <= SESSION_ACTIVE_MS ? 'running' : 'done'
   }));
+  const activeSessions = sessions.filter(s => s.state === 'running');
 
   const block = currentBlock(records, now);
   const sessionUsed = block ? sumWeighted(records, block.start, Math.min(block.end, now), null) : 0;
@@ -655,6 +687,8 @@ function build(nowOverride) {
 
   const { workflows, subtasks } = collectWorkflows();
   const queued = collectQueuedTasks();
+  const activeWorkflows = workflows.filter(w => w.active);
+  const activeSubtasks = subtasks.filter(t => t.active);
 
   /* A 429 seen inside the current block is authoritative: prefer its reset. */
   const quotaFresh = lastQuota && block && lastQuota.seenAt >= block.start && lastQuota.resetsAt > now;
@@ -699,14 +733,22 @@ function build(nowOverride) {
       resetsAt: week.end,
       buckets
     },
-    sessions,
-    workflows,
-    subtasks: subtasks.length ? subtasks : queued.slice(0, MAX_SUBTASKS),
+    /* Only what is running. Queued tasks are deliberately not folded in here:
+       waiting to start is not the same as running, and the previous fallback
+       made a backlog of 86 planned tasks look like live work. The count is
+       still reported so the widget can say the backlog exists. */
+    sessions: activeSessions,
+    workflows: activeWorkflows,
+    subtasks: activeSubtasks,
     counts: {
-      sessions: sessions.length,
-      sessionsActive: sessions.filter(s => s.state === 'running').length,
-      workflows: workflows.length,
-      subtasks: subtasks.length,
+      sessions: activeSessions.length,
+      workflows: activeWorkflows.length,
+      subtasks: activeSubtasks.length,
+      /* Totals behind the live view, for /usagehtml and for anyone diagnosing
+         why a list is empty. */
+      sessionsSeen: sessions.length,
+      workflowsSeen: workflows.length,
+      subtasksSeen: subtasks.length,
       queued: queued.length,
       messages: records.length
     }

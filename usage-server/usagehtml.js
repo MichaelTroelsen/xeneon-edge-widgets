@@ -215,7 +215,8 @@ function render(snapshot, cfg) {
   html += '</div>';
 
   /* --- sessions --- */
-  html += '<h2>Sessions (' + ((s.sessions || []).length) + ')</h2>' +
+  html += '<h2>Sessions (' + ((s.sessions || []).length) + ' active of ' +
+    num((s.counts || {}).sessionsSeen) + ' seen)</h2>' +
     listTable(s.sessions, [
       { label: '', get: r => '<span class="pill ' + esc(r.state) + '">' + esc(r.state) + '</span>' },
       { label: 'label', get: r => esc(r.label) },
@@ -226,7 +227,8 @@ function render(snapshot, cfg) {
     ]);
 
   /* --- workflows --- */
-  html += '<h2>Workflows (' + ((s.workflows || []).length) + ')</h2>' +
+  html += '<h2>Workflows (' + ((s.workflows || []).length) + ' active of ' +
+    num((s.counts || {}).workflowsSeen) + ' seen)</h2>' +
     listTable(s.workflows, [
       { label: '', get: r => '<span class="pill ' + esc(r.status) + '">' + esc(r.status) + '</span>' },
       { label: 'name', get: r => esc(r.name) },
@@ -238,7 +240,8 @@ function render(snapshot, cfg) {
     ]);
 
   /* --- subtasks --- */
-  html += '<h2>Subtasks (' + ((s.subtasks || []).length) + ')</h2>' +
+  html += '<h2>Subtasks (' + ((s.subtasks || []).length) + ' active of ' +
+    num((s.counts || {}).subtasksSeen) + ' seen, ' + num((s.counts || {}).queued) + ' queued)</h2>' +
     listTable(s.subtasks, [
       { label: '', get: r => '<span class="pill ' + esc(r.state) + '">' + esc(r.state) + '</span>' },
       { label: 'label', get: r => esc(r.label) },

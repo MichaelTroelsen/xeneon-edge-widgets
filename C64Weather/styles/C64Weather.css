@@ -256,25 +256,29 @@ body {
   .data { align-items: center; }
 }
 
-/* Detail chips, keyed on height because that is what actually runs out first.
-   S-H (344 tall) shows none of them: hide, don't shrink. */
+/* Every slot shows the full detail set. Only the arrangement changes with
+   size, so nothing is lost at the smallest slot. */
+#row-temp,
+#row-cond { display: flex; }
 
-/* S-V 696x416 and every taller slot: the day's high and low. */
-@media (min-height: 400px) {
-  #row-temp { display: flex; }
-  #chip-hi, #chip-lo { display: block; }
-}
+#chip-hi,
+#chip-lo,
+#chip-feels,
+#chip-wind,
+#chip-up,
+#chip-down { display: block; }
 
-/* M-H 840x696 and taller: feels-like, wind and the sun times. */
-@media (min-height: 600px) {
-  #row-cond { display: flex; }
-  #chip-feels, #chip-wind, #chip-up, #chip-down { display: block; }
-}
-
-/* Humidity only where the condition row has width to spare — on an 840px slot
-   it would push the row past the screen edge. */
-@media (min-height: 600px) and (min-width: 1000px) {
+/* Humidity is the one chip that pushes the line past the screen edge next to
+   the sprite, so it waits for a slot with width to spare. */
+@media (min-width: 1000px) {
   #chip-hum { display: block; }
+}
+
+/* Short slots (S-H 840x344): height is what runs out, not width — a single
+   840px line holds the whole set with room over. Both rows collapse onto one
+   line rather than dropping any of it. */
+@media (max-height: 400px) {
+  .detail { flex-direction: row; gap: calc(var(--layout-unit) * 3); }
 }
 
 /* Wide slots (L-H 1688x696, XL-H 2536x696). Left-hugging content would leave

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tr('Claude Code Usage')</title>
+  <link rel="icon" type="image/svg+xml" href="resources/icon.svg" />
+
+  <meta name="x-icue-property" content="feedUrl" data-label="tr('Feed URL')" data-type="textfield" data-default="'http://127.0.0.1:41777/usage'" />
+  <meta name="x-icue-property" content="colorTheme" data-label="tr('Theme')" data-type="tab-buttons" data-default="'dark'" data-values="[{'key':'dark','value':tr('Dark')},{'key':'light','value':tr('Light')}]" />
+  <meta name="x-icue-property" content="refreshSeconds" data-label="tr('Refresh Interval')" data-type="slider" data-default="20" data-min="5" data-max="120" data-step="5" data-unit-label="tr('sec')" />
+
+  <script type="application/json" id="x-icue-groups">
+  [
+    {
+      "title": "tr('Claude Code Usage')",
+      "properties": ["feedUrl", "colorTheme", "refreshSeconds"],
+      "info": "tr('Requires the local usage feed to be running. Percentages are estimated from local transcript token counts, not read back from Anthropic.')"
+    }
+  ]
+  </script>
+
+  <link rel="stylesheet" type="text/css" href="styles/ClaudeUsage.css" />
+</head>
+<body>
+  <div class="widget-root">
+    <div class="content">
+      <header class="head">
+        <span class="title">Plan usage limits</span>
+        <span class="plan" id="plan"></span>
+        <span class="est" title="Estimated locally">EST</span>
+      </header>
+
+      <div class="body">
+        <section class="meters">
+          <div class="meter" id="m-session">
+            <div class="meter-top">
+              <span class="name">Current session</span>
+              <span class="value" id="session-value">--</span>
+            </div>
+            <div class="track"><div class="fill" id="session-fill"></div></div>
+            <div class="sub" id="session-sub"></div>
+          </div>
+
+          <div class="section-label">Weekly limits</div>
+
+          <div class="meter" id="m-weekly">
+            <div class="meter-top">
+              <span class="name">All models</span>
+              <span class="value" id="weekly-value">--</span>
+            </div>
+            <div class="track"><div class="fill" id="weekly-fill"></div></div>
+            <div class="sub" id="weekly-sub"></div>
+          </div>
+
+          <div class="meter bucket" id="m-bucket">
+            <div class="meter-top">
+              <span class="name" id="bucket-name"></span>
+              <span class="value" id="bucket-value">--</span>
+            </div>
+            <div class="track"><div class="fill" id="bucket-fill"></div></div>
+          </div>
+        </section>
+
+        <section class="lists">
+          <div class="list" id="list-workflows">
+            <h2>Workflows</h2>
+            <ul id="workflows"></ul>
+          </div>
+          <div class="list" id="list-subtasks">
+            <h2>Subtasks</h2>
+            <ul id="subtasks"></ul>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="loading-state">
+      <div class="msg">Connecting to the usage feed…</div>
+    </div>
+
+    <div class="error-state">
+      <div class="msg">Usage feed unreachable</div>
+      <div class="hint" id="error-hint"></div>
+    </div>
+  </div>
+
+  <script type="text/javascript" src="scripts/widget.js"></script>
+  <script>
+    // Bare assignment is intentional: var/let/const would keep the binding local
+    // if iCUE evaluates this script in a sandboxed function context, and the
+    // runtime bridge would never see the handlers.
+    icueEvents = {
+      onDataUpdated: function () { if (window.ClaudeUsage) window.ClaudeUsage.onDataUpdated(); },
+      onICUEInitialized: function () { if (window.ClaudeUsage) window.ClaudeUsage.onICUEInitialized(); }
+    };
+  </script>
+</body>
+</html>

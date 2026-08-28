@@ -1,0 +1,11 @@
+{
+  "C64 Weather": "C64 Weather",
+  "Location": "Location",
+  "Temperature Unit": "Temperature Unit",
+  "Auto": "Auto",
+  "Celsius": "Celsius",
+  "Fahrenheit": "Fahrenheit",
+  "Refresh Interval": "Refresh Interval",
+  "min": "min",
+  "Enter a city name or latitude,longitude. Weather data comes from Open-Meteo; no account or API key is required.": "Enter a city name or latitude,longitude. Weather data comes from Open-Meteo; no account or API key is required."
+}

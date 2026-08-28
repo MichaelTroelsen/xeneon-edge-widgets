@@ -1,0 +1,34 @@
+{
+  "planLabel": "Max (5x)",
+
+  "_comment_budgets": "Weighted-token budgets. These are the ONLY numbers that turn measured usage into a percentage, and Anthropic does not publish them, so they are estimates you calibrate once - see README.md.",
+  "sessionBudgetWeightedTokens": 90000000,
+  "weeklyBudgetWeightedTokens": 900000000,
+
+  "_comment_anchor": "Weekly window anchor in local time. weekday: 0=Sun .. 4=Thu .. 6=Sat. Defaults to Thu 21:00 to match the 'Resets Thu 9:00 PM' shown in Claude Code's own usage panel.",
+  "weeklyAnchor": { "weekday": 4, "hour": 21 },
+
+  "_comment_weights": "Per-token weights, mirroring the usual relative cost of each token class.",
+  "tokenWeights": {
+    "output": 5,
+    "input": 1,
+    "cacheCreation": 1.25,
+    "cacheRead": 0.1
+  },
+
+  "_comment_models": "Per-model multiplier applied on top of the token weights. Unlisted models fall back to defaultModelWeight.",
+  "modelWeights": {
+    "claude-opus-5": 1,
+    "claude-fable-5": 1,
+    "claude-sonnet-5": 0.2,
+    "claude-haiku-4-5": 0.05
+  },
+  "defaultModelWeight": 1,
+
+  "_comment_buckets": "Extra weekly bars broken out by model, like the 'Fable' row in the usage panel. Each bucket gets its own budget.",
+  "weeklyBuckets": [
+    { "label": "Fable", "models": ["claude-fable-5"], "budgetWeightedTokens": 450000000 }
+  ],
+
+  "port": 41777
+}

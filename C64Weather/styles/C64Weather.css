@@ -1,0 +1,305 @@
+/* C64 Weather — Commodore 64 boot screen theme.
+   All sizing derives from a single baseline (--layout-unit); components only
+   ever consume the semantic tokens below. */
+
+:root {
+  /* VIC-II palette subset */
+  --c64-screen: #40318d;   /* blue      (screen)        */
+  --c64-border: #7869c4;   /* light blue (border/chrome) */
+  --c64-white: #ffffff;
+  --c64-yellow: #b8c76f;
+  --c64-cyan: #70a4b2;
+  --c64-grey: #959595;
+  --c64-lightred: #9a6759;
+
+  /* Baselines */
+  --layout-unit: 1vmin;
+  --device-vertical-s-unit: 4.16px;               /* 416px / 100  */
+  --preview-vertical-s-unit: calc(100vw * 416 / 69600);
+  --short-wide-unit: 4.3px;                       /* 344px / 80   */
+
+  /* Semantic tokens */
+  --space-gap: calc(var(--layout-unit) * 3);
+  --space-pad: calc(var(--layout-unit) * 5);
+  --border-width: calc(var(--layout-unit) * 4);
+
+  --font-hero: calc(var(--layout-unit) * 22);
+  --font-secondary: calc(var(--layout-unit) * 7);
+  --font-label: calc(var(--layout-unit) * 4);
+  --font-boot: calc(var(--layout-unit) * 3.4);
+}
+
+html { overflow: hidden; }
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  font-family: monospace;
+}
+
+.widget-root {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Light-blue border framing the blue screen — the C64's defining silhouette. */
+.crt {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--border-width);
+  background: var(--c64-border);
+}
+
+.screen {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--space-pad);
+  background: var(--c64-screen);
+  color: var(--c64-border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-gap);
+  overflow: hidden;
+}
+
+/* Every text run is inline SVG scaled by the line's own font-size. max-width
+   keeps a long line (city name, error text, 40-column banner) inside the screen:
+   preserveAspectRatio="meet" scales it down to fit instead of clipping. */
+.px {
+  height: 1em;
+  width: auto;
+  max-width: 100%;
+  display: block;
+}
+
+.line { display: block; }
+
+.boot-line,
+.load-line,
+.ready-line {
+  font-size: var(--font-boot);
+  color: var(--c64-border);
+}
+
+.stage {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.readout {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 5);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sprite-cell {
+  flex: 0 0 auto;
+  font-size: var(--font-hero);
+  color: var(--c64-grey);
+  line-height: 0;
+}
+
+.sprite-cell .sprite {
+  height: 0.9em;
+  width: 0.9em;
+}
+
+.sprite-sun,
+.sprite-partly,
+.sprite-storm { color: var(--c64-yellow); }
+.sprite-rain,
+.sprite-drizzle { color: var(--c64-cyan); }
+.sprite-snow { color: var(--c64-white); }
+.sprite-moon,
+.sprite-cloud,
+.sprite-fog { color: var(--c64-grey); }
+
+.data {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 1.5);
+  min-width: 0;
+}
+
+/* Hero: the one element that survives every slot size. */
+.temp {
+  font-size: var(--font-hero);
+  color: var(--c64-white);
+  line-height: 1;
+}
+
+.condition {
+  font-size: var(--font-label);
+  color: var(--c64-cyan);
+}
+
+.city {
+  font-size: var(--font-label);
+  color: var(--c64-white);
+  opacity: 0.85;
+}
+
+/* Detail block: two fixed rows of independent chips. Each chip is shown or
+   hidden on its own, so a narrow slot drops items instead of scaling one
+   ever-growing string down to nothing. */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 1);
+}
+
+.detail-row {
+  display: none;
+  flex-direction: row;
+  gap: calc(var(--layout-unit) * 3);
+  font-size: var(--font-boot);
+  color: var(--c64-border);
+  opacity: 0.9;
+}
+
+.chip { display: none; }
+
+/* A chip with no value must not leave a gap. Specificity beats the per-chip
+   ID rules further down, so an empty chip stays hidden even where its slot
+   would otherwise show it. */
+#row-temp .chip[data-empty],
+#row-cond .chip[data-empty] { display: none; }
+
+.offline {
+  font-size: var(--font-boot);
+  color: var(--c64-lightred);
+  display: none;
+}
+
+.is-stale .offline { display: block; }
+
+/* States */
+.loading-state,
+.error-state,
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 2);
+  font-size: calc(var(--layout-unit) * 5);
+  color: var(--c64-border);
+  width: 100%;
+}
+
+.err-code { color: var(--c64-lightred); }
+
+/* READY. prompt with the blinking C64 cursor. */
+.ready-line {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 1.2);
+}
+
+.cursor {
+  display: inline-block;
+  width: 0.75em;
+  height: 1em;
+  background: currentColor;
+  animation: c64-blink 1.06s steps(1, end) infinite;
+}
+
+@keyframes c64-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* ------------------------------------------------------------------
+   Baseline overrides — swap the active unit, never individual fonts.
+   ------------------------------------------------------------------ */
+
+/* Xeneon Edge vertical slots (696 wide): S-vertical is the canonical
+   baseline, so M/L/XL vertical keep S proportions and spend the extra
+   height on breathing room rather than bigger text. */
+@media (min-width: 680px) and (max-width: 712px) and (min-height: 416px) {
+  :root { --layout-unit: var(--device-vertical-s-unit); }
+}
+
+/* Vertical preview cards in the iCUE settings panel. */
+@media (min-width: 180px) and (max-width: 360px) and (max-aspect-ratio: 0.9) {
+  :root { --layout-unit: var(--preview-vertical-s-unit); }
+}
+
+/* Short wide slot — S-H 840x344. vmin would key off the 344px height and
+   leave the hero undersized on an 840px-wide screen. */
+@media (min-aspect-ratio: 2.2) and (max-height: 400px) {
+  :root { --layout-unit: var(--short-wide-unit); }
+}
+
+/* ------------------------------------------------------------------
+   Composition — what is shown, not how large it is.
+   ------------------------------------------------------------------ */
+
+/* Portrait slots: stack the sprite above the readout. */
+@media (max-aspect-ratio: 0.95) {
+  .screen { align-items: stretch; }
+  .stage { justify-content: center; }
+  .readout { flex-direction: column; text-align: center; }
+  .data { align-items: center; }
+}
+
+/* Detail chips, keyed on height because that is what actually runs out first.
+   S-H (344 tall) shows none of them: hide, don't shrink. */
+
+/* S-V 696x416 and every taller slot: the day's high and low. */
+@media (min-height: 400px) {
+  #row-temp { display: flex; }
+  #chip-hi, #chip-lo { display: block; }
+}
+
+/* M-H 840x696 and taller: feels-like, wind and the sun times. */
+@media (min-height: 600px) {
+  #row-cond { display: flex; }
+  #chip-feels, #chip-wind, #chip-up, #chip-down { display: block; }
+}
+
+/* Humidity only where the condition row has width to spare — on an 840px slot
+   it would push the row past the screen edge. */
+@media (min-height: 600px) and (min-width: 1000px) {
+  #chip-hum { display: block; }
+}
+
+/* Wide slots (L-H 1688x696, XL-H 2536x696). Left-hugging content would leave
+   most of a 2536px slot empty, so the readout is centred while the boot chrome
+   stays at column 0 like a real terminal. */
+@media (min-width: 1000px) and (min-height: 500px) {
+  .stage { justify-content: center; }
+  .readout { gap: calc(var(--layout-unit) * 10); }
+}
+
+/* Tall portrait (L-V, XL-V): the S-vertical baseline is deliberately kept, so
+   the surplus height buys a larger sprite and wider spacing, not bigger text. */
+@media (max-aspect-ratio: 0.6) {
+  .sprite-cell { font-size: calc(var(--font-hero) * 2.2); }
+  .readout { gap: calc(var(--layout-unit) * 8); }
+}
+
+/* Very short slots: drop the 38-column RAM banner before anything else. */
+@media (max-height: 360px) {
+  .boot-ram { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

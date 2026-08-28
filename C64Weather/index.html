@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tr('C64 Weather')</title>
+  <link rel="icon" type="image/svg+xml" href="resources/icon.svg" />
+
+  <!-- Named cityName, not location: an injected global called `location` would
+       collide with window.location and could never be read back as a string. -->
+  <meta name="x-icue-property" content="cityName" data-label="tr('Location')" data-type="textfield" data-default="'Copenhagen'" />
+  <meta name="x-icue-property" content="tempUnit" data-label="tr('Temperature Unit')" data-type="tab-buttons" data-default="'auto'" data-values="[{'key':'auto','value':tr('Auto')},{'key':'C','value':tr('Celsius')},{'key':'F','value':tr('Fahrenheit')}]" />
+  <meta name="x-icue-property" content="refreshMinutes" data-label="tr('Refresh Interval')" data-type="slider" data-default="15" data-min="5" data-max="120" data-step="5" data-unit-label="tr('min')" />
+
+  <script type="application/json" id="x-icue-groups">
+  [
+    {
+      "title": "tr('C64 Weather')",
+      "properties": ["cityName", "tempUnit", "refreshMinutes"],
+      "info": "tr('Enter a city name or latitude,longitude. Weather data comes from Open-Meteo; no account or API key is required.')"
+    }
+  ]
+  </script>
+
+  <link rel="stylesheet" type="text/css" href="styles/C64Weather.css" />
+</head>
+<body>
+  <div class="widget-root">
+    <div class="crt">
+      <div class="screen">
+        <div class="boot">
+          <div class="boot-line" id="boot-banner"></div>
+          <div class="boot-line boot-ram" id="boot-ram"></div>
+        </div>
+        <div class="load-line" id="load-line"></div>
+
+        <div class="stage">
+          <div class="content readout">
+            <div class="sprite-cell" id="sprite"></div>
+            <div class="data">
+              <div class="temp" id="temp"></div>
+              <div class="condition" id="condition"></div>
+              <div class="city" id="city"></div>
+              <div class="detail">
+                <div class="detail-row" id="row-temp">
+                  <span class="chip" id="chip-hi"></span>
+                  <span class="chip" id="chip-lo"></span>
+                  <span class="chip" id="chip-feels"></span>
+                </div>
+                <div class="detail-row" id="row-cond">
+                  <span class="chip" id="chip-wind"></span>
+                  <span class="chip" id="chip-hum"></span>
+                  <span class="chip" id="chip-up"></span>
+                  <span class="chip" id="chip-down"></span>
+                </div>
+              </div>
+              <div class="offline" id="offline"></div>
+            </div>
+          </div>
+
+          <div class="loading-state">
+            <div class="line" id="loading-a"></div>
+            <div class="line" id="loading-b"></div>
+          </div>
+
+          <div class="error-state">
+            <div class="line err-code" id="error-a"></div>
+            <div class="line" id="error-b"></div>
+          </div>
+
+          <div class="empty-state">
+            <div class="line err-code" id="empty-a"></div>
+            <div class="line" id="empty-b"></div>
+          </div>
+        </div>
+
+        <div class="ready-line">
+          <span id="ready-text"></span>
+          <span class="cursor"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="text/javascript" src="scripts/petscii.js"></script>
+  <script type="text/javascript" src="scripts/widget.js"></script>
+  <script>
+    // Bare assignment is intentional: var/let/const would keep the binding local
+    // if iCUE evaluates this script in a sandboxed function context, and the
+    // runtime bridge would never see the handlers.
+    icueEvents = {
+      onDataUpdated: function () { if (window.C64Weather) window.C64Weather.onDataUpdated(); },
+      onICUEInitialized: function () { if (window.C64Weather) window.C64Weather.onICUEInitialized(); }
+    };
+  </script>
+</body>
+</html>

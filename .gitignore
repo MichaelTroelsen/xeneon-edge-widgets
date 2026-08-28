@@ -1,0 +1,15 @@
+# Build artifacts produced by `icuewidget package`
+*.icuewidget
+
+# Upstream clone of Corsair's widget builder, tracked in its own repository
+/icue-widget-builder/
+
+# Vendored copy of Corsair's iCUE widget documentation. Kept locally as the
+# source of truth while building, but not redistributed from this repository.
+/.claude/
+
+# Local scratch
+node_modules/
+*.log
+probe.html
+test-*.html

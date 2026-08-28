@@ -1,0 +1,354 @@
+/* Claude Code usage — Xeneon Edge.
+   All sizing derives from one baseline (--layout-unit); components consume
+   semantic tokens only. Theme is a set of colour tokens swapped by JS. */
+
+:root {
+  /* Baselines */
+  --layout-unit: 1vmin;
+  --device-vertical-s-unit: 4.16px;                 /* 416 / 100 */
+  --preview-vertical-s-unit: calc(100vw * 416 / 69600);
+  --short-wide-unit: 4.3px;                         /* 344 / 80  */
+
+  /* Spacing and shape */
+  --space-gap: calc(var(--layout-unit) * 2.6);
+  --space-pad: calc(var(--layout-unit) * 5);
+  --radius: calc(var(--layout-unit) * 2);
+  --bar-h: calc(var(--layout-unit) * 2.4);
+
+  /* Type */
+  --font-title: calc(var(--layout-unit) * 4.4);
+  --font-name: calc(var(--layout-unit) * 4);
+  --font-value: calc(var(--layout-unit) * 4.4);
+  --font-sub: calc(var(--layout-unit) * 3.1);
+  --font-section: calc(var(--layout-unit) * 3.4);
+  --font-row: calc(var(--layout-unit) * 3.2);
+
+  /* Dark theme (default) */
+  --bg: #1b1b19;
+  --text: #f2f0ea;
+  --muted: #9b9a92;
+  --track: #35352f;
+  --fill: #5b8def;
+  --line: #302f2c;
+  --ok: #57c785;
+  --warn: #e0a458;
+  --bad: #e0685f;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --text: #191917;
+  --muted: #6e6d66;
+  --track: #c9dcf7;
+  --fill: #1a56db;
+  --line: #e6e4de;
+  --ok: #16a34a;
+  --warn: #b45309;
+  --bad: #b91c1c;
+}
+
+html { overflow: hidden; }
+
+body {
+  margin: 0;
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  font-family: OpenSans, "Segoe UI", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.widget-root {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--space-pad);
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-gap);
+}
+
+/* The state wrapper must itself be the full-height column, otherwise .body has
+   no height to distribute and every flex-basis:0 child collapses to nothing. */
+.content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-gap);
+}
+
+/* ------------------------------------------------------------------ header */
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--layout-unit) * 2);
+  flex: 0 0 auto;
+}
+
+.head .title {
+  font-size: var(--font-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.head .plan {
+  font-size: var(--font-sub);
+  color: var(--muted);
+}
+
+/* The percentages are computed locally from transcript token counts, not read
+   back from Anthropic. The badge says so, permanently. */
+.head .est {
+  margin-left: auto;
+  font-size: calc(var(--layout-unit) * 2.6);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--layout-unit) * 1);
+  padding: calc(var(--layout-unit) * 0.6) calc(var(--layout-unit) * 1.4);
+}
+
+/* -------------------------------------------------------------------- body */
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: calc(var(--layout-unit) * 6);
+}
+
+.meters {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-gap);
+  justify-content: flex-start;
+}
+
+.section-label {
+  font-size: var(--font-section);
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: calc(var(--layout-unit) * 1.5);
+}
+
+/* Two-line meter: name + value on top, bar below, reset caption under it.
+   Holds its shape from 320px to 2536px without a layout swap. */
+.meter { display: flex; flex-direction: column; gap: calc(var(--layout-unit) * 1.2); }
+
+.meter-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-gap);
+}
+
+.meter .name {
+  font-size: var(--font-name);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meter .value {
+  font-size: var(--font-value);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.meter .sub {
+  font-size: var(--font-sub);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track {
+  height: var(--bar-h);
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  transition: width 0.4s ease;
+}
+
+.meter.is-blocked .fill { background: var(--bad); }
+.meter.is-high .fill { background: var(--warn); }
+
+/* ------------------------------------------------------------------- lists */
+
+.lists {
+  flex: 2 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  gap: calc(var(--layout-unit) * 6);
+}
+
+.list {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 1.4);
+  overflow: hidden;
+}
+
+.list h2 {
+  margin: 0;
+  font-size: var(--font-section);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 1.2);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.list li {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--layout-unit) * 1.6);
+  font-size: var(--font-row);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: calc(var(--layout-unit) * 1.2);
+}
+
+.list li .dot {
+  flex: 0 0 auto;
+  width: calc(var(--layout-unit) * 1.4);
+  height: calc(var(--layout-unit) * 1.4);
+  border-radius: 999px;
+  background: var(--muted);
+  align-self: center;
+}
+
+.state-done .dot, .state-completed .dot { background: var(--ok); }
+.state-running .dot, .state-in_progress .dot { background: var(--fill); }
+.state-blocked .dot, .state-failed .dot, .state-error .dot { background: var(--bad); }
+.state-queued .dot { background: var(--muted); }
+
+.list li .label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list li .meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: calc(var(--layout-unit) * 2.8);
+  font-variant-numeric: tabular-nums;
+}
+
+.list .empty { color: var(--muted); font-size: var(--font-row); }
+
+/* ------------------------------------------------------------------ states */
+
+.loading-state,
+.error-state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: calc(var(--layout-unit) * 2);
+}
+
+.loading-state .msg, .error-state .msg { font-size: var(--font-name); }
+.error-state .hint { font-size: var(--font-sub); color: var(--muted); }
+.error-state .msg { color: var(--bad); }
+
+/* ------------------------------------------------------------------
+   Baseline overrides — swap the active unit, never individual fonts.
+   ------------------------------------------------------------------ */
+
+@media (min-width: 680px) and (max-width: 712px) and (min-height: 416px) {
+  :root { --layout-unit: var(--device-vertical-s-unit); }
+}
+
+@media (min-width: 180px) and (max-width: 360px) and (max-aspect-ratio: 0.9) {
+  :root { --layout-unit: var(--preview-vertical-s-unit); }
+}
+
+@media (min-aspect-ratio: 2.2) and (max-height: 400px) {
+  :root { --layout-unit: var(--short-wide-unit); }
+}
+
+/* ------------------------------------------------------------------
+   Composition — what is shown, not how large it is.
+   ------------------------------------------------------------------ */
+
+/* Portrait: meters on top, the two lists stacked underneath. The meters keep
+   their natural height so the surplus goes to the lists, not to dead space. */
+@media (max-aspect-ratio: 0.95) {
+  .body { flex-direction: column; gap: calc(var(--layout-unit) * 3); }
+  .meters { flex: 0 0 auto; }
+  .lists { flex-direction: column; flex: 1 1 auto; }
+}
+
+/* Short slots — S-H 840x344 and S-V 696x416. Nothing but the meters fits, so
+   the session percentage grows into the hero role. Keyed on height, not width:
+   a width rule here collides with the M-H rule below. */
+@media (max-height: 460px) {
+  .lists { display: none; }
+  .meters { justify-content: space-evenly; }
+  :root { --font-value: calc(var(--layout-unit) * 6); }
+}
+
+/* M-H 840x696 — too narrow for meters and lists side by side, tall enough for
+   one list stacked underneath. Landscape-only: 696x840 is portrait and has the
+   height for both lists, so it must not match here. */
+@media (max-width: 900px) and (min-height: 600px) and (min-aspect-ratio: 0.95) {
+  .body { flex-direction: column; }
+  .meters { flex: 0 0 auto; }
+  .lists { flex-direction: column; }
+  #list-subtasks { display: none; }
+}
+
+/* Very short slots: drop the reset captions and the weekly bucket row. */
+@media (max-height: 360px) {
+  .section-label { display: none; }
+  .meter.bucket { display: none; }
+}
+
+/* Tall portrait: plenty of room, give the lists the surplus. */
+@media (max-aspect-ratio: 0.6) {
+  .meters { flex: 0 0 auto; }
+  .lists { flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

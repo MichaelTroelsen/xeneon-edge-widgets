@@ -130,6 +130,11 @@ body {
   padding: calc(var(--layout-unit) * 0.6) calc(var(--layout-unit) * 1.4);
 }
 
+.head .live.is-stale {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
 .head .live.is-local {
   color: var(--muted);
   border-color: var(--line);

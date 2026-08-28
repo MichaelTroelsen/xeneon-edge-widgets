@@ -90,8 +90,9 @@ You can tell which mode you are in from the widget's header badge:
 
 | Badge | Meaning |
 |---|---|
-| `LIVE` (green) | percentages are Anthropic's own |
-| `LOCAL` (grey) | endpoint unreachable; measured token counts shown instead. Hover for the reason |
+| `LIVE` (green) | percentages are Anthropic's own, freshly fetched |
+| `LIVE·` (amber) | Anthropic's numbers, but the last poll failed — showing the most recent good reading, up to 30 minutes old. Hover for when and why |
+| `LOCAL` (grey) | no usable reading; measured token counts shown instead. Hover for the reason |
 
 Skipping this entirely is a valid choice. Everything except the two percentages
 works without any credential.
@@ -104,8 +105,18 @@ works without any credential.
 - **Never** logs it, prints it, or includes it in `/usage`'s output. The served
   payload is scanned for `accessToken`, `refreshToken`, `Bearer` and `sk-ant` as
   part of testing.
-- Polls once a minute, backing off exponentially to 30 minutes on failure so a
-  broken credential cannot hammer the endpoint.
+- Polls **every five minutes**, not every rebuild. One-minute polling drew a
+  `429` after roughly nine requests — the endpoint's limit is far tighter than
+  the 20-second index cadence, and utilisation moves slowly enough that five
+  minutes loses nothing.
+- Backs off on failure: exponentially to 30 minutes normally, starting at 15
+  minutes for a `429` since that one is explicitly about request volume.
+- Keeps the last successful reading. If a poll fails, the widget keeps showing
+  those percentages marked stale for up to 30 minutes rather than swapping to a
+  different metric — utilisation only climbs within a window and the reset times
+  are absolute, so a few-minute-old figure is still the right answer. The cache
+  is in memory, so a server restart during an outage falls back to `LOCAL` until
+  the next successful poll.
 
 ### Staying authenticated
 

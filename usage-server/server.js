@@ -4,8 +4,11 @@
  * An iCUE widget is a sandboxed web page: it cannot read files or run commands.
  * This serves everything it needs as JSON on 127.0.0.1.
  *
- * Nothing here touches credentials and nothing leaves the machine. Every number
- * is derived from files Claude Code already writes under ~/.claude.
+ * The activity data - sessions, workflows, subtasks, token counts - is derived
+ * from files Claude Code already writes under ~/.claude and never leaves the
+ * machine. The two usage percentages cannot be derived locally, so those are
+ * fetched from Anthropic with the OAuth token in ~/.claude/.credentials.json;
+ * see official.js and the Authentication section of README.md.
  */
 'use strict';
 
@@ -42,9 +45,18 @@ let lastQuota = null; /* most recent 429 quotaLimits record seen, if any */
 /* Anthropic's own figures, refreshed on their own slower timer. The index
    rebuilds every 20s but this is an undocumented endpoint on someone else's
    server, so it is polled far less often and always from cache in between. */
-const OFFICIAL_INTERVAL_MS = 60000;
+/* Five minutes, not one. At one-minute polling the endpoint started returning
+   429 after roughly nine requests - its limit is far tighter than the rebuild
+   cadence, and utilisation moves slowly enough that this loses nothing. */
+const OFFICIAL_INTERVAL_MS = 5 * 60 * 1000;
 const OFFICIAL_MAX_BACKOFF_MS = 30 * 60 * 1000;
+/* A rate limit deserves a bigger first step than an ordinary failure. */
+const OFFICIAL_RATE_LIMIT_MS = 15 * 60 * 1000;
+/* Past this, a cached reading stops being worth showing. */
+const OFFICIAL_STALE_MS = 30 * 60 * 1000;
+
 let officialState = { ok: false, error: 'not fetched yet', fetchedAt: null };
+let officialGood = null;   /* last successful reading, kept across failures */
 let officialInFlight = false;
 let officialFailures = 0;
 let officialTimer = null;
@@ -52,11 +64,16 @@ let officialTimer = null;
 /* Retrying a dead token every minute is how a 401 turns into a 429 — which is
    exactly what happened. Failures back off exponentially to half an hour;
    success returns to the normal cadence. */
-function scheduleOfficial() {
+function scheduleOfficial(rateLimited) {
   if (officialTimer) clearTimeout(officialTimer);
-  const delay = officialFailures === 0
-    ? OFFICIAL_INTERVAL_MS
-    : Math.min(OFFICIAL_INTERVAL_MS * Math.pow(2, officialFailures), OFFICIAL_MAX_BACKOFF_MS);
+  let delay;
+  if (officialFailures === 0) {
+    delay = OFFICIAL_INTERVAL_MS;
+  } else if (rateLimited) {
+    delay = Math.min(OFFICIAL_RATE_LIMIT_MS * officialFailures, OFFICIAL_MAX_BACKOFF_MS);
+  } else {
+    delay = Math.min(OFFICIAL_INTERVAL_MS * Math.pow(2, officialFailures), OFFICIAL_MAX_BACKOFF_MS);
+  }
   officialTimer = setTimeout(refreshOfficial, delay);
   if (officialTimer.unref) officialTimer.unref();
 }
@@ -64,10 +81,16 @@ function scheduleOfficial() {
 function refreshOfficial() {
   if (officialInFlight) return;
   officialInFlight = true;
+  let rateLimited = false;
   official.fetchOfficial()
     .then(result => {
       officialState = result;
       officialFailures = result.ok ? 0 : officialFailures + 1;
+      rateLimited = !result.ok && /HTTP 429/.test(result.error || '');
+      /* Keep the last good reading. Utilisation only climbs within a window and
+         the reset times are absolute, so a few-minute-old figure is far better
+         than dropping to a different metric because one poll was throttled. */
+      if (result.ok) officialGood = result;
     })
     .catch(err => {
       officialState = { ok: false, error: String(err && err.message || err), fetchedAt: Date.now() };
@@ -75,8 +98,23 @@ function refreshOfficial() {
     })
     .then(() => {
       officialInFlight = false;
-      scheduleOfficial();
+      scheduleOfficial(rateLimited);
     });
+}
+
+/* What the snapshot should carry: the live reading if the last poll worked,
+   otherwise the most recent good one flagged as stale, and only after that the
+   failure itself. */
+function officialForSnapshot(now) {
+  if (officialState.ok) return officialState;
+  if (officialGood && (now - officialGood.fetchedAt) < OFFICIAL_STALE_MS) {
+    return Object.assign({}, officialGood, {
+      stale: true,
+      staleSince: officialGood.fetchedAt,
+      error: officialState.error || null
+    });
+  }
+  return officialState;
 }
 
 /* The credentials file being rewritten is the signal that a retry is worth
@@ -599,8 +637,8 @@ function build(nowOverride) {
     estimated: true,
     /* Anthropic's own numbers when the endpoint answered, so the widget can
        prefer them and fall back to the measured view when it did not. */
-    official: officialState,
-    plan: (officialState.ok && officialState.planTier) ? planLabelFromTier(officialState.planTier) : cfg.planLabel,
+    official: officialForSnapshot(now),
+    plan: (officialGood && officialGood.planTier) ? planLabelFromTier(officialGood.planTier) : cfg.planLabel,
     session: {
       percent: pct(sessionUsed, cfg.sessionBudgetWeightedTokens),
       /* Raw totals so calibration is not limited by a rounded percentage. */

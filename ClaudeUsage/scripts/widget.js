@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.5.0';
+  var WIDGET_VERSION = '1.6.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -184,14 +184,22 @@
     /* Anthropic's own utilisation when the feed could reach the OAuth endpoint;
        the measured token counts when it could not. Never both, and never a
        locally invented percentage. */
-    var live = data.official && data.official.ok ? data.official : null;
+    /* The server keeps the last good reading when a poll is throttled, marking
+       it stale rather than dropping it - so a rate limit no longer swaps the
+       display over to a different metric for a few minutes. */
+    var official = data.official || {};
+    var live = (official.ok || official.stale) ? official : null;
+
     /* Always say which mode is on screen. Falling back silently makes measured
        token counts look like they came from Anthropic. */
-    els.live.textContent = live ? 'LIVE' : 'LOCAL';
-    els.live.className = live ? 'live' : 'live is-local';
+    els.live.textContent = live ? (official.stale ? 'LIVE·' : 'LIVE') : 'LOCAL';
+    els.live.className = live ? (official.stale ? 'live is-stale' : 'live') : 'live is-local';
     els.live.title = live
-      ? ('Utilisation read from Anthropic via ' + (live.source || 'OAuth'))
-      : ('Anthropic figures unavailable: ' + ((data.official && data.official.error) || 'unknown') +
+      ? (official.stale
+          ? ('Anthropic figures from ' + formatStamp(official.staleSince).replace('Updated ', '') +
+             ', not refreshed since: ' + (official.error || 'unknown'))
+          : ('Utilisation read from Anthropic via ' + (official.source || 'OAuth')))
+      : ('Anthropic figures unavailable: ' + (official.error || 'unknown') +
          ' — showing locally measured tokens');
 
     var s = data.session || {};

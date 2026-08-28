@@ -20,8 +20,15 @@ machine; every number comes from files Claude Code already writes under
 | 5-hour reset time | first message of the current block, floored to the hour, + 5h | **exact** |
 | Weekly reset time | the weekly anchor in `limits.json` (default Thu 21:00 local) | exact once the anchor is right |
 | 5-hour / weekly percentage | weighted token totals from `~/.claude/projects/**/*.jsonl` ÷ the budgets in `limits.json` | **estimated** |
+| Session list | transcripts directly under `~/.claude/projects/<project>/`, as opposed to the nested ones belonging to subagents and workflows | exact |
 | Workflow list | `~/.claude/projects/*/*/workflows/wf_*.json` | exact |
 | Subtask list | the `workflow_agent` entries inside those files, falling back to open tasks in each repo's `.claude/tasks/whattask.json` | exact |
+
+A session counts as `running` if it produced a message in the last 15 minutes.
+Its label comes from the first user message — usually a slash command, otherwise
+the opening words of the prompt. The `slug` some transcripts carry is absent from
+most of them and a UUID says nothing, so the first message is the only label that
+names every session.
 
 The widget carries a permanent `EST` badge because of row 3.
 
@@ -95,8 +102,9 @@ on another day set `weekday` (0 = Sunday) and `hour`.
 ## Cost
 
 The index is incremental: a file is only re-parsed from the byte offset where it
-last ended. On the machine it was developed on, the cold build took 389 ms over
-10,411 messages and subsequent rebuilds 42 ms. It refreshes every 20 s.
+last ended. On the machine it was developed on, a cold build takes about 480 ms
+over ~10,600 messages; incremental rebuilds are far cheaper. It refreshes every
+20 s.
 
 ## Running it at logon
 

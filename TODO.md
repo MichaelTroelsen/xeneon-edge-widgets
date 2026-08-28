@@ -1,59 +1,73 @@
 # iCUE widgets — TODO
 
-## C64 Weather
+## C64 Weather — 1.2.0
 
-### Done in 1.1.0
+### Done
 
-- [x] **Sunrise / sunset.** `sunrise,sunset` added to the `daily=` request. Rendered
-      as `UP 06:07  DN 20:14`, taken as an `HH:MM` substring of the ISO string —
-      `timezone=auto` already returns it in the location's own timezone, so
-      parsing it into a `Date` would re-shift it into ours.
-- [x] **Wind speed.** Now rendered, and follows the temperature unit: `22KM/H`
-      alongside °C, `14MPH` alongside °F.
-- [x] **Max / min temperature.** `HI`/`LO` promoted to every slot at least 400px
-      tall, so S-V and M-H now show them; only S-H (344px) still omits them.
+- [x] **Sunrise / sunset, wind, high / low.** All three requested additions are
+      rendered. Sun times are taken as an `HH:MM` substring of the ISO string,
+      not parsed into a `Date` — `timezone=auto` already returns them in the
+      location's own timezone, so parsing would re-shift them into ours. Wind
+      follows the temperature unit: `13KM/H` beside °C, `8MPH` beside °F.
+- [x] **Three-column readout**, after the arrangement of Corsair's stock weather
+      widget: temperature and place left, condition sprite with the day's
+      low/high beneath it centre, timed readings right. Each right-hand row is
+      an 8×8 glyph plus a value, drawn on the same cell as the font.
+- [x] **Everything fits the smallest slot.** The three columns fit 840×344 with
+      room over, so no column is dropped for width; only `FEELS` and `HUM` are
+      conditional.
 
-The one growing detail string was replaced by two rows of independent chips,
-each shown or hidden on its own:
+Detail shown per slot:
 
-| Slot | Detail shown |
+| Slot | Right column |
 |---|---|
-| S-H 840x344 | none — hide, don't shrink |
-| S-V 696x416 | `HI` `LO` |
-| M-H 840x696, M-V, L-H | `HI` `LO` `FEELS` / `WIND` `UP` `DN` |
-| L-H, XL-H, L-V, XL-V (≥1000px wide) | the above plus `HUM` |
+| 840×344, 696×416 and up | `UP` `DN` `WIND` |
+| ≥600px tall | plus `FEELS` |
+| ≥1000px wide | plus `HUM` |
 
-Humidity is width-gated because on an 840px slot the condition row would
-otherwise run past the screen edge.
+The condition sprite is already weather-driven — sun, moon, partly, cloud, fog,
+drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ### Open
 
 - [ ] Nothing outstanding.
 
-## Claude Code Usage
+## Claude Code Usage — 1.2.0
 
 ### Done
 
-- [x] **Calibrated the budgets** on 2026-08-28 against the real usage panel,
-      using `/usage?at=<timestamp>` to get a same-moment comparison. Session
-      54M, weekly 178M standard with the +50% promotional boost declared
-      separately so it expires on its own.
-- [x] **Autostart.** `ClaudeUsageFeed` scheduled task runs `start-hidden.vbs`
-      at logon; verified by killing the server and letting the task restart it
-      with no console window.
+- [x] **Calibrated the budgets** (2026-08-28) against the real usage panel, using
+      `/usage?at=<timestamp>` for a same-moment comparison. Session 54M, weekly
+      178M standard, with the +50% promotional boost declared separately so it
+      expires on its own.
+- [x] **Autostart.** `ClaudeUsageFeed` scheduled task runs `start-hidden.vbs` at
+      logon; verified by killing the server and letting the task restart it with
+      no console window.
+- [x] **`translation.json` format.** Was a flat map, which iCUE reads as a map of
+      *languages*; now nested under `en.translation` per `docs/translations.md`
+      and Corsair's own bundled widgets.
+- [x] **Version and last-updated in the header.** The timestamp is the feed's
+      `generatedAt`, and turns amber after three missed refresh cycles so a dead
+      feed is distinguishable from live numbers that are not moving.
+- [x] **Tap to switch views** — usage bars ↔ activity (sessions, workflows,
+      subtasks), with a two-dot indicator.
+- [x] **Scrollable lists**, replacing the row trimming that made anything past
+      the first handful unreachable. Headings carry totals, a fade marks an
+      overflowing list, and scroll position survives a refresh.
 
 ### Open
 
-- [ ] **Confirm the weekly anchor.** Thu 21:00 local, taken from the usage
-      panel. Verify against a real weekly reset.
+- [ ] **Confirm touch drag works on the device.** Scrolling is verified in a
+      browser, but `interactive` is documented only as enabling *click*
+      handling — whether the iCUE webview forwards drags is unknown. If it does
+      not, page the lists on a timer instead.
+- [ ] **Confirm the weekly anchor.** Thu 21:00 local, taken from the usage panel.
+      Verify against a real weekly reset.
 - [ ] **Re-check the calibration after August 31**, when the +50% weekly boost
       ends. The expiry is already in `limits.json`, so this is a verification
       rather than a change.
 - [ ] **The Fable weekly bar is not calibrated** — there was no Fable usage to
-      compare against, so its budget is only scaled from the old guess.
-- [ ] **Lists are hidden at 840x344.** Both widgets sit in that slot. Showing
-      workflows there needs a decision about what to drop — probably the Fable
-      bar and the reset captions.
+      compare against, so its budget is only scaled from the original guess.
 
 ## Both widgets
 
@@ -63,3 +77,17 @@ otherwise run past the screen edge.
       for C64 Weather's `tempUnit` and the usage widget's `colorTheme`. It is in
       iCUE's own QML, so it may be their bug rather than a malformed
       `data-values` — not yet investigated.
+
+## Notes for future work
+
+- **Re-importing a `.icuewidget` mints a new registration** under a fresh GUID in
+  `%APPDATA%\Corsair\CUE5\html_widgets\` and leaves the old one behind, unplaced.
+  Removing a widget from the dashboard deletes its folder, so remove-then-re-add
+  is the clean way to reload; re-importing is what accumulates duplicates.
+- **Widget properties reset on re-add** — `cityName` goes back to Copenhagen
+  every time.
+- **iCUE caches the loaded page.** Updating files on disk does nothing until the
+  widget is removed and re-added; the version in the header is the quickest way
+  to tell which build is actually running.
+- **Headless Chrome's `--window-size` includes window chrome** — see the
+  verification section in `README.md` before trusting any layout screenshot.

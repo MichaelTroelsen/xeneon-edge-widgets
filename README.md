@@ -32,14 +32,36 @@ so switching °C/°F costs no request and works from cache while offline.
 | `tempUnit` | tabs | `auto` (follows iCUE) / C / F |
 | `refreshMinutes` | slider 5–120 | 15 |
 
-Detail shown per slot, largest first: `HI LO FEELS` and `WIND HUM UP DN`, down
-to `HI LO` on 696×416, down to nothing on 840×344 — hide, don't shrink.
+The readout follows the arrangement of Corsair's stock weather widget:
+temperature and place on the left, the condition sprite with the day's low and
+high beneath it in the middle, the timed readings stacked on the right.
+
+```
+**** COMMODORE 64 WEATHER V1.2.0 ****
+LOAD"WEATHER",8,1
+
+  18°C              ☁            ↑ 06:16
+                                 ↓ 20:26
+  HAMMEL, DK      17° | 18°      ≈ 13KM/H
+
+READY.█
+```
+
+The right-hand column always carries `UP`, `DN` and `WIND`. `FEELS` is added
+above 600px of height, and `HUM` above 1000px of width — `HUM` is the one row
+that would otherwise push the column past the screen edge on an 840px slot.
+Nothing is dropped at 840×344: the three columns fit that width with room over,
+confirmed on the device.
+
+The sprite follows the conditions: sun, moon, partly cloudy, overcast, fog,
+drizzle, rain, snow and thunderstorm, each in its own palette colour, with the
+sun swapped for a moon after sunset via the API's `is_day` flag.
 
 ## Claude Code Usage
 
 Plan usage limits for Claude Code: the 5-hour session window and the weekly
-window with their reset times, plus live lists of recent workflows and their
-subtasks.
+window with their reset times, plus live lists of recent sessions, workflows and
+their subtasks.
 
 A widget is a sandboxed web page and cannot read files, so `usage-server/`
 serves what it needs on `127.0.0.1`. No credentials are read and nothing leaves
@@ -109,5 +131,7 @@ slot and a 2536px one:
   measuring the viewport.
 - Vertical slots keep the 696×416 baseline, so a taller slot buys spacing and
   density rather than inflated text.
-- When space runs out, elements are hidden outright. The hero value — the
-  temperature, the session percentage — is the last thing to go.
+- When space runs out, elements are hidden outright rather than shrunk. The hero
+  value — the temperature, the session percentage — is the last thing to go. The
+  exception is the usage widget's activity lists, which scroll instead, because
+  hiding a row there would put it out of reach entirely.

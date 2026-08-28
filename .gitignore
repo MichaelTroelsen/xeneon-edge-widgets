@@ -13,3 +13,6 @@ node_modules/
 *.log
 probe*.html
 test-*.html
+
+# Audit snapshot - regenerate with /audit-docs, git holds no history of it
+DOC-AUDIT.md

@@ -32,11 +32,34 @@ otherwise run past the screen edge.
 
 ## Claude Code Usage
 
-- [ ] **Calibrate the budgets.** `usage-server/limits.json` ships with guessed
-      `sessionBudgetWeightedTokens` / `weeklyBudgetWeightedTokens`, so the bars
-      are proportionally right but absolutely off. Compare once against `/usage`
-      and scale — procedure in `usage-server/README.md`.
-- [ ] **Confirm the weekly anchor.** Defaults to Thu 21:00 local, taken from the
-      usage panel screenshot. Verify against a real weekly reset.
-- [ ] **Autostart the feed.** The widget shows an actionable error when the feed
-      is down, but a Task Scheduler entry would avoid the manual start.
+### Done
+
+- [x] **Calibrated the budgets** on 2026-08-28 against the real usage panel,
+      using `/usage?at=<timestamp>` to get a same-moment comparison. Session
+      54M, weekly 178M standard with the +50% promotional boost declared
+      separately so it expires on its own.
+- [x] **Autostart.** `ClaudeUsageFeed` scheduled task runs `start-hidden.vbs`
+      at logon; verified by killing the server and letting the task restart it
+      with no console window.
+
+### Open
+
+- [ ] **Confirm the weekly anchor.** Thu 21:00 local, taken from the usage
+      panel. Verify against a real weekly reset.
+- [ ] **Re-check the calibration after August 31**, when the +50% weekly boost
+      ends. The expiry is already in `limits.json`, so this is a verification
+      rather than a change.
+- [ ] **The Fable weekly bar is not calibrated** — there was no Fable usage to
+      compare against, so its budget is only scaled from the old guess.
+- [ ] **Lists are hidden at 840x344.** Both widgets sit in that slot. Showing
+      workflows there needs a decision about what to drop — probably the Fable
+      bar and the reset captions.
+
+## Both widgets
+
+- [ ] **tab-buttons throws in iCUE's settings panel:**
+      `TabButtonsEditorSetting.qml:33: TypeError: Property 'rowCount' of object
+      [object Object],[object Object],[object Object] is not a function`. Fires
+      for C64 Weather's `tempUnit` and the usage widget's `colorTheme`. It is in
+      iCUE's own QML, so it may be their bug rather than a malformed
+      `data-values` — not yet investigated.

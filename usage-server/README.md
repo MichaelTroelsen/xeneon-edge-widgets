@@ -98,11 +98,52 @@ The index is incremental: a file is only re-parsed from the byte offset where it
 last ended. On the machine it was developed on, the cold build took 389 ms over
 10,411 messages and subsequent rebuilds 42 ms. It refreshes every 20 s.
 
-## Running it in the background
+## Running it at logon
 
-The widget shows an actionable error state whenever the feed is down, so a
-missed start is obvious rather than silent. To start it with Windows, point a
-Task Scheduler entry at:
+`start-hidden.vbs` launches the server with no console window, and a Task
+Scheduler entry runs it at sign-in. Register it once:
+
+```powershell
+$vbs = "<path-to-this-repo>\usage-server\start-hidden.vbs"
+$action   = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$vbs`""
+$trigger  = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+              -DontStopIfGoingOnBatteries -StartWhenAvailable `
+              -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+              -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName "ClaudeUsageFeed" -Action $action `
+  -Trigger $trigger -Settings $settings -Force
+```
+
+`ExecutionTimeLimit` must be zero — the default three-day cap would otherwise
+kill a long-running server. `MultipleInstances IgnoreNew` stops a second copy
+fighting for the port if the task is triggered again.
+
+The wrapper exists because Task Scheduler's "Hidden" setting hides the *task*,
+not the window: pointing the trigger straight at `node.exe` flashes a console on
+every sign-in. `wscript` with window style 0 avoids that. The script derives its
+paths from its own location, so moving the repo does not break the task.
+
+Useful commands:
+
+```powershell
+Start-ScheduledTask   -TaskName ClaudeUsageFeed   # start now
+Get-ScheduledTaskInfo -TaskName ClaudeUsageFeed   # last run time and result
+Unregister-ScheduledTask -TaskName ClaudeUsageFeed -Confirm:$false
+```
+
+To stop the server without removing the task:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -like '*usage-server*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+If it is ever down, the widget says so with the command to start it, rather than
+showing stale numbers as if they were current.
+
+### Running it manually instead
 
 ```
 node <path-to-this-repo>\usage-server\server.js

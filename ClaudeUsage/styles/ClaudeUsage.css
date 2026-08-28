@@ -222,6 +222,15 @@ body {
   white-space: nowrap;
 }
 
+/* Secondary measured detail under the reset caption. */
+.meter .note {
+  font-size: var(--font-sub);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .meter .sub {
   font-size: var(--font-caption);
   color: var(--muted);

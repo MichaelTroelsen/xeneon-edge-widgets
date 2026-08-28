@@ -55,6 +55,16 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       the first handful unreachable. Headings carry totals, a fade marks an
       overflowing list, and scroll position survives a refresh.
 
+- [x] **Dropped the estimated percentage** (1.3.0). Proved it cannot be made to
+      work: between two windows the measured growth was 4.28×–9.18× per token
+      class while Claude's panel charged 3.5×, and a weighted sum cannot grow
+      more slowly than its slowest component. The widget now shows measured
+      token and message counts, with the bar scaled against the user's own
+      busiest recent block.
+- [x] **`/usagehtml` debug page** on the server — both windows with full token
+      breakdowns, per-model splits, and every session/workflow/subtask as a
+      table. An addition alongside `/usage`, which is untouched.
+
 ### Open
 
 - [ ] **Confirm touch drag works on the device.** Scrolling is verified in a
@@ -62,12 +72,17 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       handling — whether the iCUE webview forwards drags is unknown. If it does
       not, page the lists on a timer instead.
 - [ ] **Confirm the weekly anchor.** Thu 21:00 local, taken from the usage panel.
-      Verify against a real weekly reset.
-- [ ] **Re-check the calibration after August 31**, when the +50% weekly boost
-      ends. The expiry is already in `limits.json`, so this is a verification
-      rather than a change.
-- [ ] **The Fable weekly bar is not calibrated** — there was no Fable usage to
-      compare against, so its budget is only scaled from the original guess.
+      Verify against a real weekly reset. Still worth doing — the reset *times*
+      remain exact and are now the widget's main claim.
+- [ ] **Decide what to do with the dead budget config.** `limits.json` still
+      carries `sessionBudgetWeightedTokens`, `weeklyBudgetWeightedTokens`,
+      `weeklyBoost` and `weeklyBuckets`, and the server still computes a
+      percentage from them for the JSON and the debug page. Either delete them
+      or keep them clearly marked as diagnostic-only.
+- [ ] **If the real formula is ever wanted**, it needs several panel readings at
+      known times across one block, then candidate models tested against them —
+      cache reads free, per-request cost, non-linear curve, reporting lag. Two
+      readings cannot separate those.
 
 ## Both widgets
 

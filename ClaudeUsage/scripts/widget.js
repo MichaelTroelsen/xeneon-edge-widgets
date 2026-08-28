@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.2.0';
+  var WIDGET_VERSION = '1.3.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -19,7 +19,7 @@
   var lastError = '';
   var view = 'usage';   /* 'usage' | 'detail' — toggled by tapping the widget */
 
-  var TITLES = { usage: 'Plan usage limits', detail: 'Activity' };
+  var TITLES = { usage: 'Claude Code usage', detail: 'Activity' };
 
   /* ---------- iCUE property access ---------- */
 
@@ -98,6 +98,10 @@
       hour12 + ':' + (mins < 10 ? '0' + mins : mins) + ' ' + suffix;
   }
 
+  function num(n) {
+    return (n == null) ? '—' : Math.round(n).toLocaleString('en-US');
+  }
+
   function compact(n) {
     if (!n) return '0';
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -106,14 +110,6 @@
   }
 
   /* ---------- rendering ---------- */
-
-  function setMeter(meterEl, fillEl, valueEl, percent, blocked) {
-    var p = clampRange(percent, 0, 100, 0);
-    fillEl.style.width = p + '%';
-    valueEl.textContent = p + '% used';
-    meterEl.classList.toggle('is-high', !blocked && p >= HIGH_WATER);
-    meterEl.classList.toggle('is-blocked', !!blocked);
-  }
 
   function stateClass(state) {
     return 'state-' + String(state || 'queued').toLowerCase().replace(/[^a-z_]/g, '');
@@ -175,25 +171,28 @@
     els.updated.classList.toggle('is-stale',
       !!data.generatedAt && (Date.now() - data.generatedAt) > staleAfter);
 
-    setMeter(els.mSession, els.sessionFill, els.sessionValue,
-      data.session ? data.session.percent : 0,
-      data.session && data.session.blocked);
-    els.sessionSub.textContent = data.session && data.session.active
-      ? formatCountdown(data.session.resetsAt)
-      : 'No active session';
+    /* Measured counts only. The percentage against a plan limit was removed in
+       1.3.0: no weighting of these token counts reproduces Claude's own panel,
+       so any percentage here would be a number we invented. */
+    var s = data.session || {};
+    var st = s.tokens || {};
+    els.sessionValue.textContent = compact(st.total) + ' tok';
+    els.sessionSub.textContent = s.active ? formatCountdown(s.resetsAt) : 'No active session';
+    /* The bar is this block against your own busiest recent block, never
+       against a plan limit — so the note says so, or the bar reads as one. */
+    var peak = s.peakWeighted || 0;
+    var frac = peak > 0 ? Math.min(100, (s.usedWeighted / peak) * 100) : 0;
+    els.sessionFill.style.width = frac + '%';
+    els.mSession.classList.toggle('is-high', frac >= HIGH_WATER);
 
-    setMeter(els.mWeekly, els.weeklyFill, els.weeklyValue,
-      data.weekly ? data.weekly.percent : 0, false);
-    els.weeklySub.textContent = formatWeekday(data.weekly ? data.weekly.resetsAt : null);
+    els.sessionNote.textContent = num(st.messages) + ' msgs · ' + compact(st.output) + ' out' +
+      (peak > 0 ? ' · ' + Math.round(frac) + '% of peak block' : '');
 
-    var bucket = data.weekly && data.weekly.buckets && data.weekly.buckets[0];
-    if (bucket) {
-      els.mBucket.style.display = '';
-      els.bucketName.textContent = bucket.label;
-      setMeter(els.mBucket, els.bucketFill, els.bucketValue, bucket.percent, false);
-    } else {
-      els.mBucket.style.display = 'none';
-    }
+    var w = data.weekly || {};
+    var wt = w.tokens || {};
+    els.weeklyValue.textContent = compact(wt.total) + ' tok';
+    els.weeklySub.textContent = formatWeekday(w.resetsAt);
+    els.weeklyNote.textContent = num(wt.messages) + ' msgs · ' + compact(wt.output) + ' out';
 
     var describeWorkflow = function (wf) {
       return wf.project + ' · ' + compact(wf.tokens);
@@ -331,13 +330,10 @@
     els.sessionValue = document.getElementById('session-value');
     els.sessionSub = document.getElementById('session-sub');
     els.mWeekly = document.getElementById('m-weekly');
-    els.weeklyFill = document.getElementById('weekly-fill');
     els.weeklyValue = document.getElementById('weekly-value');
     els.weeklySub = document.getElementById('weekly-sub');
-    els.mBucket = document.getElementById('m-bucket');
-    els.bucketName = document.getElementById('bucket-name');
-    els.bucketFill = document.getElementById('bucket-fill');
-    els.bucketValue = document.getElementById('bucket-value');
+    els.sessionNote = document.getElementById('session-note');
+    els.weeklyNote = document.getElementById('weekly-note');
     els.workflows = document.getElementById('workflows');
     els.subtasks = document.getElementById('subtasks');
     els.errorHint = document.getElementById('error-hint');

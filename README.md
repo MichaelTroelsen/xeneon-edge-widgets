@@ -72,10 +72,16 @@ under `~/.claude`.
 node usage-server/server.js   # http://127.0.0.1:41777/usage
 ```
 
-Reset times are exact. **The percentages are estimates** — Anthropic does not
-publish the plan limits, so the server divides measured token usage by a budget
-you calibrate once. The widget carries a permanent `EST` badge for that reason.
-See [usage-server/README.md](usage-server/README.md).
+**Everything the widget shows is measured.** Earlier versions estimated a
+percentage against the plan limit; that was removed in 1.3.0 after it proved
+impossible to reproduce Anthropic's accounting from token counts — the arithmetic
+is in [usage-server/README.md](usage-server/README.md). The widget now shows
+token and message counts with the exact reset times, and its bar is scaled
+against your own busiest recent 5-hour block, not against a limit.
+
+For a full human-readable view — token breakdown per class, per-model split, and
+every session, workflow and subtask as a table — open
+**<http://127.0.0.1:41777/usagehtml>**.
 
 | Setting | Type | Default |
 |---|---|---|

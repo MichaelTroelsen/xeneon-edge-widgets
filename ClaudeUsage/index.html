@@ -26,12 +26,11 @@
   <div class="widget-root">
     <div class="content">
       <header class="head">
-        <span class="title" id="title">Plan usage limits</span>
+        <span class="title" id="title">Claude Code usage</span>
         <span class="plan" id="plan"></span>
         <span class="updated" id="updated"></span>
         <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i></span>
         <span class="version" id="version"></span>
-        <span class="est" title="Estimated locally">EST</span>
       </header>
 
       <div class="view view-usage">
@@ -44,25 +43,16 @@
             </div>
             <div class="track"><div class="fill" id="session-fill"></div></div>
             <div class="sub" id="session-sub"></div>
+            <div class="note" id="session-note"></div>
           </div>
-
-          <div class="section-label">Weekly limits</div>
 
           <div class="meter" id="m-weekly">
             <div class="meter-top">
-              <span class="name">All models</span>
+              <span class="name">This week</span>
               <span class="value" id="weekly-value">--</span>
             </div>
-            <div class="track"><div class="fill" id="weekly-fill"></div></div>
             <div class="sub" id="weekly-sub"></div>
-          </div>
-
-          <div class="meter bucket" id="m-bucket">
-            <div class="meter-top">
-              <span class="name" id="bucket-name"></span>
-              <span class="value" id="bucket-value">--</span>
-            </div>
-            <div class="track"><div class="fill" id="bucket-fill"></div></div>
+            <div class="note" id="weekly-note"></div>
           </div>
         </section>
 

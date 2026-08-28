@@ -19,7 +19,8 @@ machine; every number comes from files Claude Code already writes under
 |---|---|---|
 | 5-hour reset time | first message of the current block, floored to the hour, + 5h | **exact** |
 | Weekly reset time | the weekly anchor in `limits.json` (default Thu 21:00 local) | exact once the anchor is right |
-| 5-hour / weekly percentage | weighted token totals from `~/.claude/projects/**/*.jsonl` ÷ the budgets in `limits.json` | **estimated** |
+| Token counts per window | summed straight from the `usage` block of every assistant message | **exact** |
+| 5-hour / weekly percentage | weighted totals ÷ the budgets in `limits.json` | **unreliable — see below** |
 | Session list | transcripts directly under `~/.claude/projects/<project>/`, as opposed to the nested ones belonging to subagents and workflows | exact |
 | Workflow list | `~/.claude/projects/*/*/workflows/wf_*.json` | exact |
 | Subtask list | the `workflow_agent` entries inside those files, falling back to open tasks in each repo's `.claude/tasks/whattask.json` | exact |
@@ -30,9 +31,43 @@ the opening words of the prompt. The `slug` some transcripts carry is absent fro
 most of them and a UUID says nothing, so the first message is the only label that
 names every session.
 
-The widget carries a permanent `EST` badge because of row 3.
+### The percentage does not work — don't trust it
 
-### Why the percentage is an estimate
+It is still in the JSON, and the debug page still shows it, but **the widget
+stopped displaying it in 1.3.0** and you should not rely on it.
+
+Calibrated at 16:17 on 2026-08-28 it matched Claude's own panel exactly, 6% vs
+6%. Eighty minutes later it read 47% against the panel's 27%. The token mix had
+barely moved — ~84% cache reads and Opus-only in both windows — so this is not a
+mix effect.
+
+The arithmetic rules out fixing it by re-weighting. Between those two windows the
+measured growth per class was:
+
+| Class | Growth |
+|---|---|
+| input | 4.28× |
+| output | 5.40× |
+| cache read | 6.88× |
+| cache creation | 9.18× |
+
+The panel charged the second window 21 points against the first's 6 — a growth of
+3.5×, or 3.08–4.00× allowing for rounding. A weighted sum can only grow somewhere
+between its slowest and fastest component, so the least this model can report is
+4.28× — above the 4.00× ceiling. **No non-negative weighting of these token
+counts can reproduce Anthropic's accounting.** The model is structurally wrong,
+not mis-parameterised.
+
+What that leaves unexplained is what Anthropic actually counts. Cache reads
+charged far below their token count, a per-request component that does not scale
+with tokens, a non-linear curve, and reporting lag in the panel are all
+consistent with the data; two readings cannot distinguish them.
+
+Everything else the server reports is measured, so the widget now shows token
+counts, message counts and the reset times, with the bar scaled against your own
+busiest recent block rather than against a limit nobody publishes.
+
+### How the estimate was meant to work
 
 Anthropic does not publish the plan limits, and there is no local record of your
 consumption against them. `quotaLimits` only appears in a transcript once you
@@ -98,6 +133,10 @@ on another day set `weekday` (0 = Sunday) and `hour`.
   the given time, so it does not count usage from after it. This is what makes
   calibration against a timestamped screenshot possible.
 - `GET /health` — liveness plus the last build time
+- `GET /usagehtml` — **a human-readable debug page**: both windows with their
+  full token breakdown and per-model split, every session, workflow and subtask
+  as a table, and the config actually in force. An addition alongside `/usage`,
+  which is unchanged and remains what the widget reads. Self-refreshes every 30s.
 
 ## Cost
 

@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const usagehtml = require('./usagehtml');
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
@@ -175,7 +176,17 @@ function parseLines(text, cfg, records, meta) {
     const t = Date.parse(obj.timestamp);
     if (!Number.isFinite(t)) continue;
     const model = obj.message.model || 'unknown';
-    records.push({ t, model, w: weightOf(obj.message.usage, model, cfg) });
+    const u = obj.message.usage;
+    records.push({
+      t, model,
+      w: weightOf(u, model, cfg),
+      /* Raw class counts kept alongside the weighted figure: the weighted one
+         is only meaningful relative to itself, these are what a human reads. */
+      i: u.input_tokens || 0,
+      o: u.output_tokens || 0,
+      cc: u.cache_creation_input_tokens || 0,
+      cr: u.cache_read_input_tokens || 0
+    });
   }
 }
 
@@ -303,6 +314,47 @@ function sumWeighted(records, from, to, models) {
     total += rec.w;
   }
   return total;
+}
+
+/* The raw counts behind a window, which is what the debug page shows and what
+   the widget reports now that the percentage turned out to be unreproducible. */
+function sumTokens(records, from, to) {
+  const acc = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0, messages: 0, byModel: {} };
+  for (const rec of records) {
+    if (rec.t < from || rec.t >= to) continue;
+    acc.messages++;
+    acc.input += rec.i;
+    acc.output += rec.o;
+    acc.cacheCreation += rec.cc;
+    acc.cacheRead += rec.cr;
+    const m = acc.byModel[rec.model] || (acc.byModel[rec.model] = { messages: 0, output: 0, weighted: 0 });
+    m.messages++;
+    m.output += rec.o;
+    m.weighted += rec.w;
+  }
+  acc.total = acc.input + acc.output + acc.cacheCreation + acc.cacheRead;
+  return acc;
+}
+
+/* Every 5-hour block in the window, so the current one can be shown against the
+   user's own history instead of against a limit nobody publishes. */
+function blockHistory(records, now) {
+  const blocks = [];
+  let start = null;
+  let last = null;
+  for (const rec of records) {
+    if (start === null || rec.t - start >= SESSION_BLOCK_MS || rec.t - last >= SESSION_BLOCK_MS) {
+      const d = new Date(rec.t);
+      d.setMinutes(0, 0, 0);
+      start = d.getTime();
+      blocks.push({ start, end: start + SESSION_BLOCK_MS, weighted: 0, messages: 0 });
+    }
+    const b = blocks[blocks.length - 1];
+    b.weighted += rec.w;
+    b.messages++;
+    last = rec.t;
+  }
+  return blocks;
 }
 
 function pct(used, budget) {
@@ -469,6 +521,16 @@ function build(nowOverride) {
   /* A 429 seen inside the current block is authoritative: prefer its reset. */
   const quotaFresh = lastQuota && block && lastQuota.seenAt >= block.start && lastQuota.resetsAt > now;
 
+  const sessionTokens = block ? sumTokens(records, block.start, Math.min(block.end, now)) : sumTokens(records, 0, 0);
+  const weeklyTokens = sumTokens(records, week.start, weeklyEnd);
+
+  /* Busiest complete block in the window, used as the bar's reference. Complete
+     only: the block in progress would otherwise scale against itself. */
+  const history = blockHistory(records, now);
+  const peak = history
+    .filter(b => !block || b.start !== block.start)
+    .reduce((max, b) => Math.max(max, b.weighted), 0);
+
   return {
     generatedAt: now,
     estimated: true,
@@ -478,6 +540,11 @@ function build(nowOverride) {
       /* Raw totals so calibration is not limited by a rounded percentage. */
       usedWeighted: Math.round(sessionUsed),
       budgetWeighted: cfg.sessionBudgetWeightedTokens,
+      /* Exact, unlike percent: measured counts and a reference drawn from the
+         user's own history rather than an unpublished limit. */
+      tokens: sessionTokens,
+      peakWeighted: Math.round(peak),
+      startsAt: block ? block.start : null,
       resetsAt: quotaFresh && lastQuota.type === 'five_hour' ? lastQuota.resetsAt : (block ? block.end : null),
       blocked: !!(quotaFresh && lastQuota.status === 'rejected'),
       active: !!block
@@ -486,6 +553,8 @@ function build(nowOverride) {
       percent: pct(weeklyUsed, weeklyBudget(cfg, cfg.weeklyBudgetWeightedTokens, now)),
       usedWeighted: Math.round(weeklyUsed),
       budgetWeighted: weeklyBudget(cfg, cfg.weeklyBudgetWeightedTokens, now),
+      tokens: weeklyTokens,
+      startsAt: week.start,
       resetsAt: week.end,
       buckets
     },
@@ -525,6 +594,15 @@ const server = http.createServer((req, res) => {
      Origin: null. Bound to loopback only. */
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
+
+  /* Human-readable debug view. An addition alongside /usage, which is
+     deliberately left exactly as the widget expects it. */
+  if (req.url === '/usagehtml' || req.url.startsWith('/usagehtml?')) {
+    if (!snapshot) rebuild();
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(usagehtml.render(snapshot, loadConfig()));
+    return;
+  }
 
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -70,7 +70,13 @@ under `~/.claude`.
 
 ```bash
 node usage-server/server.js   # http://127.0.0.1:41777/usage
+claude auth login             # once, so it can read your real usage
 ```
+
+The activity data is read from local files. Only the two percentages need
+authentication, and the widget works without it — see
+[Authentication](usage-server/README.md#authentication) for what the token is
+used for, how it stays valid, and what to do when the badge says `LOCAL`.
 
 **The percentages are Anthropic's own.** The feed reads them from the same
 undocumented OAuth endpoint Claude Code's `/usage` panel uses, so the widget

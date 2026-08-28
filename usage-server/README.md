@@ -9,9 +9,14 @@ node server.js
 # Claude usage feed on http://127.0.0.1:41777/usage
 ```
 
-Bound to `127.0.0.1` only. No credentials are read and nothing leaves the
-machine; every number comes from files Claude Code already writes under
-`~/.claude`.
+Bound to `127.0.0.1` only. The activity data — sessions, workflows, subtasks,
+token counts — is read from files Claude Code already writes under `~/.claude`
+and never leaves the machine.
+
+The two **usage percentages** are different: they are fetched from Anthropic
+using your Claude Code OAuth token, because they cannot be derived locally. That
+is the only outbound traffic, it goes only to `api.anthropic.com` and
+`console.anthropic.com`, and it is optional — see [Authentication](#authentication).
 
 ## Where each number comes from
 
@@ -20,7 +25,9 @@ machine; every number comes from files Claude Code already writes under
 | 5-hour reset time | first message of the current block, floored to the hour, + 5h | **exact** |
 | Weekly reset time | the weekly anchor in `limits.json` (default Thu 21:00 local) | exact once the anchor is right |
 | Token counts per window | summed straight from the `usage` block of every assistant message | **exact** |
-| 5-hour / weekly percentage | weighted totals ÷ the budgets in `limits.json` | **unreliable — see below** |
+| 5-hour / weekly **percentage** | Anthropic's `/api/oauth/usage`, needs [authentication](#authentication) | **exact — the same numbers as Claude Code's own panel** |
+| Plan label, e.g. `Max (5x)` | `/api/oauth/profile` → `rate_limit_tier` | exact when authenticated |
+| *(legacy)* locally estimated percentage | weighted totals ÷ budgets in `limits.json` | **unreliable, no longer shown — see below** |
 | Session list | transcripts directly under `~/.claude/projects/<project>/`, as opposed to the nested ones belonging to subagents and workflows | exact |
 | Workflow list | `~/.claude/projects/*/*/workflows/wf_*.json` | exact |
 | Subtask list | the `workflow_agent` entries inside those files, falling back to open tasks in each repo's `.claude/tasks/whattask.json` | exact |
@@ -61,43 +68,96 @@ This is the same approach as
 [jens-duttke/usage-monitor-for-claude](https://github.com/jens-duttke/usage-monitor-for-claude),
 which documents the response shape.
 
-**Handling of the token.** It is read from `~/.claude/.credentials.json` into
-memory, used for one `Authorization` header per request, and never logged,
-written anywhere, or included in `/usage`'s output. Requests go only to
-`api.anthropic.com`. The endpoint is polled once a minute regardless of how often
-the index rebuilds.
-
-**When it fails, nothing breaks.** Every error is non-fatal: `official.ok` goes
-false with the reason, and the widget falls back to the measured token counts.
-The common failure is an expired access token — Claude Code does not always
-rewrite the credentials file when it refreshes, and a stale file gives `HTTP 401`.
-It recovers on its own the next time Claude Code writes the file.
-
 **It is undocumented and may vanish.** Treat the measured path as the one that is
 guaranteed to keep working.
 
-### `CLAUDE_CODE_OAUTH_TOKEN` cannot be used for this — tested
+## Authentication
 
-The obvious idea is to skip the credentials file and use the long-lived token
-from `claude setup-token`, exposed as `CLAUDE_CODE_OAUTH_TOKEN`. It does not
-work. The endpoint rejects it:
+### Setting it up
 
-```json
-{ "type": "permission_error",
-  "message": "OAuth token does not meet scope requirement user:profile",
-  "details": { "required_scopes": ["user:profile"], "error_code": "oauth_scope_insufficient" } }
+One command, once:
+
+```
+claude auth login
 ```
 
-`setup-token` mints an inference-scoped token. The token in
-`.credentials.json`, written by `claude auth login`, carries five scopes —
-`user:file_upload`, `user:inference`, `user:mcp_servers`, **`user:profile`**,
-`user:sessions:claude_code` — and `user:profile` is the one this endpoint
-requires.
+That writes `~/.claude/.credentials.json` with a token carrying the five scopes
+Claude Code uses, including the **`user:profile`** scope this endpoint requires.
+The server notices the file being written and picks it up within a second — no
+restart, no configuration, nothing to paste anywhere.
 
-The server tries **both** sources anyway, credentials file first and
-`CLAUDE_CODE_OAUTH_TOKEN` second, reporting which one it used and why the last
-one failed. Today the environment variable always loses on scope; keeping it in
-the chain means a profile-scoped token would be picked up with no code change.
+You can tell which mode you are in from the widget's header badge:
+
+| Badge | Meaning |
+|---|---|
+| `LIVE` (green) | percentages are Anthropic's own |
+| `LOCAL` (grey) | endpoint unreachable; measured token counts shown instead. Hover for the reason |
+
+Skipping this entirely is a valid choice. Everything except the two percentages
+works without any credential.
+
+### What the server does with the token
+
+- Reads it from `~/.claude/.credentials.json` into memory.
+- Sends it as one `Authorization: Bearer` header per request, only to
+  `api.anthropic.com` (usage, profile) and `console.anthropic.com` (refresh).
+- **Never** logs it, prints it, or includes it in `/usage`'s output. The served
+  payload is scanned for `accessToken`, `refreshToken`, `Bearer` and `sk-ant` as
+  part of testing.
+- Polls once a minute, backing off exponentially to 30 minutes on failure so a
+  broken credential cannot hammer the endpoint.
+
+### Staying authenticated
+
+The access token lasts about eight hours, and Claude Code does not reliably
+rewrite the credentials file when it refreshes — so without help the live path
+would die the same evening you set it up.
+
+The server therefore refreshes the token itself, a minute before expiry:
+
+```
+POST https://console.anthropic.com/v1/oauth/token
+{ "grant_type": "refresh_token", "refresh_token": "…",
+  "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e" }
+```
+
+The response contains a **new refresh token** — refreshing rotates it — so the
+result is written back to the same file Claude Code reads. Without that
+write-back, Claude Code's copy would become the stale one. The write is atomic
+(temp file, then rename) and a one-time backup is kept at
+`.credentials.json.before-usage-server`.
+
+> Claude Code and the server share one rotating credential. If Claude Code
+> refreshes in memory without persisting, its rotation can invalidate the copy on
+> disk and the badge drops to `LOCAL`. Another `claude auth login` restores it.
+
+### Troubleshooting
+
+| Error in `official.error` | What it means | Fix |
+|---|---|---|
+| `HTTP 401` / `access token expired` | the stored token is stale | usually self-heals via refresh; otherwise `claude auth login` |
+| `Refresh token not found or invalid` | the refresh token was rotated away by Claude Code and never persisted | `claude auth login` — nothing can recover from this automatically |
+| `HTTP 403 — …scope requirement user:profile` | a token without the profile scope was used, e.g. from `setup-token` | `claude auth login` |
+| `HTTP 429 — Rate limited` | too many requests; about the caller, not the credential | wait — the backoff clears it |
+| `no token: neither … nor CLAUDE_CODE_OAUTH_TOKEN` | never authenticated | `claude auth login` |
+
+Read the current state at any time on the [debug page](#endpoints),
+`http://127.0.0.1:41777/usagehtml`.
+
+### What does not work
+
+Two plausible shortcuts, both tested and both dead ends:
+
+- **`CLAUDE_CODE_OAUTH_TOKEN`** (from `claude setup-token`) — long-lived, but
+  inference-scoped. The endpoint rejects it: `HTTP 403 — OAuth token does not
+  meet scope requirement user:profile`, and `setup-token` offers no way to
+  request other scopes. The server still tries it as a fallback, so a
+  profile-scoped token would be picked up automatically.
+- **`CLAUDE_CODE_API_KEY` / any `sk-ant-api…` key** — rejected as
+  `HTTP 401 Invalid bearer token`; the same key returns `200` on `/v1/models`,
+  so the key is valid and simply the wrong credential type. It also measures the
+  wrong thing: an API key bills pay-per-token against your organisation's API
+  account, while these percentages are your **subscription** limits.
 
 ### Why the local estimate was abandoned
 

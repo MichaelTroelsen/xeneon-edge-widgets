@@ -18,6 +18,7 @@ const os = require('os');
 const http = require('http');
 const usagehtml = require('./usagehtml');
 const official = require('./official');
+const statusline = require('./statusline');
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
@@ -117,10 +118,8 @@ function refreshOfficial() {
     });
 }
 
-/* What the snapshot should carry: the live reading if the last poll worked,
-   otherwise the most recent good one flagged as stale, and only after that the
-   failure itself. */
-function officialForSnapshot(now) {
+/* The OAuth endpoint's reading, or the most recent good one flagged as stale. */
+function officialFromApi(now) {
   if (officialState.ok) return officialState;
   if (officialGood && (now - officialGood.fetchedAt) < OFFICIAL_STALE_MS) {
     return Object.assign({}, officialGood, {
@@ -129,7 +128,30 @@ function officialForSnapshot(now) {
       error: officialState.error || null
     });
   }
-  return officialState;
+  return null;
+}
+
+/* What the snapshot should carry: whichever of the two paths to Anthropic's
+   own figures answered most recently, and only the failure itself if neither
+   did.
+
+   Two paths, because they fail in opposite conditions. The OAuth endpoint
+   answers whether or not anyone is using Claude Code, but is throttled hard
+   enough that a 429 can persist for hours. The statusline costs no request and
+   so cannot be throttled, but only updates while a session is rendering one.
+   Between them something is usually current, and preferring the newer reading
+   needs no rule about which source is better. */
+function officialForSnapshot(now) {
+  const fromStatusline = statusline.read(now);
+  const fromApi = officialFromApi(now);
+  if (fromStatusline && fromApi) {
+    const a = fromStatusline.staleSince || fromStatusline.fetchedAt;
+    const b = fromApi.staleSince || fromApi.fetchedAt;
+    return a >= b ? fromStatusline : fromApi;
+  }
+  /* officialState last: it is the failure, and worth showing only when there
+     is no reading of either kind to show instead. */
+  return fromStatusline || fromApi || officialState;
 }
 
 /* The credentials file being rewritten is the signal that a retry is worth

@@ -41,8 +41,52 @@ names every session.
 
 ## Anthropic's own figures
 
+The same figures reach this server two ways. They fail in opposite conditions,
+so the snapshot takes whichever answered most recently and the widget shows
+`LIVE` either way. `official.source` in `/usage` says which one you are looking
+at.
+
+### 1. The statusline (no request, preferred)
+
+Claude Code hands its statusline script a JSON object on stdin, and since
+**v2.1.80** that object carries `rate_limits` - the five-hour and seven-day
+windows, already fetched by Claude Code itself:
+
+```json
+"rate_limits": {
+  "five_hour": { "used_percentage": 23.5, "resets_at": 1738425600 },
+  "seven_day": { "used_percentage": 41.2, "resets_at": 1738857600 }
+}
+```
+
+`statusline-tee.js` wraps whatever statusline you already run: it saves those
+figures to `~/.claude/statusline-usage.json` and passes stdin through to the
+real command unchanged, so your status bar is unaffected. Point
+`statusLine.command` in `~/.claude/settings.json` at it, with your existing
+command as the arguments:
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": "node <repo>/usage-server/statusline-tee.js npx -y ccstatusline@latest",
+  "padding": 0
+}
+```
+
+This costs **zero API requests**, so it cannot be rate-limited. Its limits are
+the ones the [statusline
+docs](https://code.claude.com/docs/en/statusline) state: the field appears only
+for Pro/Max subscribers, only after the session's first API response, each
+window can be absent independently, and a window disappears once its
+`resets_at` passes. The practical one is that nothing updates it while no
+Claude Code session is open — so `statusline.js` shows a reading as current for
+10 minutes, degrades it to stale after that, and stops serving it entirely at
+45 minutes rather than presenting an undercount as live.
+
+### 2. The OAuth endpoint (a request, and heavily throttled)
+
 The numbers Claude Code's `/usage` panel shows come from an **undocumented**
-OAuth endpoint, and the server now reads them directly:
+OAuth endpoint, which the server also reads directly:
 
 ```
 GET https://api.anthropic.com/api/oauth/usage
@@ -107,7 +151,13 @@ works without any credential.
   payload is scanned for `accessToken`, `refreshToken`, `Bearer` and `sk-ant` as
   part of testing.
 - Polls **every twelve minutes**, not every rebuild. One-minute polling drew a
-  `429` within the hour. The budget is also **shared across everything on the
+  `429` within the hour. Be aware that no polite cadence necessarily fixes this:
+  [anthropics/claude-code#30930](https://github.com/anthropics/claude-code/issues/30930)
+  (open) reports persistent 429s with `retry-after: 0` on this endpoint for Max
+  users at 30s/60s/120s, #31637 reports 10-minute polling throttled within the
+  hour and 30-minute backoff still failing for hours, and #31055 reports a 429
+  after a *single* request. That is why the statusline path above is preferred
+  and this one is the backstop, not the reverse. The budget is also **shared across everything on the
   machine using your account**, and there is usually more of that than you
   expect: this machine had **four** Stream Deck plugins calling the same
   `/api/oauth/usage` endpoint (`com.singerous.ai-limits`,
@@ -290,8 +340,12 @@ figure, so divide it by the multiplier to get the standard one.
 
 ### The weekly anchor
 
-The default is Thursday 21:00 local, matching the usage panel. If yours resets
-on another day set `weekday` (0 = Sunday) and `hour`.
+The default is Thursday 21:00 local. This is now **confirmed** rather than
+copied from the panel: the statusline's `seven_day.resets_at`, which is
+Anthropic's own value, came back as Thursday 21:00 local. It only affects the
+measured `LOCAL` fallback anyway — both live paths carry absolute reset
+timestamps. If yours resets on another day set `weekday` (0 = Sunday) and
+`hour`.
 
 ## Endpoints
 

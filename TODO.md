@@ -77,9 +77,9 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       browser, but `interactive` is documented only as enabling *click*
       handling — whether the iCUE webview forwards drags is unknown. If it does
       not, page the lists on a timer instead.
-- [ ] **Confirm the weekly anchor.** Thu 21:00 local, taken from the usage panel.
-      Verify against a real weekly reset. Still worth doing — the reset *times*
-      remain exact and are now the widget's main claim.
+- [x] **Confirmed the weekly anchor** (2026-08-28). Thu 21:00 local was taken
+      from the usage panel; the statusline's `seven_day.resets_at` — Anthropic's
+      own value — agrees. Only affects the measured `LOCAL` fallback anyway.
 - [ ] **The credentials file's access token is stale.** It expired 2026-08-28
       01:21 UTC and the file has not been rewritten since 27 Aug 19:21, even
       though Claude Code is running — so it holds the live token in process, not

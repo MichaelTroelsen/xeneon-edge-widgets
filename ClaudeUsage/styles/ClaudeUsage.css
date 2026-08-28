@@ -15,13 +15,16 @@
   --radius: calc(var(--layout-unit) * 2);
   --bar-h: calc(var(--layout-unit) * 2.4);
 
-  /* Type */
-  --font-title: calc(var(--layout-unit) * 4.4);
-  --font-name: calc(var(--layout-unit) * 4);
-  --font-value: calc(var(--layout-unit) * 4.4);
-  --font-sub: calc(var(--layout-unit) * 3.1);
-  --font-section: calc(var(--layout-unit) * 3.4);
-  --font-row: calc(var(--layout-unit) * 3.2);
+  /* Type. Every step is +0.5 layout units over the original scale, which is
+     about +2px at the 840x344 slot and proportionally more on larger ones. */
+  --font-title: calc(var(--layout-unit) * 4.9);
+  --font-name: calc(var(--layout-unit) * 4.5);
+  --font-value: calc(var(--layout-unit) * 4.9);
+  --font-sub: calc(var(--layout-unit) * 3.6);
+  --font-section: calc(var(--layout-unit) * 3.9);
+  --font-row: calc(var(--layout-unit) * 3.7);
+  --font-badge: calc(var(--layout-unit) * 3.1);
+  --font-meta: calc(var(--layout-unit) * 3.3);
 
   /* Dark theme (default) */
   --bg: #1b1b19;
@@ -103,7 +106,7 @@ body {
 
 .head .version {
   margin-left: auto;
-  font-size: calc(var(--layout-unit) * 2.6);
+  font-size: var(--font-badge);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -111,7 +114,7 @@ body {
 /* The percentages are computed locally from transcript token counts, not read
    back from Anthropic. The badge says so, permanently. */
 .head .est {
-  font-size: calc(var(--layout-unit) * 2.6);
+  font-size: var(--font-badge);
   font-weight: 600;
   letter-spacing: 0.08em;
   color: var(--muted);
@@ -271,7 +274,7 @@ body {
 .list li .meta {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: calc(var(--layout-unit) * 2.8);
+  font-size: var(--font-meta);
   font-variant-numeric: tabular-nums;
 }
 
@@ -327,7 +330,7 @@ body {
 @media (max-height: 460px) {
   .lists { display: none; }
   .meters { justify-content: space-evenly; }
-  :root { --font-value: calc(var(--layout-unit) * 6); }
+  :root { --font-value: calc(var(--layout-unit) * 6.5); }
 }
 
 /* M-H 840x696 — too narrow for meters and lists side by side, tall enough for

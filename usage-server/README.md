@@ -30,10 +30,48 @@ is the only outbound traffic, it goes only to `api.anthropic.com` and
 | Plan label, e.g. `Max (5x)` | `/api/oauth/profile` → `rate_limit_tier` | exact when authenticated |
 | *(legacy)* locally estimated percentage | weighted totals ÷ budgets in `limits.json` | **unreliable, no longer shown — see below** |
 | Session list | transcripts directly under `~/.claude/projects/<project>/`, as opposed to the nested ones belonging to subagents and workflows | exact |
-| Workflow list | `~/.claude/projects/*/*/workflows/wf_*.json` | exact |
-| Subtask list | the `workflow_agent` entries inside those files, falling back to open tasks in each repo's `.claude/tasks/whattask.json` | exact |
+| Workflow list | running: `~/.claude/projects/*/*/subagents/workflows/wf_*/journal.jsonl` | exact |
+| Subtask list | running: the agents in that journal with a `started` line and no `result` | exact |
 
 A session counts as `running` if it produced a message in the last 15 minutes.
+
+### The lists show what is running, not what has run
+
+They used to show everything from the last seven days, which on an idle machine
+meant twenty sessions, eighteen finished workflows and twenty-three finished
+subtasks — a busy-looking panel describing nothing that was happening.
+
+The live source is **not** `wf_*.json`. That file is written when a run *ends*,
+so a filter that reads its `status` can never match a run in flight; the first
+attempt at this did exactly that and the widget sat empty through a whole
+60-second probe run. What exists while a run is going is its transcript
+directory:
+
+```
+subagents/workflows/wf_<runId>/
+  journal.jsonl          {"type":"started",…} per agent, {"type":"result",…} when it ends
+  agent-<id>.jsonl       the agent's messages; the first is its prompt
+  agent-<id>.meta.json   {"agentType","spawnDepth","model"}
+```
+
+An agent with a `started` line and no `result` is running, and a run with any
+such agent is running. A killed run would otherwise advertise itself as live
+forever, so the directory must also have been touched within 15 minutes.
+
+Two labelling limits follow from what is actually on disk. A subtask row is
+named by the **first line of the agent's prompt** — a workflow's `opts.label`
+names the row in `/workflows` but is never written to disk, so it cannot name
+anything here. And a workflow is named from the script file in the session's
+`workflows/scripts/`; a run launched from a script kept elsewhere (this repo's
+`test/` directory, say) falls back to its short run id, as in `wf f354826c-6c2`.
+
+Queued `whattask.json` tasks are deliberately **not** shown as subtasks. Waiting
+to start is not running. The count is reported instead, so an empty list reads
+`Nothing running · 86 queued`.
+
+Verify it end to end with `test/activity-probe.workflow.js`, which runs N
+subtasks that genuinely block for S seconds, and `test/activity-probe-check.js`,
+which watches the feed while they do and fails if the lists never showed them.
 Its label comes from the first user message — usually a slash command, otherwise
 the opening words of the prompt. The `slug` some transcripts carry is absent from
 most of them and a UUID says nothing, so the first message is the only label that

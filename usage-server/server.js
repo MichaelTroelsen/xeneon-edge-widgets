@@ -56,6 +56,10 @@ const FINISHED_TASK = new Set([
    whose file goes untouched for longer than this - workflows here have taken
    minutes, so the trade favours not showing a ghost as live. */
 const WORKFLOW_ACTIVE_MS = 60 * 60 * 1000;
+/* How long a transcript directory with unfinished agents keeps counting as a
+   live run. Long enough for a slow agent, short enough that a killed run stops
+   being advertised as running. */
+const LIVE_RUN_STALE_MS = 15 * 60 * 1000;
 
 let config = null;
 let configMtime = 0;
@@ -608,6 +612,163 @@ function collectWorkflows() {
   return { workflows: workflows.slice(0, MAX_WORKFLOWS), subtasks: subtasks.slice(0, MAX_SUBTASKS) };
 }
 
+/* ------------------------------------------------------------- live runs */
+
+/* A running workflow leaves no wf_*.json. That file is written when the run
+   ENDS, which is why filtering it by a non-terminal status matched nothing and
+   the widget sat empty through a whole 60-second probe run - verified
+   2026-08-28 by watching both paths during one.
+
+   What does exist while a run is in flight is its transcript directory:
+
+     subagents/workflows/wf_<runId>/
+       journal.jsonl              {"type":"started",...} per agent,
+                                  {"type":"result",...} when it finishes
+       agent-<id>.jsonl           the agent's messages, first one is its prompt
+       agent-<id>.meta.json       {"agentType","spawnDepth","model"}
+
+   So an agent that has started and has no result is running, and a run with
+   any such agent is running. That is the only live source, and it is the one
+   the activity lists use. */
+function readJournal(dir) {
+  const started = new Map();
+  const finished = new Set();
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(dir, 'journal.jsonl'), 'utf8');
+  } catch (err) {
+    return null;
+  }
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch (err) { continue; }
+    if (!rec.agentId) continue;
+    if (rec.type === 'started') started.set(rec.agentId, rec);
+    else if (rec.type === 'result' || rec.type === 'error') finished.add(rec.agentId);
+  }
+  return { started, finished };
+}
+
+/* The agent's own prompt is the only human-readable thing about it on disk
+   while it runs - opts.label never lands there - so the first line of it names
+   the row, the same way a session is named by its first user message. */
+function agentLabel(dir, agentId) {
+  try {
+    const fd = fs.openSync(path.join(dir, 'agent-' + agentId + '.jsonl'), 'r');
+    const buf = Buffer.alloc(8192);
+    const read = fs.readSync(fd, buf, 0, 8192, 0);
+    fs.closeSync(fd);
+    const line = buf.slice(0, read).toString('utf8').split('\n')[0];
+    const rec = JSON.parse(line);
+    const content = rec && rec.message && rec.message.content;
+    const text = typeof content === 'string'
+      ? content
+      : (Array.isArray(content) ? (content.find(c => c.type === 'text') || {}).text || '' : '');
+    const first = String(text).split('\n').find(l => l.trim());
+    return first ? first.trim().slice(0, 60) : agentId.slice(0, 8);
+  } catch (err) {
+    return agentId.slice(0, 8);
+  }
+}
+
+function agentModel(dir, agentId) {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, 'agent-' + agentId + '.meta.json'), 'utf8'));
+    return String(meta.model || '').replace(/^claude-/, '').replace(/-\d{8}$/, '');
+  } catch (err) {
+    return '';
+  }
+}
+
+/* A run whose script file is still on disk can be named properly; a rerun
+   against an edited script cannot, because the script keeps the name of the
+   run that first created it. The short run id is the honest fallback. */
+function runName(sessionDir, runId) {
+  try {
+    const scripts = fs.readdirSync(path.join(sessionDir, 'workflows', 'scripts'));
+    const match = scripts.find(f => f.endsWith('-' + runId + '.js'));
+    if (match) return match.slice(0, -(runId.length + 4));
+  } catch (err) { /* no scripts directory */ }
+  return runId.replace(/^wf_/, 'wf ');
+}
+
+function collectLiveRuns() {
+  const workflows = [];
+  const subtasks = [];
+  const cutoff = Date.now() - LIVE_RUN_STALE_MS;
+  let roots;
+  try {
+    roots = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true });
+  } catch (err) {
+    return { workflows, subtasks };
+  }
+
+  for (const project of roots) {
+    if (!project.isDirectory()) continue;
+    const projectDir = path.join(PROJECTS_DIR, project.name);
+    let sessions;
+    try { sessions = fs.readdirSync(projectDir, { withFileTypes: true }); } catch (err) { continue; }
+
+    for (const session of sessions) {
+      if (!session.isDirectory()) continue;
+      const sessionDir = path.join(projectDir, session.name);
+      const runsDir = path.join(sessionDir, 'subagents', 'workflows');
+      let runs;
+      try { runs = fs.readdirSync(runsDir, { withFileTypes: true }); } catch (err) { continue; }
+
+      for (const run of runs) {
+        if (!run.isDirectory() || !/^wf_/.test(run.name)) continue;
+        const dir = path.join(runsDir, run.name);
+        /* A killed run leaves "started" with no result forever. Recency of the
+           directory bounds that, so a dead run stops being reported as live. */
+        let stat;
+        try { stat = fs.statSync(dir); } catch (err) { continue; }
+        if (stat.mtimeMs < cutoff) continue;
+
+        const journal = readJournal(dir);
+        if (!journal) continue;
+        const running = [...journal.started.keys()].filter(id => !journal.finished.has(id));
+        if (!running.length) continue;
+
+        const name = runName(sessionDir, run.name);
+        const project_ = projectLabel(project.name);
+        workflows.push({
+          active: true,
+          id: run.name,
+          name,
+          summary: '',
+          status: 'running',
+          project: project_,
+          startedAt: stat.birthtimeMs || stat.mtimeMs,
+          durationMs: 0,
+          agents: journal.started.size,
+          tokens: 0,
+          toolCalls: 0
+        });
+        for (const id of running) {
+          subtasks.push({
+            active: true,
+            label: agentLabel(dir, id),
+            model: agentModel(dir, id),
+            state: 'running',
+            phase: '',
+            tokens: 0,
+            toolCalls: 0,
+            workflow: name,
+            project: project_,
+            startedAt: stat.mtimeMs,
+            source: 'live'
+          });
+        }
+      }
+    }
+  }
+  workflows.sort((a, b) => b.startedAt - a.startedAt);
+  subtasks.sort((a, b) => b.startedAt - a.startedAt);
+  return { workflows, subtasks };
+}
+
 /* Queued work from the whattask.json task plans, so the subtask list still says
    something useful when no workflow is currently running. */
 function collectQueuedTasks() {
@@ -687,8 +848,11 @@ function build(nowOverride) {
 
   const { workflows, subtasks } = collectWorkflows();
   const queued = collectQueuedTasks();
-  const activeWorkflows = workflows.filter(w => w.active);
-  const activeSubtasks = subtasks.filter(t => t.active);
+  /* Live runs are the activity. The wf_*.json files are the record of runs
+     that have already ended, kept for the counts and the debug page. */
+  const live = collectLiveRuns();
+  const activeWorkflows = live.workflows.concat(workflows.filter(w => w.active));
+  const activeSubtasks = live.subtasks.concat(subtasks.filter(t => t.active));
 
   /* A 429 seen inside the current block is authoritative: prefer its reset. */
   const quotaFresh = lastQuota && block && lastQuota.seenAt >= block.start && lastQuota.resetsAt > now;

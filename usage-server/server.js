@@ -240,6 +240,18 @@ function pct(used, budget) {
   return Math.min(100, Math.round((used / budget) * 100));
 }
 
+/* Anthropic runs temporary weekly boosts ("your weekly limit is 50% higher
+   through August 31"). Calibrating against a boosted week and then leaving it
+   would make every later week read high, so the boost is declared with an
+   expiry and applied only while it is live. */
+function weeklyBudget(cfg, base, now) {
+  const boost = cfg.weeklyBoost;
+  if (!boost || !boost.multiplier || !boost.until) return base;
+  const until = Date.parse(boost.until);
+  if (!Number.isFinite(until) || now >= until) return base;
+  return base * boost.multiplier;
+}
+
 /* --------------------------------------------- workflows and their subtasks */
 
 function projectLabel(dirName) {
@@ -353,22 +365,26 @@ function collectQueuedTasks() {
 
 /* ----------------------------------------------------------------- snapshot */
 
-function build() {
+/* nowOverride answers "what would this have said at time T", which is what
+   makes calibration against a timestamped screenshot possible. Windows are
+   always capped at `now`, so a past T does not count usage from after it. */
+function build(nowOverride) {
   const cfg = loadConfig();
-  const now = Date.now();
+  const now = nowOverride || Date.now();
   const records = collectRecords(cfg);
 
   const block = currentBlock(records, now);
-  const sessionUsed = block ? sumWeighted(records, block.start, block.end, null) : 0;
+  const sessionUsed = block ? sumWeighted(records, block.start, Math.min(block.end, now), null) : 0;
 
   const week = weeklyWindow(cfg.weeklyAnchor, now);
-  const weeklyUsed = sumWeighted(records, week.start, week.end, null);
+  const weeklyEnd = Math.min(week.end, now);
+  const weeklyUsed = sumWeighted(records, week.start, weeklyEnd, null);
 
   const buckets = (cfg.weeklyBuckets || []).map(bucket => {
-    const used = sumWeighted(records, week.start, week.end, bucket.models);
+    const used = sumWeighted(records, week.start, weeklyEnd, bucket.models);
     return {
       label: bucket.label,
-      percent: pct(used, bucket.budgetWeightedTokens),
+      percent: pct(used, weeklyBudget(cfg, bucket.budgetWeightedTokens, now)),
       resetsAt: week.end
     };
   });
@@ -385,12 +401,17 @@ function build() {
     plan: cfg.planLabel,
     session: {
       percent: pct(sessionUsed, cfg.sessionBudgetWeightedTokens),
+      /* Raw totals so calibration is not limited by a rounded percentage. */
+      usedWeighted: Math.round(sessionUsed),
+      budgetWeighted: cfg.sessionBudgetWeightedTokens,
       resetsAt: quotaFresh && lastQuota.type === 'five_hour' ? lastQuota.resetsAt : (block ? block.end : null),
       blocked: !!(quotaFresh && lastQuota.status === 'rejected'),
       active: !!block
     },
     weekly: {
-      percent: pct(weeklyUsed, cfg.weeklyBudgetWeightedTokens),
+      percent: pct(weeklyUsed, weeklyBudget(cfg, cfg.weeklyBudgetWeightedTokens, now)),
+      usedWeighted: Math.round(weeklyUsed),
+      budgetWeighted: weeklyBudget(cfg, cfg.weeklyBudgetWeightedTokens, now),
       resetsAt: week.end,
       buckets
     },
@@ -434,6 +455,19 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.url === '/' || req.url.startsWith('/usage')) {
+    /* ?at=<epoch ms | ISO> rebuilds as of a past moment, for calibrating
+       against a timestamped screenshot. Never cached. */
+    const q = req.url.indexOf('?') >= 0 ? req.url.slice(req.url.indexOf('?') + 1) : '';
+    const atMatch = /(?:^|&)at=([^&]+)/.exec(q);
+    if (atMatch) {
+      const raw = decodeURIComponent(atMatch[1]);
+      const at = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
+      if (Number.isFinite(at)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(build(at)));
+        return;
+      }
+    }
     if (!snapshot) rebuild();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(snapshot));

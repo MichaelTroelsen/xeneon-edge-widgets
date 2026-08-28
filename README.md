@@ -60,8 +60,8 @@ sun swapped for a moon after sunset via the API's `is_day` flag.
 ## Claude Code Usage
 
 Plan usage limits for Claude Code: the 5-hour session window and the weekly
-window with their reset times, plus live lists of recent sessions, workflows and
-their subtasks.
+window with their reset times, plus live lists of the sessions, workflows and
+subtasks that are **running right now**.
 
 A widget is a sandboxed web page and cannot read files, so `usage-server/`
 serves what it needs on `127.0.0.1`. No credentials are read and nothing leaves
@@ -70,20 +70,23 @@ under `~/.claude`.
 
 ```bash
 node usage-server/server.js   # http://127.0.0.1:41777/usage
-claude auth login             # once, so it can read your real usage
 ```
 
-The activity data is read from local files. Only the two percentages need
-authentication, and the widget works without it — see
-[Authentication](usage-server/README.md#authentication) for what the token is
-used for, how it stays valid, and what to do when the badge says `LOCAL`.
+The activity data is read from local files.
 
-**The percentages are Anthropic's own.** The feed reads them from the same
-undocumented OAuth endpoint Claude Code's `/usage` panel uses, so the widget
-shows exactly what the panel shows, badged `LIVE`. When that endpoint is
-unreachable — most often an expired token in the credentials file — the widget
-falls back to locally measured token counts rather than to a guess, and the badge
-switches to `LOCAL` with the reason in its tooltip. It never falls back silently.
+**The percentages are Anthropic's own**, and reach the feed two ways. The
+preferred one costs no API request at all: Claude Code hands its statusline
+script a `rate_limits` object, and `statusline-tee.js` wraps whatever statusline
+you already run to save it. The fallback fetches the same figures from the
+undocumented OAuth endpoint the `/usage` panel uses, which needs
+`claude auth login` — and which is heavily throttled, so it is the backstop
+rather than the main path. Either way the widget shows what the panel shows,
+badged `LIVE`.
+
+When neither answers, the widget falls back to locally measured token counts
+rather than to a guess, and the badge switches to `LOCAL` with the reason in its
+tooltip. It never falls back silently. Setup and the throttling story are in
+[usage-server/README.md](usage-server/README.md#anthropics-own-figures).
 
 Both windows get a bar, coloured by how close you are: blue, **amber from 80%**,
 **red from 95%**. In `LOCAL` mode the session bar falls back to your busiest
@@ -95,7 +98,7 @@ local token counts reproduces Anthropic's accounting, and the arithmetic proving
 that is in [usage-server/README.md](usage-server/README.md).
 
 For a full human-readable view — token breakdown per class, per-model split, and
-every session, workflow and subtask as a table — open
+the activity tables with their totals (`3 active of 24 seen`) — open
 **<http://127.0.0.1:41777/usagehtml>**.
 
 | Setting | Type | Default |
@@ -104,16 +107,21 @@ every session, workflow and subtask as a table — open
 | `colorTheme` | tabs | `dark` / `light` |
 | `refreshSeconds` | slider 5–120 | 20 |
 
-**Tap the widget** to swap between the usage bars and an activity view listing
-recent sessions, workflows and their subtasks; tap again to go back. Sessions are
-labelled with the prompt or slash command that started them. This needs
-`"interactive": true` in the manifest, without which iCUE never forwards touches
-to the page.
+**Tap the widget** to swap between the usage bars and an activity view; tap
+again to go back. This needs `"interactive": true` in the manifest, without which
+iCUE never forwards touches to the page.
+
+**The activity view shows only what is running** — not a history of what ran. A
+session appears as soon as it is opened, and drops off 15 minutes after it last
+did anything; a workflow and its subtasks appear while their agents are in
+flight. Sessions are labelled with the prompt or slash command that started them.
+Expect up to ~40s of lag in each direction: the feed re-indexes every 20s and the
+widget polls every 20s, so a very short run can begin and end unseen.
 
 **The lists scroll.** Each column scrolls independently, the heading carries the
-total (`SESSIONS · 20`) and a fade marks a list with more below. A gesture only
-counts as a tap if the pointer moved less than 12px and was held under 700ms, so
-scrolling does not flip the view.
+count (`SESSIONS · 1 ACTIVE`, or `WORKFLOWS · NONE ACTIVE` when idle) and a fade
+marks a list with more below. A gesture only counts as a tap if the pointer moved
+less than 12px and was held under 700ms, so scrolling does not flip the view.
 
 > Whether the iCUE webview forwards touch *drags* to the page is not documented —
 > `interactive` is described only as enabling click handling. Scrolling is

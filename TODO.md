@@ -70,6 +70,27 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 - [x] **`/usagehtml` debug page** on the server — both windows with full token
       breakdowns, per-model splits, and every session/workflow/subtask as a
       table. An addition alongside `/usage`, which is untouched.
+- [x] **The percentages without an API request** (1.7.0). Claude Code hands its
+      statusline script a `rate_limits` object (v2.1.80+); `statusline-tee.js`
+      wraps the configured statusline, saves it and passes stdin through. It
+      cannot be rate-limited, which matters because `/api/oauth/usage` throttles
+      clients far politer than ours — anthropics/claude-code#30930 is open on
+      persistent 429s with `retry-after: 0`. Both paths stay; the snapshot takes
+      whichever answered most recently.
+- [x] **Activity shows only what is running** (1.7.0). The lists were a
+      seven-day archive: twenty sessions with one running, eighteen finished
+      workflows, twenty-three finished subtasks. The live source turned out
+      **not** to be `wf_*.json` — that is written when a run *ends*, so the first
+      attempt matched nothing and the widget sat empty through a whole 60-second
+      probe run. It is the run's transcript directory: an agent with a `started`
+      line in `journal.jsonl` and no `result` is running.
+- [x] **Tests for it.** `test/live-detection.test.js` runs the server against a
+      fixture tree via `CLAUDE_USAGE_PROJECTS_DIR` — 17 checks, ~2 seconds, no
+      tokens. `test/activity-probe.workflow.js` plus `test/activity-probe-check.js`
+      is the end-to-end version: N subtasks that genuinely block for S seconds,
+      with the feed watched while they do. Both were mutation-checked — reverting
+      the live-run lookup fails 9 checks, reverting the just-opened-session rule
+      fails 3.
 
 ### Open
 

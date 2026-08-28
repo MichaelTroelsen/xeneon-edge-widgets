@@ -13,10 +13,13 @@ Bound to `127.0.0.1` only. The activity data — sessions, workflows, subtasks,
 token counts — is read from files Claude Code already writes under `~/.claude`
 and never leaves the machine.
 
-The two **usage percentages** are different: they are fetched from Anthropic
-using your Claude Code OAuth token, because they cannot be derived locally. That
-is the only outbound traffic, it goes only to `api.anthropic.com` and
-`console.anthropic.com`, and it is optional — see [Authentication](#authentication).
+The two **usage percentages** cannot be derived locally, so they come from
+Anthropic — by two routes. The preferred one reads them from what Claude Code
+already hands its statusline script, which makes **no request at all**. The
+fallback fetches them with your OAuth token, and is the only outbound traffic
+there is: only to `api.anthropic.com` and `console.anthropic.com`, and optional.
+See [Anthropic's own figures](#anthropics-own-figures) and
+[Authentication](#authentication).
 
 ## Where each number comes from
 
@@ -26,7 +29,7 @@ is the only outbound traffic, it goes only to `api.anthropic.com` and
 | ↳ fallback without auth | first local message of the block, floored to the hour, + 5h | **approximate — can be ~30 min out** |
 | Weekly reset time | `seven_day.resets_at` when authenticated, otherwise the anchor in `limits.json` | exact when authenticated |
 | Token counts per window | summed straight from the `usage` block of every assistant message | **exact** |
-| 5-hour / weekly **percentage** | Anthropic's `/api/oauth/usage`, needs [authentication](#authentication) | **exact — the same numbers as Claude Code's own panel** |
+| 5-hour / weekly **percentage** | Claude Code's statusline `rate_limits`, or Anthropic's `/api/oauth/usage` — see [below](#anthropics-own-figures) | **exact — the same numbers as Claude Code's own panel** |
 | Plan label, e.g. `Max (5x)` | `/api/oauth/profile` → `rate_limit_tier` | exact when authenticated |
 | *(legacy)* locally estimated percentage | weighted totals ÷ budgets in `limits.json` | **unreliable, no longer shown — see below** |
 | Session list | transcripts directly under `~/.claude/projects/<project>/`, as opposed to the nested ones belonging to subagents and workflows | exact |
@@ -36,11 +39,15 @@ is the only outbound traffic, it goes only to `api.anthropic.com` and
 A session counts as `running` if it produced a message in the last 15 minutes,
 **or** if its transcript was written that recently even with no message in it
 at all. The second half matters more than it sounds: a session that has just
-been opened contains only startup bookkeeping - `mode`, `permission-mode`, an
-attachment or two - and no user or assistant message, so requiring a counted
-message hid it until its first exchange had finished. It is named by its first
-user message once there is one, and by its short id (`0abb6d2c`) until then,
-with a message count of 0.
+been opened contains only startup bookkeeping — `mode`, `permission-mode`, an
+attachment or two — and no user or assistant message, so requiring a counted
+message hid it until its first exchange had finished. Until that exchange it
+shows its short id (`0abb6d2c`) and a message count of 0.
+
+Its label is then the first user message — usually a slash command, otherwise
+the opening words of the prompt. The `slug` some transcripts carry is absent
+from most of them and a UUID says nothing, so the first message is the only
+label that names every session.
 
 ### The lists show what is running, not what has run
 
@@ -87,8 +94,11 @@ a fixture tree via `CLAUDE_USAGE_PROJECTS_DIR` (unset in normal use) and asserts
 the cases that were got wrong or could be: a run in flight is reported, a
 finished one is not despite its `wf_*.json` existing, a killed run gone stale is
 not, a partly finished run reports only its unfinished agents, and an errored
-agent counts as finished. It fails 9 of its 12 checks against the pre-fix code,
-which is the point of it.
+agent counts as finished, plus the session cases: a just-opened session with no
+messages yet is reported, an old idle one is not, and a transcript nested under
+a session directory belongs to a subagent rather than being a session. Seventeen
+checks. Reverting the live-run lookup fails 9 of them and reverting the
+just-opened-session rule fails 3 more, which is the point of having them.
 
 The end-to-end probe needs an agent runner and real tokens, so it is the one you
 run when changing how the widget renders rather than after every edit. Launch
@@ -98,10 +108,6 @@ makes N subtasks that genuinely block for S seconds, and the checker watches the
 feed and fails if the lists never reported them. Allow ~40 seconds for work to
 appear and the same for it to clear — the server re-indexes every 20s and the
 widget polls every 20s, so a run shorter than that can finish unseen.
-Its label comes from the first user message — usually a slash command, otherwise
-the opening words of the prompt. The `slug` some transcripts carry is absent from
-most of them and a UUID says nothing, so the first message is the only label that
-names every session.
 
 ## Anthropic's own figures
 
@@ -113,7 +119,7 @@ at.
 ### 1. The statusline (no request, preferred)
 
 Claude Code hands its statusline script a JSON object on stdin, and since
-**v2.1.80** that object carries `rate_limits` - the five-hour and seven-day
+**v2.1.80** that object carries `rate_limits` — the five-hour and seven-day
 windows, already fetched by Claude Code itself:
 
 ```json
@@ -200,7 +206,7 @@ You can tell which mode you are in from the widget's header badge:
 | Badge | Meaning |
 |---|---|
 | `LIVE` (green) | percentages are Anthropic's own, freshly fetched |
-| `LIVE·` (amber) | Anthropic's numbers, but the last poll failed — showing the most recent good reading, up to 30 minutes old. Hover for when and why |
+| `LIVE·` (amber) | Anthropic's numbers, but the last poll failed — showing the most recent good reading, up to 45 minutes old. Hover for when and why |
 | `LOCAL` (grey) | no usable reading; measured token counts shown instead. Hover for the reason |
 
 Skipping this entirely is a valid choice. Everything except the two percentages
@@ -245,7 +251,7 @@ works without any credential.
 - Backs off on failure: exponentially to 30 minutes normally, starting at 15
   minutes for a `429` since that one is explicitly about request volume.
 - Keeps the last successful reading. If a poll fails, the widget keeps showing
-  those percentages marked stale for up to 30 minutes rather than swapping to a
+  those percentages marked stale for up to 45 minutes rather than swapping to a
   different metric — utilisation only climbs within a window and the reset times
   are absolute, so a few-minute-old figure is still the right answer. The cache
   is in memory, so a server restart during an outage falls back to `LOCAL` until
@@ -427,9 +433,10 @@ timestamps. If yours resets on another day set `weekday` (0 = Sunday) and
 ## Cost
 
 The index is incremental: a file is only re-parsed from the byte offset where it
-last ended. On the machine it was developed on, a cold build takes about 480 ms
-over ~10,600 messages; incremental rebuilds are far cheaper. It refreshes every
-20 s.
+last ended. Measured on the machine it was developed on, over 10,685 messages:
+a cold build takes **~440 ms**, an incremental rebuild **~40 ms**, and serving
+the cached snapshot ~0.8 ms. It refreshes every 20 s, so the steady-state cost
+is roughly 0.2% of one core.
 
 ## Running it at logon
 

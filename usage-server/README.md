@@ -76,6 +76,25 @@ It recovers on its own the next time Claude Code writes the file.
 **It is undocumented and may vanish.** Treat the measured path as the one that is
 guaranteed to keep working.
 
+### `CLAUDE_CODE_OAUTH_TOKEN` cannot be used for this — tested
+
+The obvious idea is to skip the credentials file and use the long-lived token
+from `claude setup-token`, exposed as `CLAUDE_CODE_OAUTH_TOKEN`. It does not
+work. The endpoint rejects it:
+
+```json
+{ "type": "permission_error",
+  "message": "OAuth token does not meet scope requirement user:profile",
+  "details": { "required_scopes": ["user:profile"], "error_code": "oauth_scope_insufficient" } }
+```
+
+`setup-token` mints an inference-scoped token. The token in
+`.credentials.json`, written by `claude auth login`, carries five scopes —
+`user:file_upload`, `user:inference`, `user:mcp_servers`, **`user:profile`**,
+`user:sessions:claude_code` — and `user:profile` is the one this endpoint
+requires. So the credentials file is the only source that works, and the server
+does not read the environment variable.
+
 ### Why the local estimate was abandoned
 
 It is still in the JSON, and the debug page still shows it, but **the widget

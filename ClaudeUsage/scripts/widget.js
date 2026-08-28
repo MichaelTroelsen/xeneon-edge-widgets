@@ -175,7 +175,14 @@
        the measured token counts when it could not. Never both, and never a
        locally invented percentage. */
     var live = data.official && data.official.ok ? data.official : null;
-    els.live.style.display = live ? '' : 'none';
+    /* Always say which mode is on screen. Falling back silently makes measured
+       token counts look like they came from Anthropic. */
+    els.live.textContent = live ? 'LIVE' : 'LOCAL';
+    els.live.className = live ? 'live' : 'live is-local';
+    els.live.title = live
+      ? ('Utilisation read from Anthropic via ' + (live.source || 'OAuth'))
+      : ('Anthropic figures unavailable: ' + ((data.official && data.official.error) || 'unknown') +
+         ' — showing locally measured tokens');
 
     var s = data.session || {};
     var st = s.tokens || {};

@@ -92,8 +92,12 @@ work. The endpoint rejects it:
 `.credentials.json`, written by `claude auth login`, carries five scopes —
 `user:file_upload`, `user:inference`, `user:mcp_servers`, **`user:profile`**,
 `user:sessions:claude_code` — and `user:profile` is the one this endpoint
-requires. So the credentials file is the only source that works, and the server
-does not read the environment variable.
+requires.
+
+The server tries **both** sources anyway, credentials file first and
+`CLAUDE_CODE_OAUTH_TOKEN` second, reporting which one it used and why the last
+one failed. Today the environment variable always loses on scope; keeping it in
+the chain means a profile-scoped token would be picked up with no code change.
 
 ### Why the local estimate was abandoned
 

@@ -24,22 +24,41 @@ const USAGE_PATH = '/api/oauth/usage';
 const PROFILE_PATH = '/api/oauth/profile';
 const TIMEOUT_MS = 8000;
 
-function readToken() {
-  let raw;
+/* Two possible sources, tried in this order.
+ *
+ * 1. ~/.claude/.credentials.json — written by `claude auth login`. Its token
+ *    carries user:profile, which this endpoint requires, so it is the one that
+ *    actually works. It expires, and Claude Code does not always rewrite the
+ *    file when it refreshes.
+ * 2. CLAUDE_CODE_OAUTH_TOKEN — from `claude setup-token`. Long-lived, but as of
+ *    testing it is inference-scoped and the endpoint rejects it with
+ *    "OAuth token does not meet scope requirement user:profile". Kept as a
+ *    fallback so a profile-scoped token would be picked up automatically.
+ */
+function readTokens() {
+  const sources = [];
+
   try {
-    raw = fs.readFileSync(CREDENTIALS, 'utf8');
+    const parsed = JSON.parse(fs.readFileSync(CREDENTIALS, 'utf8'));
+    const o = parsed && parsed.claudeAiOauth;
+    if (o && o.accessToken) {
+      sources.push({
+        name: 'credentials file',
+        token: o.accessToken,
+        expiresAt: o.expiresAt || null,
+        scopes: Array.isArray(o.scopes) ? o.scopes : null
+      });
+    }
   } catch (err) {
-    return { error: 'no credentials file at ' + CREDENTIALS };
+    /* Missing or unreadable is normal on a machine that uses the env var. */
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    return { error: 'credentials file is not valid JSON' };
+
+  const fromEnv = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (fromEnv) {
+    sources.push({ name: 'CLAUDE_CODE_OAUTH_TOKEN', token: fromEnv, expiresAt: null, scopes: null });
   }
-  const o = parsed && parsed.claudeAiOauth;
-  if (!o || !o.accessToken) return { error: 'no claudeAiOauth.accessToken in credentials' };
-  return { token: o.accessToken, expiresAt: o.expiresAt || null };
+
+  return sources;
 }
 
 function get(pathname, token) {
@@ -61,9 +80,18 @@ function get(pathname, token) {
       res.on('data', c => { body += c; });
       res.on('end', () => {
         if (res.statusCode !== 200) {
-          /* Deliberately does not include the body verbatim in case an error
-             response echoes anything sensitive. */
-          reject(new Error('HTTP ' + res.statusCode));
+          /* Anthropic's structured error message is the most useful thing here
+             - a 403 names the missing scope - so it is extracted rather than
+             swallowed. Only error.message is taken, never the raw body, so a
+             response cannot echo anything unexpected into logs. */
+          let detail = '';
+          try {
+            const parsed = JSON.parse(body);
+            if (parsed && parsed.error && typeof parsed.error.message === 'string') {
+              detail = ' — ' + parsed.error.message;
+            }
+          } catch (err) { /* non-JSON error body */ }
+          reject(new Error('HTTP ' + res.statusCode + detail));
           return;
         }
         try {
@@ -89,11 +117,28 @@ function window_(w) {
   };
 }
 
-/* Returns a plain object; never throws. */
+/* Returns a plain object; never throws. Tries every available token source and
+   reports the failure of the last one if none succeed. */
 async function fetchOfficial() {
-  const cred = readToken();
-  if (cred.error) return { ok: false, error: cred.error, fetchedAt: Date.now() };
+  const sources = readTokens();
+  if (!sources.length) {
+    return {
+      ok: false,
+      fetchedAt: Date.now(),
+      error: 'no token: neither ' + CREDENTIALS + ' nor CLAUDE_CODE_OAUTH_TOKEN'
+    };
+  }
 
+  let last = null;
+  for (const source of sources) {
+    const result = await trySource(source);
+    if (result.ok) return result;
+    last = result;
+  }
+  return last;
+}
+
+async function trySource(cred) {
   const expired = cred.expiresAt && cred.expiresAt < Date.now();
 
   try {
@@ -123,6 +168,7 @@ async function fetchOfficial() {
     return {
       ok: true,
       fetchedAt: Date.now(),
+      source: cred.name,
       tokenExpiresAt: cred.expiresAt || null,
       fiveHour: window_(usage.five_hour),
       sevenDay: window_(usage.seven_day),
@@ -134,12 +180,13 @@ async function fetchOfficial() {
     return {
       ok: false,
       fetchedAt: Date.now(),
+      source: cred.name,
       tokenExpiresAt: cred.expiresAt || null,
       /* A 401 on an expired token is the ordinary case, worth saying plainly:
          Claude Code rewrites the file when it next refreshes. */
-      error: expired
+      error: cred.name + ': ' + (expired
         ? 'access token expired ' + new Date(cred.expiresAt).toISOString() + ' (' + err.message + ')'
-        : err.message
+        : err.message)
     };
   }
 }

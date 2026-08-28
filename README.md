@@ -74,10 +74,10 @@ node usage-server/server.js   # http://127.0.0.1:41777/usage
 
 **The percentages are Anthropic's own.** The feed reads them from the same
 undocumented OAuth endpoint Claude Code's `/usage` panel uses, so the widget
-shows exactly what the panel shows, and a `LIVE` badge marks it. When that
-endpoint is unreachable — most often an expired token in the credentials file —
-the widget falls back to locally measured token counts rather than to a guess,
-and the badge disappears.
+shows exactly what the panel shows, badged `LIVE`. When that endpoint is
+unreachable — most often an expired token in the credentials file — the widget
+falls back to locally measured token counts rather than to a guess, and the badge
+switches to `LOCAL` with the reason in its tooltip. It never falls back silently.
 
 Nothing is estimated. A local estimate was tried and abandoned: no weighting of
 local token counts reproduces Anthropic's accounting, and the arithmetic proving

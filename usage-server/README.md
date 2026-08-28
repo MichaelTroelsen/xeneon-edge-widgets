@@ -108,9 +108,26 @@ works without any credential.
   part of testing.
 - Polls **every twelve minutes**, not every rebuild. One-minute polling drew a
   `429` within the hour. The budget is also **shared across everything on the
-  machine using your account** — the AI Limits Stream Deck plugin polls the same
-  endpoint every two minutes, and when both were running they throttled each
-  other. If you run another usage tool, count its polling too.
+  machine using your account**, and there is usually more of that than you
+  expect: this machine had **four** Stream Deck plugins calling the same
+  `/api/oauth/usage` endpoint (`com.singerous.ai-limits`,
+  `kr.co.postgresql.ai-limits`, `com.len.limits`, `com.lloyds.headroom`).
+  Polling interval is the smaller half of the problem. One of them retried
+  immediately on failure with no backoff, which turned a single `429` into
+  roughly **45 requests per second** — ~11,700 in the six minutes after a
+  reboot, counted from its own log, rising to ~140/s later — and kept the
+  window open indefinitely. A client without backoff can hold an account
+  throttled by itself. So when you run another usage tool, count its polling
+  interval *and* check what it does when a request fails.
+- **Removing a plugin's buttons from your profile is not enough**, and neither
+  is killing its process. Some plugins do go quiet when their actions are
+  removed, but `kr.co.postgresql.ai-limits` resumed at full rate afterwards,
+  and killing its node process only made Stream Deck respawn it and restart
+  the loop from zero. What actually stopped it was uninstalling the plugin, so
+  that its folder left `%APPDATA%\Elgato\StreamDeck\Plugins\`. The process
+  list is not how you tell whether one is active — the process stays resident
+  either way. Use the plugin's own log under that folder, or, for a plugin
+  that keeps no log, sample its outbound connections by PID.
 - Backs off on failure: exponentially to 30 minutes normally, starting at 15
   minutes for a `429` since that one is explicitly about request volume.
 - Keeps the last successful reading. If a poll fails, the widget keeps showing
@@ -126,7 +143,7 @@ The access token lasts about eight hours, and Claude Code does not reliably
 rewrite the credentials file when it refreshes — so without help the live path
 would die the same evening you set it up.
 
-The server therefore refreshes the token itself, a minute before expiry:
+The server therefore refreshes the token itself, half an hour before expiry:
 
 ```
 POST https://console.anthropic.com/v1/oauth/token
@@ -140,10 +157,11 @@ write-back, Claude Code's copy would become the stale one. The write is atomic
 (temp file, then rename) and a one-time backup is kept at
 `.credentials.json.before-usage-server`.
 
-> **Anything else reading the same stored login is part of this.** The AI Limits
-> Stream Deck plugin refreshes the token too and, being strictly read-only, never
-> writes the rotated one back — so after it refreshes, the file holds a refresh
-> token Anthropic has already invalidated. That is exactly the
+> **Anything else reading the same stored login is part of this.** All four
+> Stream Deck plugins above read the same credentials file and carry refresh
+> logic. `com.singerous.ai-limits` contains no file-write call anywhere, so it
+> refreshes and never writes the rotated token back — after it refreshes, the
+> file holds a refresh token Anthropic has already invalidated. That is exactly the
 > `Refresh token not found or invalid` seen here, and the reason a
 > `claude auth login` token could appear to die overnight.
 >

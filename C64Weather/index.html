@@ -36,26 +36,26 @@
 
         <div class="stage">
           <div class="content readout">
-            <div class="sprite-cell" id="sprite"></div>
-            <div class="data">
+            <div class="col col-main">
               <div class="temp" id="temp"></div>
               <div class="condition" id="condition"></div>
               <div class="city" id="city"></div>
-              <div class="detail">
-                <div class="detail-row" id="row-temp">
-                  <span class="chip" id="chip-hi"></span>
-                  <span class="chip" id="chip-lo"></span>
-                  <span class="chip" id="chip-feels"></span>
-                </div>
-                <div class="detail-row" id="row-cond">
-                  <span class="chip" id="chip-wind"></span>
-                  <span class="chip" id="chip-hum"></span>
-                  <span class="chip" id="chip-up"></span>
-                  <span class="chip" id="chip-down"></span>
-                </div>
-              </div>
-              <div class="offline" id="offline"></div>
             </div>
+
+            <div class="col col-icon">
+              <div class="sprite-cell" id="sprite"></div>
+              <div class="range" id="range"></div>
+            </div>
+
+            <div class="col col-stats">
+              <div class="stat" id="stat-up"><span class="glyph"></span><span class="val"></span></div>
+              <div class="stat" id="stat-down"><span class="glyph"></span><span class="val"></span></div>
+              <div class="stat" id="stat-wind"><span class="glyph"></span><span class="val"></span></div>
+              <div class="stat" id="stat-feels"><span class="glyph"></span><span class="val"></span></div>
+              <div class="stat" id="stat-hum"><span class="glyph"></span><span class="val"></span></div>
+            </div>
+
+            <div class="offline" id="offline"></div>
           </div>
 
           <div class="loading-state">

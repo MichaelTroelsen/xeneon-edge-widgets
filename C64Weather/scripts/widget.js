@@ -12,7 +12,7 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.1.2';
+  var WIDGET_VERSION = '1.2.0';
   var BOOT_BANNER = '**** COMMODORE 64 WEATHER V' + WIDGET_VERSION + ' ****';
   var BOOT_RAM = '64K RAM SYSTEM  38911 BASIC BYTES FREE';
   var LOAD_LINE = 'LOAD"WEATHER",8,1';
@@ -214,12 +214,13 @@
     return Math.round(v) + '°' + (withUnit ? unit : '');
   }
 
-  /* Wind follows the temperature unit: km/h alongside °C, mph alongside °F. */
+  /* Wind follows the temperature unit: km/h alongside °C, mph alongside °F.
+     No label - the glyph in front of the row carries that. */
   function windString(kmh, unit) {
     if (typeof kmh !== 'number') return null;
     return unit === 'F'
-      ? 'WIND ' + Math.round(kmh * 0.621371) + 'MPH'
-      : 'WIND ' + Math.round(kmh) + 'KM/H';
+      ? Math.round(kmh * 0.621371) + 'MPH'
+      : Math.round(kmh) + 'KM/H';
   }
 
   /* "2026-08-28T05:42" -> "05:42". Substring, not Date: the API already
@@ -229,10 +230,21 @@
     return iso.substring(11, 16);
   }
 
-  function setChip(el, text) {
+  /* One stat row: glyph plus value, hidden entirely when there is no value. */
+  function setStat(el, glyph, text) {
     if (!el) return;
     if (text === null || text === undefined) {
-      el.innerHTML = '';
+      el.setAttribute('data-empty', '1');
+      return;
+    }
+    el.removeAttribute('data-empty');
+    PETSCII.setGlyph(el.querySelector('.glyph'), glyph);
+    PETSCII.setText(el.querySelector('.val'), text);
+  }
+
+  function setRange(el, text) {
+    if (!el) return;
+    if (text === null) {
       el.setAttribute('data-empty', '1');
       return;
     }
@@ -258,14 +270,22 @@
     PETSCII.setSprite(els.sprite, info[1]);
     els.sprite.className = 'sprite-cell sprite-' + info[1];
 
-    setChip(els.chipHi, current.hiC !== null ? 'HI ' + tempString(current.hiC, unit, false) : null);
-    setChip(els.chipLo, current.loC !== null ? 'LO ' + tempString(current.loC, unit, false) : null);
-    setChip(els.chipFeels, current.feelsC !== null ? 'FEELS ' + tempString(current.feelsC, unit, false) : null);
-    setChip(els.chipWind, windString(current.windKmh, unit));
-    setChip(els.chipHum, current.humidity !== null ? 'HUM ' + Math.round(current.humidity) + '%' : null);
-    /* Older cached readings predate the sun times; the chips just stay empty. */
-    setChip(els.chipUp, clockString(current.sunrise) ? 'UP ' + clockString(current.sunrise) : null);
-    setChip(els.chipDown, clockString(current.sunset) ? 'DN ' + clockString(current.sunset) : null);
+    /* Low | high under the sprite, as the reference layout has it. */
+    setRange(els.range,
+      (current.loC !== null && current.hiC !== null)
+        ? tempString(current.loC, unit, false) + ' | ' + tempString(current.hiC, unit, false)
+        : null);
+
+    /* Older cached readings predate the sun times; those rows stay hidden. */
+    var up = clockString(current.sunrise);
+    var down = clockString(current.sunset);
+    setStat(els.statUp, 'sunrise', up);
+    setStat(els.statDown, 'sunset', down);
+    setStat(els.statWind, 'wind', windString(current.windKmh, unit));
+    setStat(els.statFeels, 'thermo',
+      current.feelsC !== null ? tempString(current.feelsC, unit, false) : null);
+    setStat(els.statHum, 'drop',
+      current.humidity !== null ? Math.round(current.humidity) + '%' : null);
 
     var stale = offline || (Date.now() - current.fetchedAt) > STALE_AFTER_MS;
     els.root.classList.toggle('is-stale', stale);
@@ -368,13 +388,12 @@
     els.temp = document.getElementById('temp');
     els.condition = document.getElementById('condition');
     els.city = document.getElementById('city');
-    els.chipHi = document.getElementById('chip-hi');
-    els.chipLo = document.getElementById('chip-lo');
-    els.chipFeels = document.getElementById('chip-feels');
-    els.chipWind = document.getElementById('chip-wind');
-    els.chipHum = document.getElementById('chip-hum');
-    els.chipUp = document.getElementById('chip-up');
-    els.chipDown = document.getElementById('chip-down');
+    els.range = document.getElementById('range');
+    els.statUp = document.getElementById('stat-up');
+    els.statDown = document.getElementById('stat-down');
+    els.statWind = document.getElementById('stat-wind');
+    els.statFeels = document.getElementById('stat-feels');
+    els.statHum = document.getElementById('stat-hum');
     els.sprite = document.getElementById('sprite');
     els.offline = document.getElementById('offline');
     els.loadingA = document.getElementById('loading-a');

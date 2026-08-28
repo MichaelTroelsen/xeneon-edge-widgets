@@ -62,6 +62,7 @@
     '(': [0x08, 0x10, 0x20, 0x20, 0x20, 0x10, 0x08, 0x00],
     ')': [0x20, 0x10, 0x08, 0x08, 0x08, 0x10, 0x20, 0x00],
     '=': [0x00, 0x00, 0x7c, 0x00, 0x7c, 0x00, 0x00, 0x00],
+    '|': [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x00],
     '<': [0x08, 0x10, 0x20, 0x40, 0x20, 0x10, 0x08, 0x00],
     '>': [0x40, 0x20, 0x10, 0x08, 0x10, 0x20, 0x40, 0x00],
     '"': [0x28, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
@@ -294,16 +295,86 @@
     ]
   };
 
-  function spriteSVG(name) {
-    var art = SPRITES[name] || SPRITES.cloud;
+  /* Small glyphs for the stat rows, in the same 8x8 cell as the font so they
+     sit on the same rhythm as the text beside them. */
+  var GLYPHS = {
+    sunrise: [
+      '...##...',
+      '..####..',
+      '.######.',
+      '...##...',
+      '...##...',
+      '........',
+      '########',
+      '........'
+    ],
+    sunset: [
+      '...##...',
+      '...##...',
+      '.######.',
+      '..####..',
+      '...##...',
+      '........',
+      '########',
+      '........'
+    ],
+    wind: [
+      '........',
+      '..####.#',
+      '......#.',
+      '........',
+      '.######.',
+      '.......#',
+      '........',
+      '..####..'
+    ],
+    thermo: [
+      '...##...',
+      '..#..#..',
+      '..#..#..',
+      '..####..',
+      '..####..',
+      '.######.',
+      '.######.',
+      '..####..'
+    ],
+    drop: [
+      '...##...',
+      '...##...',
+      '..####..',
+      '.######.',
+      '########',
+      '########',
+      '.######.',
+      '..####..'
+    ]
+  };
+
+  /* Dimensions come from the art itself, so 8x8 glyphs and 16x16 weather
+     sprites go through the same renderer. */
+  function artSVG(art, extraClass) {
+    var w = art[0].length;
     var rects = [];
     var rows = art.map(function (line) {
       var row = [];
-      for (var x = 0; x < 16; x++) row.push(line.charAt(x) === '#' ? 1 : 0);
+      for (var x = 0; x < w; x++) row.push(line.charAt(x) === '#' ? 1 : 0);
       return row;
     });
-    bitmapRects(rows, 0, 16, rects);
-    return svg(16, 16, rects, 'sprite');
+    bitmapRects(rows, 0, w, rects);
+    return svg(w, art.length, rects, extraClass);
+  }
+
+  function spriteSVG(name) {
+    return artSVG(SPRITES[name] || SPRITES.cloud, 'sprite');
+  }
+
+  function glyphSVG(name) {
+    return artSVG(GLYPHS[name] || GLYPHS.wind, 'glyph');
+  }
+
+  function setGlyph(el, name) {
+    if (!el) return;
+    el.innerHTML = glyphSVG(name);
   }
 
   function setSprite(el, name) {
@@ -315,6 +386,8 @@
     textSVG: textSVG,
     setText: setText,
     setSprite: setSprite,
-    spriteNames: Object.keys(SPRITES)
+    setGlyph: setGlyph,
+    spriteNames: Object.keys(SPRITES),
+    glyphNames: Object.keys(GLYPHS)
   };
 })(window);

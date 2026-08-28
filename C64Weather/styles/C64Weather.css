@@ -98,14 +98,73 @@ body {
   justify-content: flex-start;
 }
 
+/* Three columns, after the arrangement of Corsair's own weather widget:
+   temperature and place on the left, the condition sprite with the day's range
+   under it in the middle, the timed readings stacked on the right. */
 .readout {
   display: flex;
   flex-direction: row;
-  align-items: center;
-  gap: calc(var(--layout-unit) * 5);
+  align-items: stretch;
+  /* Spread the three groups across the slot the way the reference does, rather
+     than packing them against the left edge. */
+  justify-content: space-between;
+  gap: calc(var(--layout-unit) * 6);
+  width: 100%;
   max-width: 100%;
   min-width: 0;
 }
+
+.col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.col-main { align-items: flex-start; gap: calc(var(--layout-unit) * 1.5); }
+
+.col-icon {
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--layout-unit) * 2);
+  flex: 0 0 auto;
+}
+
+.col-stats {
+  align-items: flex-start;
+  justify-content: center;
+  gap: calc(var(--layout-unit) * 1.6);
+  flex: 0 0 auto;
+}
+
+/* One stat row: a small glyph on the same 8x8 rhythm as the text beside it. */
+.stat {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 1.6);
+  font-size: var(--font-boot);
+  color: var(--c64-border);
+}
+
+.stat .glyph { line-height: 0; }
+.stat .glyph .px { height: 1em; width: 1em; }
+
+#stat-up .glyph { color: var(--c64-yellow); }
+#stat-down .glyph { color: var(--c64-lightred); }
+#stat-wind .glyph { color: var(--c64-cyan); }
+#stat-feels .glyph { color: var(--c64-yellow); }
+#stat-hum .glyph { color: var(--c64-cyan); }
+
+/* The day's low and high, sitting under the sprite. */
+.range {
+  font-size: var(--font-boot);
+  color: var(--c64-border);
+}
+
+/* Rows with no value must not leave a gap. */
+.stat[data-empty],
+.range[data-empty] { display: none; }
 
 .sprite-cell {
   flex: 0 0 auto;
@@ -129,13 +188,6 @@ body {
 .sprite-cloud,
 .sprite-fog { color: var(--c64-grey); }
 
-.data {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--layout-unit) * 1.5);
-  min-width: 0;
-}
-
 /* Hero: the one element that survives every slot size. */
 .temp {
   font-size: var(--font-hero);
@@ -153,32 +205,6 @@ body {
   color: var(--c64-white);
   opacity: 0.85;
 }
-
-/* Detail block: two fixed rows of independent chips. Each chip is shown or
-   hidden on its own, so a narrow slot drops items instead of scaling one
-   ever-growing string down to nothing. */
-.detail {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--layout-unit) * 1);
-}
-
-.detail-row {
-  display: none;
-  flex-direction: row;
-  gap: calc(var(--layout-unit) * 3);
-  font-size: var(--font-boot);
-  color: var(--c64-border);
-  opacity: 0.9;
-}
-
-.chip { display: none; }
-
-/* A chip with no value must not leave a gap. Specificity beats the per-chip
-   ID rules further down, so an empty chip stays hidden even where its slot
-   would otherwise show it. */
-#row-temp .chip[data-empty],
-#row-cond .chip[data-empty] { display: none; }
 
 .offline {
   font-size: var(--font-boot);
@@ -248,52 +274,39 @@ body {
    Composition — what is shown, not how large it is.
    ------------------------------------------------------------------ */
 
-/* Portrait slots: stack the sprite above the readout. */
-@media (max-aspect-ratio: 0.95) {
-  .screen { align-items: stretch; }
-  .stage { justify-content: center; }
-  .readout { flex-direction: column; text-align: center; }
-  .data { align-items: center; }
+/* The three columns hold at every declared slot: the widest arrangement needs
+   about 545px of the 763px available at 840x344, so nothing has to be dropped
+   for width. Only the extra stat rows are conditional. */
+#stat-feels,
+#stat-hum { display: none; }
+
+/* M-H 840x696 and taller: room for feels-like under the three timed rows. */
+@media (min-height: 600px) {
+  #stat-feels { display: flex; }
 }
 
-/* Every slot shows the full detail set. Only the arrangement changes with
-   size, so nothing is lost at the smallest slot. */
-#row-temp,
-#row-cond { display: flex; }
-
-#chip-hi,
-#chip-lo,
-#chip-feels,
-#chip-wind,
-#chip-up,
-#chip-down { display: block; }
-
-/* Humidity is the one chip that pushes the line past the screen edge next to
-   the sprite, so it waits for a slot with width to spare. */
-@media (min-width: 1000px) {
-  #chip-hum { display: block; }
-}
-
-/* Short slots (S-H 840x344): height is what runs out, not width — a single
-   840px line holds the whole set with room over. Both rows collapse onto one
-   line rather than dropping any of it. */
-@media (max-height: 400px) {
-  .detail { flex-direction: row; gap: calc(var(--layout-unit) * 3); }
-}
-
-/* Wide slots (L-H 1688x696, XL-H 2536x696). Left-hugging content would leave
-   most of a 2536px slot empty, so the readout is centred while the boot chrome
-   stays at column 0 like a real terminal. */
+/* Wide slots also take humidity. */
 @media (min-width: 1000px) and (min-height: 500px) {
+  #stat-hum { display: flex; }
   .stage { justify-content: center; }
-  .readout { gap: calc(var(--layout-unit) * 10); }
+  /* Cap the block so the three groups stay a composition instead of being
+     flung to opposite edges of a 2536px screen. */
+  .readout { gap: calc(var(--layout-unit) * 10); max-width: calc(var(--layout-unit) * 130); }
+}
+
+/* Very short slots have no room for the condition word; the sprite says it. */
+@media (max-height: 360px) {
+  .condition { display: none; }
 }
 
 /* Tall portrait (L-V, XL-V): the S-vertical baseline is deliberately kept, so
-   the surplus height buys a larger sprite and wider spacing, not bigger text. */
+   the surplus height buys a larger sprite and wider spacing, not bigger text.
+   1.6x rather than the old 2.2x, because the sprite now shares a row with two
+   text columns instead of standing beside one. */
 @media (max-aspect-ratio: 0.6) {
-  .sprite-cell { font-size: calc(var(--font-hero) * 2.2); }
-  .readout { gap: calc(var(--layout-unit) * 8); }
+  .sprite-cell { font-size: calc(var(--font-hero) * 1.6); }
+  .readout { gap: calc(var(--layout-unit) * 7); }
+  #stat-feels, #stat-hum { display: flex; }
 }
 
 /* Very short slots: drop the 38-column RAM banner before anything else. */

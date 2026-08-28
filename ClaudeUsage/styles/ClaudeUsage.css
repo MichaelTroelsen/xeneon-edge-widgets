@@ -21,6 +21,9 @@
   --font-name: calc(var(--layout-unit) * 4.5);
   --font-value: calc(var(--layout-unit) * 4.9);
   --font-sub: calc(var(--layout-unit) * 3.6);
+  /* The reset caption is the one line people actually read off the bar, so it
+     sits above --font-sub while staying below the meter name. */
+  --font-caption: calc(var(--layout-unit) * 4.2);
   --font-section: calc(var(--layout-unit) * 3.9);
   --font-row: calc(var(--layout-unit) * 3.7);
   --font-badge: calc(var(--layout-unit) * 3.1);
@@ -176,7 +179,7 @@ body {
 }
 
 .meter .sub {
-  font-size: var(--font-sub);
+  font-size: var(--font-caption);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;

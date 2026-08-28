@@ -67,6 +67,16 @@ labelled with the prompt or slash command that started them. This needs
 `"interactive": true` in the manifest, without which iCUE never forwards touches
 to the page.
 
+**The lists scroll.** Each column scrolls independently, the heading carries the
+total (`SESSIONS · 20`) and a fade marks a list with more below. A gesture only
+counts as a tap if the pointer moved less than 12px and was held under 700ms, so
+scrolling does not flip the view.
+
+> Whether the iCUE webview forwards touch *drags* to the page is not documented —
+> `interactive` is described only as enabling click handling. Scrolling is
+> verified in a browser; if a drag does nothing on the device, the fallback is to
+> page the lists automatically on a timer.
+
 ## Verifying a layout
 
 Headless Chrome's `--window-size` includes window chrome, so `--window-size=840,344`

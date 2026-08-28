@@ -269,6 +269,20 @@ body {
   flex-direction: column;
   gap: calc(var(--layout-unit) * 1.4);
   overflow: hidden;
+  position: relative;
+}
+
+/* Only drawn when the list actually overflows, so a short list keeps its last
+   row at full strength. */
+.list.can-scroll::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--layout-unit) * 6);
+  background: linear-gradient(to bottom, transparent, var(--bg));
+  pointer-events: none;
 }
 
 .list h2 {
@@ -290,10 +304,18 @@ body {
   display: flex;
   flex-direction: column;
   gap: calc(var(--layout-unit) * 1.2);
-  overflow: hidden;
   flex: 1 1 auto;
   min-height: 0;
+  /* Touch-scrollable. The scrollbar is hidden because a widget has no room for
+     one; the fade above is the affordance instead. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
+
+.list ul::-webkit-scrollbar { width: 0; height: 0; }
 
 .list li {
   display: flex;

@@ -5,10 +5,12 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.1.0';
+  var WIDGET_VERSION = '1.2.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
-  var MAX_ROWS = 12;          /* CSS hides the overflow; this just caps DOM churn */
+  var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
+  var TAP_SLOP_PX = 12;       /* movement beyond this is a scroll, not a tap */
+  var TAP_MAX_MS = 700;
   var HIGH_WATER = 80;        /* percent at which a bar turns amber */
 
   var els = {};
@@ -117,8 +119,20 @@
     return 'state-' + String(state || 'queued').toLowerCase().replace(/[^a-z_]/g, '');
   }
 
+  /* The heading carries the total, so you can tell at a glance whether the
+     visible rows are all of them or the top of a longer list. */
+  function setHeading(ul, total) {
+    var h = ul.parentNode && ul.parentNode.querySelector('h2');
+    if (!h) return;
+    if (!h.getAttribute('data-base')) h.setAttribute('data-base', h.textContent);
+    var base = h.getAttribute('data-base');
+    h.textContent = total ? base + ' · ' + total : base;
+  }
+
   function renderList(ul, items, describe) {
+    var scrollTop = ul.scrollTop; /* keep the reader's place across a refresh */
     ul.textContent = '';
+    setHeading(ul, items ? items.length : 0);
     if (!items || !items.length) {
       var empty = document.createElement('li');
       empty.className = 'empty';
@@ -146,6 +160,7 @@
       li.appendChild(meta);
       ul.appendChild(li);
     });
+    ul.scrollTop = scrollTop;
   }
 
   function render() {
@@ -198,28 +213,17 @@
     renderList(els.dSubtasks, data.subtasks, describeSubtask);
 
     showState('content');
-    trimLists();
+    markScrollable();
   }
 
-  /* A row sliced in half by the panel edge reads as a rendering fault on a
-     hardware display, so keep only whole rows.
-     Counted from the measured row height rather than looped on
-     scrollHeight > clientHeight: those two are rounded differently, so a
-     sub-pixel difference made the loop drop rows that actually fitted. */
-  function trimLists() {
+  /* Lists scroll rather than being trimmed to fit, so nothing is unreachable.
+     A partly visible row at the bottom edge is the point: together with the
+     fade it says there is more below. */
+  function markScrollable() {
     [els.workflows, els.subtasks, els.dSessions, els.dWorkflows, els.dSubtasks].forEach(function (ul) {
-      if (!ul || !ul.children.length) return;
-      var box = ul.clientHeight;
-      if (!box) return; /* hidden view: nothing to measure yet */
-
-      var rowH = ul.children[0].getBoundingClientRect().height;
-      if (!rowH) return;
-      var gap = parseFloat(getComputedStyle(ul).rowGap) || 0;
-
-      /* n rows occupy n*rowH + (n-1)*gap, so solve for n and floor it. */
-      var fits = Math.floor((box + gap) / (rowH + gap));
-      fits = Math.max(1, Math.min(fits, MAX_ROWS));
-      while (ul.children.length > fits) ul.removeChild(ul.lastChild);
+      if (!ul || !ul.parentNode) return;
+      var more = ul.scrollHeight > ul.clientHeight + 1; /* +1 absorbs sub-pixel rounding */
+      ul.parentNode.classList.toggle('can-scroll', more);
     });
   }
 
@@ -232,7 +236,7 @@
     });
     /* Row trimming depends on the box each list actually got, which only
        exists once the view is displayed. */
-    if (data) trimLists();
+    if (data) markScrollable();
   }
 
   function toggleView() {
@@ -362,8 +366,37 @@
   applyView();
 
   /* Tap anywhere to swap views. Needs "interactive": true in manifest.json,
-     without which iCUE never forwards touches to the page. */
-  document.addEventListener('click', toggleView);
+     without which iCUE never forwards touches to the page.
+     A plain click listener would also fire at the end of a scroll drag, so a
+     gesture only counts as a tap if the pointer barely moved and was not held.
+     Pointer events cover mouse and touch alike; the click fallback is for any
+     context that does not deliver them. */
+  (function bindTap() {
+    var startX = 0, startY = 0, startT = 0, tracking = false;
+
+    function down(e) {
+      tracking = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startT = Date.now();
+    }
+
+    function up(e) {
+      if (!tracking) return;
+      tracking = false;
+      var moved = Math.abs(e.clientX - startX) > TAP_SLOP_PX ||
+                  Math.abs(e.clientY - startY) > TAP_SLOP_PX;
+      if (!moved && (Date.now() - startT) <= TAP_MAX_MS) toggleView();
+    }
+
+    if (typeof window.PointerEvent === 'function') {
+      document.addEventListener('pointerdown', down);
+      document.addEventListener('pointerup', up);
+      document.addEventListener('pointercancel', function () { tracking = false; });
+    } else {
+      document.addEventListener('click', toggleView);
+    }
+  })();
 
   showState('loading-state');
   startClock();

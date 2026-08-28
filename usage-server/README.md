@@ -106,10 +106,11 @@ works without any credential.
 - **Never** logs it, prints it, or includes it in `/usage`'s output. The served
   payload is scanned for `accessToken`, `refreshToken`, `Bearer` and `sk-ant` as
   part of testing.
-- Polls **every five minutes**, not every rebuild. One-minute polling drew a
-  `429` after roughly nine requests — the endpoint's limit is far tighter than
-  the 20-second index cadence, and utilisation moves slowly enough that five
-  minutes loses nothing.
+- Polls **every twelve minutes**, not every rebuild. One-minute polling drew a
+  `429` within the hour. The budget is also **shared across everything on the
+  machine using your account** — the AI Limits Stream Deck plugin polls the same
+  endpoint every two minutes, and when both were running they throttled each
+  other. If you run another usage tool, count its polling too.
 - Backs off on failure: exponentially to 30 minutes normally, starting at 15
   minutes for a `429` since that one is explicitly about request volume.
 - Keeps the last successful reading. If a poll fails, the widget keeps showing

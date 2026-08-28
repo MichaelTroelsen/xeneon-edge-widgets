@@ -45,18 +45,22 @@ let lastQuota = null; /* most recent 429 quotaLimits record seen, if any */
 /* Anthropic's own figures, refreshed on their own slower timer. The index
    rebuilds every 20s but this is an undocumented endpoint on someone else's
    server, so it is polled far less often and always from cache in between. */
-/* Five minutes, not one. At one-minute polling the endpoint started returning
-   429 after roughly nine requests - its limit is far tighter than the rebuild
-   cadence, and utilisation moves slowly enough that this loses nothing. */
-const OFFICIAL_INTERVAL_MS = 5 * 60 * 1000;
+/* Twelve minutes. One-minute polling drew a 429 within the hour, and the budget
+   is shared: the AI Limits Stream Deck plugin polls the same endpoint every two
+   minutes on this machine, so anything here adds to that rather than being
+   measured on its own. Utilisation moves slowly and reset times are absolute
+   timestamps rendered locally, so a longer interval costs the display nothing.
+   */
+const OFFICIAL_INTERVAL_MS = 12 * 60 * 1000;
 const OFFICIAL_MAX_BACKOFF_MS = 30 * 60 * 1000;
 /* A rate limit deserves a bigger first step than an ordinary failure, and its
    own ceiling: these windows are commonly hourly, and a 30-minute retry that
    keeps landing inside the window just keeps the penalty alive. */
 const OFFICIAL_RATE_LIMIT_MS = 15 * 60 * 1000;
 const OFFICIAL_RATE_LIMIT_MAX_MS = 60 * 60 * 1000;
-/* Past this, a cached reading stops being worth showing. */
-const OFFICIAL_STALE_MS = 30 * 60 * 1000;
+/* Past this, a cached reading stops being worth showing. Comfortably longer
+   than the poll interval so an ordinary miss never drops the display to LOCAL. */
+const OFFICIAL_STALE_MS = 45 * 60 * 1000;
 
 let officialState = { ok: false, error: 'not fetched yet', fetchedAt: null };
 let officialGood = null;   /* last successful reading, kept across failures */

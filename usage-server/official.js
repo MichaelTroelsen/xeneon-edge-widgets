@@ -263,7 +263,7 @@ async function fetchOfficial() {
     };
   }
 
-  let last = null;
+  const failures = [];
   for (const source of sources) {
     let result = await trySource(source);
 
@@ -279,10 +279,20 @@ async function fetchOfficial() {
     }
 
     if (result.ok) return result;
-    last = result;
+    failures.push(result.error);
+
+    /* A 429 is about the caller, not the credential. Trying the next token
+       would add load and then report the wrong cause - the first run after
+       this fix blamed a scope error on a token that was never the problem. */
+    if (/HTTP 429/.test(result.error || '')) break;
   }
-  if (last) last.lastRefresh = lastRefresh;
-  return last;
+
+  return {
+    ok: false,
+    fetchedAt: Date.now(),
+    error: failures.join(' | '),
+    lastRefresh: lastRefresh
+  };
 }
 
 async function trySource(cred) {

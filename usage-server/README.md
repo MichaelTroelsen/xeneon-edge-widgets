@@ -31,7 +31,52 @@ the opening words of the prompt. The `slug` some transcripts carry is absent fro
 most of them and a UUID says nothing, so the first message is the only label that
 names every session.
 
-### The percentage does not work — don't trust it
+## Anthropic's own figures
+
+The numbers Claude Code's `/usage` panel shows come from an **undocumented**
+OAuth endpoint, and the server now reads them directly:
+
+```
+GET https://api.anthropic.com/api/oauth/usage
+Authorization: Bearer <token from ~/.claude/.credentials.json>
+anthropic-beta: oauth-2025-04-20
+```
+
+```json
+{
+  "five_hour":        { "utilization": 33.0, "resets_at": "…" },
+  "seven_day":        { "utilization": 13.0, "resets_at": "…" },
+  "seven_day_opus":   null,
+  "seven_day_sonnet": { "utilization": 2.0,  "resets_at": "…" },
+  "extra_usage":      { "is_enabled": true, "monthly_limit": 1000, "used_credits": 0.0 }
+}
+```
+
+`five_hour.utilization` and `seven_day.utilization` are exactly the panel's two
+percentages, and the `seven_day_*` keys are its per-model rows. `/api/oauth/profile`
+returns `organization.rate_limit_tier`, which is where `Max (5x)` comes from
+instead of being hardcoded.
+
+This is the same approach as
+[jens-duttke/usage-monitor-for-claude](https://github.com/jens-duttke/usage-monitor-for-claude),
+which documents the response shape.
+
+**Handling of the token.** It is read from `~/.claude/.credentials.json` into
+memory, used for one `Authorization` header per request, and never logged,
+written anywhere, or included in `/usage`'s output. Requests go only to
+`api.anthropic.com`. The endpoint is polled once a minute regardless of how often
+the index rebuilds.
+
+**When it fails, nothing breaks.** Every error is non-fatal: `official.ok` goes
+false with the reason, and the widget falls back to the measured token counts.
+The common failure is an expired access token — Claude Code does not always
+rewrite the credentials file when it refreshes, and a stale file gives `HTTP 401`.
+It recovers on its own the next time Claude Code writes the file.
+
+**It is undocumented and may vanish.** Treat the measured path as the one that is
+guaranteed to keep working.
+
+### Why the local estimate was abandoned
 
 It is still in the JSON, and the debug page still shows it, but **the widget
 stopped displaying it in 1.3.0** and you should not rely on it.

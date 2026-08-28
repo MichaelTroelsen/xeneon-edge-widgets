@@ -61,6 +61,12 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       more slowly than its slowest component. The widget now shows measured
       token and message counts, with the bar scaled against the user's own
       busiest recent block.
+- [x] **Real numbers from Anthropic** (1.4.0). Found via GitHub search: the
+      `/usage` panel reads `api.anthropic.com/api/oauth/usage`, authenticated
+      with the OAuth token in `~/.claude/.credentials.json`. The feed now reads
+      it directly, so the widget shows the panel's own percentages with a `LIVE`
+      badge, falling back to measured counts when the endpoint is unreachable.
+      Undocumented endpoint — the measured path stays as the guaranteed one.
 - [x] **`/usagehtml` debug page** on the server — both windows with full token
       breakdowns, per-model splits, and every session/workflow/subtask as a
       table. An addition alongside `/usage`, which is untouched.
@@ -74,6 +80,15 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 - [ ] **Confirm the weekly anchor.** Thu 21:00 local, taken from the usage panel.
       Verify against a real weekly reset. Still worth doing — the reset *times*
       remain exact and are now the widget's main claim.
+- [ ] **The credentials file's access token is stale.** It expired 2026-08-28
+      01:21 UTC and the file has not been rewritten since 27 Aug 19:21, even
+      though Claude Code is running — so it holds the live token in process, not
+      on disk, and there is no Claude entry in Windows Credential Manager. Until
+      the file is refreshed the live path returns `HTTP 401` and the widget uses
+      measured counts. Options: `claude update` (what the tray app does, but may
+      install an update), `claude auth login` (reliable, interactive), or wait.
+      Deliberately **not** using the refresh token directly — rotation could
+      invalidate Claude Code's own session.
 - [ ] **Decide what to do with the dead budget config.** `limits.json` still
       carries `sessionBudgetWeightedTokens`, `weeklyBudgetWeightedTokens`,
       `weeklyBoost` and `weeklyBuckets`, and the server still computes a

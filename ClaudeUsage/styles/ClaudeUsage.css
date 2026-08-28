@@ -120,22 +120,20 @@ body {
 
 .head .updated.is-stale { color: var(--warn); }
 
+.head .live {
+  font-size: var(--font-badge);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ok);
+  border: 1px solid var(--ok);
+  border-radius: calc(var(--layout-unit) * 1);
+  padding: calc(var(--layout-unit) * 0.6) calc(var(--layout-unit) * 1.4);
+}
+
 .head .version {
   font-size: var(--font-badge);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-}
-
-/* The percentages are computed locally from transcript token counts, not read
-   back from Anthropic. The badge says so, permanently. */
-.head .est {
-  font-size: var(--font-badge);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: calc(var(--layout-unit) * 1);
-  padding: calc(var(--layout-unit) * 0.6) calc(var(--layout-unit) * 1.4);
 }
 
 /* Two views on one page: usage, and the activity lists. Tapping the widget

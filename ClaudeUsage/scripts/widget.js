@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.3.0';
+  var WIDGET_VERSION = '1.4.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -171,27 +171,44 @@
     els.updated.classList.toggle('is-stale',
       !!data.generatedAt && (Date.now() - data.generatedAt) > staleAfter);
 
-    /* Measured counts only. The percentage against a plan limit was removed in
-       1.3.0: no weighting of these token counts reproduces Claude's own panel,
-       so any percentage here would be a number we invented. */
+    /* Anthropic's own utilisation when the feed could reach the OAuth endpoint;
+       the measured token counts when it could not. Never both, and never a
+       locally invented percentage. */
+    var live = data.official && data.official.ok ? data.official : null;
+    els.live.style.display = live ? '' : 'none';
+
     var s = data.session || {};
     var st = s.tokens || {};
-    els.sessionValue.textContent = compact(st.total) + ' tok';
-    els.sessionSub.textContent = s.active ? formatCountdown(s.resetsAt) : 'No active session';
-    /* The bar is this block against your own busiest recent block, never
-       against a plan limit — so the note says so, or the bar reads as one. */
+
+    if (live && live.fiveHour) {
+      els.sessionValue.textContent = live.fiveHour.percent + '% used';
+      els.sessionSub.textContent = formatCountdown(live.fiveHour.resetsAt);
+    } else {
+      els.sessionValue.textContent = compact(st.total) + ' tok';
+      els.sessionSub.textContent = s.active ? formatCountdown(s.resetsAt) : 'No active session';
+    }
+    /* With live data the bar is the real utilisation. Without it, the bar is
+       this block against your own busiest recent block — never a plan limit,
+       which is why the note spells out which one you are looking at. */
     var peak = s.peakWeighted || 0;
     var frac = peak > 0 ? Math.min(100, (s.usedWeighted / peak) * 100) : 0;
-    els.sessionFill.style.width = frac + '%';
-    els.mSession.classList.toggle('is-high', frac >= HIGH_WATER);
+    var barPct = (live && live.fiveHour) ? live.fiveHour.percent : frac;
+    els.sessionFill.style.width = barPct + '%';
+    els.mSession.classList.toggle('is-high', barPct >= HIGH_WATER);
 
     els.sessionNote.textContent = num(st.messages) + ' msgs · ' + compact(st.output) + ' out' +
-      (peak > 0 ? ' · ' + Math.round(frac) + '% of peak block' : '');
+      (live ? '' : (peak > 0 ? ' · ' + Math.round(frac) + '% of peak block' : ''));
 
     var w = data.weekly || {};
     var wt = w.tokens || {};
-    els.weeklyValue.textContent = compact(wt.total) + ' tok';
-    els.weeklySub.textContent = formatWeekday(w.resetsAt);
+
+    if (live && live.sevenDay) {
+      els.weeklyValue.textContent = live.sevenDay.percent + '% used';
+      els.weeklySub.textContent = formatWeekday(live.sevenDay.resetsAt);
+    } else {
+      els.weeklyValue.textContent = compact(wt.total) + ' tok';
+      els.weeklySub.textContent = formatWeekday(w.resetsAt);
+    }
     els.weeklyNote.textContent = num(wt.messages) + ' msgs · ' + compact(wt.output) + ' out';
 
     var describeWorkflow = function (wf) {
@@ -338,6 +355,7 @@
     els.subtasks = document.getElementById('subtasks');
     els.errorHint = document.getElementById('error-hint');
     els.updated = document.getElementById('updated');
+    els.live = document.getElementById('live');
     els.version = document.getElementById('version');
     if (els.version) els.version.textContent = 'v' + WIDGET_VERSION;
   }

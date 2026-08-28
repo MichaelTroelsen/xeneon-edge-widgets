@@ -72,12 +72,16 @@ under `~/.claude`.
 node usage-server/server.js   # http://127.0.0.1:41777/usage
 ```
 
-**Everything the widget shows is measured.** Earlier versions estimated a
-percentage against the plan limit; that was removed in 1.3.0 after it proved
-impossible to reproduce Anthropic's accounting from token counts — the arithmetic
-is in [usage-server/README.md](usage-server/README.md). The widget now shows
-token and message counts with the exact reset times, and its bar is scaled
-against your own busiest recent 5-hour block, not against a limit.
+**The percentages are Anthropic's own.** The feed reads them from the same
+undocumented OAuth endpoint Claude Code's `/usage` panel uses, so the widget
+shows exactly what the panel shows, and a `LIVE` badge marks it. When that
+endpoint is unreachable — most often an expired token in the credentials file —
+the widget falls back to locally measured token counts rather than to a guess,
+and the badge disappears.
+
+Nothing is estimated. A local estimate was tried and abandoned: no weighting of
+local token counts reproduces Anthropic's accounting, and the arithmetic proving
+that is in [usage-server/README.md](usage-server/README.md).
 
 For a full human-readable view — token breakdown per class, per-model split, and
 every session, workflow and subtask as a table — open

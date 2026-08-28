@@ -15,7 +15,7 @@
     {
       "title": "tr('Claude Code Usage')",
       "properties": ["feedUrl", "colorTheme", "refreshSeconds"],
-      "info": "tr('Requires the local usage feed to be running. Percentages are estimated from local transcript token counts, not read back from Anthropic.')"
+      "info": "tr('Requires the local usage feed to be running. It reads your plan utilisation from Anthropic and falls back to locally measured token counts if that is unavailable.')"
     }
   ]
   </script>
@@ -30,6 +30,7 @@
         <span class="plan" id="plan"></span>
         <span class="updated" id="updated"></span>
         <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i></span>
+        <span class="live" id="live" title="Utilisation read from Anthropic">LIVE</span>
         <span class="version" id="version"></span>
       </header>
 

@@ -14,6 +14,7 @@ const path = require('path');
 const os = require('os');
 const http = require('http');
 const usagehtml = require('./usagehtml');
+const official = require('./official');
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
@@ -37,6 +38,22 @@ const fileState = new Map(); /* path -> { size, mtime, records: [] } */
 
 let snapshot = null;
 let lastQuota = null; /* most recent 429 quotaLimits record seen, if any */
+
+/* Anthropic's own figures, refreshed on their own slower timer. The index
+   rebuilds every 20s but this is an undocumented endpoint on someone else's
+   server, so it is polled far less often and always from cache in between. */
+const OFFICIAL_INTERVAL_MS = 60000;
+let officialState = { ok: false, error: 'not fetched yet', fetchedAt: null };
+let officialInFlight = false;
+
+function refreshOfficial() {
+  if (officialInFlight) return;
+  officialInFlight = true;
+  official.fetchOfficial()
+    .then(result => { officialState = result; })
+    .catch(err => { officialState = { ok: false, error: String(err && err.message || err), fetchedAt: Date.now() }; })
+    .then(() => { officialInFlight = false; });
+}
 
 /* ------------------------------------------------------------------ config */
 
@@ -357,6 +374,14 @@ function blockHistory(records, now) {
   return blocks;
 }
 
+/* "default_claude_max_5x" -> "Max (5x)", matching how the panel words it. */
+function planLabelFromTier(tier) {
+  const m = /claude_(max|pro)(?:_(\d+)x)?/.exec(String(tier));
+  if (!m) return tier;
+  const name = m[1] === 'max' ? 'Max' : 'Pro';
+  return m[2] ? name + ' (' + m[2] + 'x)' : name;
+}
+
 function pct(used, budget) {
   if (!budget || budget <= 0) return 0;
   return Math.min(100, Math.round((used / budget) * 100));
@@ -534,7 +559,10 @@ function build(nowOverride) {
   return {
     generatedAt: now,
     estimated: true,
-    plan: cfg.planLabel,
+    /* Anthropic's own numbers when the endpoint answered, so the widget can
+       prefer them and fall back to the measured view when it did not. */
+    official: officialState,
+    plan: (officialState.ok && officialState.planTier) ? planLabelFromTier(officialState.planTier) : cfg.planLabel,
     session: {
       percent: pct(sessionUsed, cfg.sessionBudgetWeightedTokens),
       /* Raw totals so calibration is not limited by a rounded percentage. */
@@ -634,6 +662,8 @@ const server = http.createServer((req, res) => {
 
 rebuild();
 setInterval(rebuild, REFRESH_MS).unref();
+refreshOfficial();
+setInterval(refreshOfficial, OFFICIAL_INTERVAL_MS).unref();
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude usage feed on http://127.0.0.1:${PORT}/usage`);

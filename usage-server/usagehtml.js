@@ -149,10 +149,43 @@ function render(snapshot, cfg) {
     '<p class="sub">' + esc(s.plan || '') + ' · rebuilt ' + clock(generated) + ' (' + ago(generated) + ')' +
     ' · reading ' + num((s.counts || {}).messages) + ' messages · page refreshes every 30s</p>';
 
-  html += '<div class="warnbox"><b>The percentages are not reliable.</b> They divide measured tokens ' +
-    'by a budget calibrated at one moment. Checked against Claude\'s own panel, no weighting of these ' +
-    'token counts reproduces it — measured growth between two windows was 4.3×–9.2× per class while ' +
-    'the panel charged 3.5×. Everything else on this page is measured, not inferred.</div>';
+  /* --- Anthropic's own figures --- */
+  const off = s.official || {};
+  if (off.ok) {
+    html += '<h2>Anthropic (live)</h2><div class="cards">';
+    const rows = [];
+    if (off.fiveHour) rows.push(['5-hour session', off.fiveHour]);
+    if (off.sevenDay) rows.push(['7-day, all models', off.sevenDay]);
+    (off.buckets || []).forEach(function (b) { rows.push(['7-day, ' + b.label, b]); });
+    html += '<div class="card"><h3>Utilisation</h3><table class="grid"><thead><tr>' +
+      '<th>window</th><th class="n">used</th><th class="n">resets</th></tr></thead><tbody>' +
+      rows.map(function (r) {
+        return '<tr><td>' + esc(r[0]) + '</td><td class="n">' + r[1].utilization + '%</td>' +
+          '<td class="n">' + esc(clock(r[1].resetsAt)) + ' (' + until(r[1].resetsAt) + ')</td></tr>';
+      }).join('') + '</tbody></table>' +
+      '<div class="muted" style="margin-top:8px">read ' + ago(off.fetchedAt) +
+      ' from <code>api.anthropic.com/api/oauth/usage</code>' +
+      (off.planTier ? ' · tier ' + esc(off.planTier) : '') + '</div></div>';
+    if (off.extraUsage) {
+      html += '<div class="card"><h3>Extra usage</h3><table class="grid"><tbody>' +
+        '<tr><th>enabled</th><td>' + (off.extraUsage.is_enabled ? 'yes' : 'no') + '</td></tr>' +
+        '<tr><th>monthly limit</th><td class="n">' + num(off.extraUsage.monthly_limit) + '</td></tr>' +
+        '<tr><th>used credits</th><td class="n">' + num(off.extraUsage.used_credits) + '</td></tr>' +
+        '</tbody></table></div>';
+    }
+    html += '</div>';
+  } else {
+    html += '<div class="warnbox"><b>Anthropic\'s own figures are unavailable.</b> ' +
+      esc(off.error || 'not fetched') +
+      '. The widget is showing measured token counts instead. The OAuth token is read from ' +
+      '<code>~/.claude/.credentials.json</code>; Claude Code rewrites that file when it refreshes, ' +
+      'and this recovers on its own once it does.</div>';
+  }
+
+  html += '<div class="warnbox"><b>The local percentages below are not reliable.</b> They divide ' +
+    'measured tokens by a budget calibrated at one moment. Checked against Claude\'s own panel, no ' +
+    'weighting of these token counts reproduces it — measured growth between two windows was ' +
+    '4.3×–9.2× per class while the panel charged 3.5×. Everything else on this page is measured.</div>';
 
   /* --- windows --- */
   html += '<h2>Windows</h2><div class="cards">';

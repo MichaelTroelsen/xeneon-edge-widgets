@@ -84,9 +84,13 @@ function get(pathname, token) {
       path: pathname,
       method: 'GET',
       headers: {
-        /* Mirrors what Claude Code itself sends. The beta header is what marks
-           the request as OAuth rather than API-key authenticated. */
+        /* The beta header marks the request as OAuth rather than API-key
+           authenticated. anthropic-version was missing until it was noticed
+           that a working client - the AI Limits Stream Deck plugin - sends it;
+           it is the standard Anthropic API version header and omitting it was
+           simply an oversight. */
         'Authorization': 'Bearer ' + token,
+        'anthropic-version': '2023-06-01',
         'anthropic-beta': 'oauth-2025-04-20',
         'User-Agent': 'xeneon-edge-widgets/usage-server',
         'Accept': 'application/json'

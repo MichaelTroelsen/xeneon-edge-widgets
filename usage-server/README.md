@@ -22,8 +22,9 @@ is the only outbound traffic, it goes only to `api.anthropic.com` and
 
 | Shown | Source | Exact or estimated |
 |---|---|---|
-| 5-hour reset time | first message of the current block, floored to the hour, + 5h | **exact** |
-| Weekly reset time | the weekly anchor in `limits.json` (default Thu 21:00 local) | exact once the anchor is right |
+| 5-hour reset time | `five_hour.resets_at` when authenticated | **exact** |
+| ↳ fallback without auth | first local message of the block, floored to the hour, + 5h | **approximate — can be ~30 min out** |
+| Weekly reset time | `seven_day.resets_at` when authenticated, otherwise the anchor in `limits.json` | exact when authenticated |
 | Token counts per window | summed straight from the `usage` block of every assistant message | **exact** |
 | 5-hour / weekly **percentage** | Anthropic's `/api/oauth/usage`, needs [authentication](#authentication) | **exact — the same numbers as Claude Code's own panel** |
 | Plan label, e.g. `Max (5x)` | `/api/oauth/profile` → `rate_limit_tier` | exact when authenticated |

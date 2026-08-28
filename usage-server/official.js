@@ -19,10 +19,26 @@ const os = require('os');
 const https = require('https');
 
 const CREDENTIALS = path.join(os.homedir(), '.claude', '.credentials.json');
+const BACKUP = CREDENTIALS + '.before-usage-server';
 const HOST = 'api.anthropic.com';
 const USAGE_PATH = '/api/oauth/usage';
 const PROFILE_PATH = '/api/oauth/profile';
 const TIMEOUT_MS = 8000;
+
+/* Anthropic's public OAuth client for CLI tools, and the endpoint that mints a
+   new access token from a refresh token. The scope set for this client is
+   "org:create_api_key user:profile user:inference" — user:profile is the one
+   /api/oauth/usage requires. */
+const TOKEN_HOST = 'console.anthropic.com';
+const TOKEN_PATH = '/v1/oauth/token';
+const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
+
+/* Refresh a minute early: a token that expires mid-request is a wasted round
+   trip and a confusing 401. */
+const EXPIRY_MARGIN_MS = 60000;
+
+let refreshInFlight = null;
+let lastRefresh = { at: null, ok: null, error: null };
 
 /* Two possible sources, tried in this order.
  *
@@ -117,9 +133,127 @@ function window_(w) {
   };
 }
 
+function postJson(host, pathname, payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const req = https.request({
+      host,
+      path: pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Accept': 'application/json',
+        'User-Agent': 'xeneon-edge-widgets/usage-server'
+      }
+    }, res => {
+      let out = '';
+      res.on('data', c => { out += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          let detail = '';
+          try {
+            const parsed = JSON.parse(out);
+            const msg = parsed && (parsed.error_description || parsed.error && parsed.error.message || parsed.error);
+            if (typeof msg === 'string') detail = ' — ' + msg;
+          } catch (err) { /* non-JSON error body */ }
+          reject(new Error('HTTP ' + res.statusCode + detail));
+          return;
+        }
+        try {
+          resolve(JSON.parse(out));
+        } catch (err) {
+          reject(new Error('malformed JSON from ' + pathname));
+        }
+      });
+    });
+    req.setTimeout(TIMEOUT_MS, () => { req.destroy(new Error('timeout')); });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+/* Write the credentials file the way Claude Code would: same shape, same path,
+   replaced atomically so a crash mid-write cannot truncate it. A one-time
+   backup is kept beside it the first time this runs. */
+function writeCredentials(parsed) {
+  if (!fs.existsSync(BACKUP)) {
+    try {
+      fs.copyFileSync(CREDENTIALS, BACKUP);
+    } catch (err) { /* best effort; not a reason to abort the refresh */ }
+  }
+  const tmp = CREDENTIALS + '.tmp-' + process.pid;
+  fs.writeFileSync(tmp, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, CREDENTIALS);
+}
+
+/* Exchange the refresh token for a new access token.
+ *
+ * The response carries a NEW refresh token - refreshing rotates it - so the
+ * result has to be written back to the same file Claude Code reads, or its copy
+ * becomes the stale one. That write-back is what keeps both sides in sync.
+ */
+async function refreshCredentials() {
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(CREDENTIALS, 'utf8'));
+    } catch (err) {
+      throw new Error('cannot read credentials file to refresh');
+    }
+    const o = parsed && parsed.claudeAiOauth;
+    if (!o || !o.refreshToken) throw new Error('no refresh token in credentials file');
+    if (o.refreshTokenExpiresAt && o.refreshTokenExpiresAt < Date.now()) {
+      throw new Error('refresh token itself expired — run: claude auth login');
+    }
+
+    const tokens = await postJson(TOKEN_HOST, TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      refresh_token: o.refreshToken,
+      client_id: CLIENT_ID
+    });
+
+    if (!tokens || !tokens.access_token) throw new Error('refresh response had no access_token');
+
+    o.accessToken = tokens.access_token;
+    if (tokens.refresh_token) o.refreshToken = tokens.refresh_token;
+    if (tokens.expires_in) o.expiresAt = Date.now() + tokens.expires_in * 1000;
+    parsed.claudeAiOauth = o;
+
+    writeCredentials(parsed);
+    lastRefresh = { at: Date.now(), ok: true, error: null };
+    return o.accessToken;
+  })().catch(err => {
+    lastRefresh = { at: Date.now(), ok: false, error: err.message };
+    throw err;
+  }).then(v => { refreshInFlight = null; return v; },
+          e => { refreshInFlight = null; throw e; });
+
+  return refreshInFlight;
+}
+
+/* Refresh ahead of expiry so the usual path never sees a 401 at all. */
+async function refreshIfNeeded() {
+  let o;
+  try {
+    o = JSON.parse(fs.readFileSync(CREDENTIALS, 'utf8')).claudeAiOauth;
+  } catch (err) {
+    return;
+  }
+  if (!o || !o.refreshToken) return;
+  const due = !o.accessToken || !o.expiresAt || o.expiresAt < Date.now() + EXPIRY_MARGIN_MS;
+  if (!due) return;
+  try {
+    await refreshCredentials();
+  } catch (err) { /* reported through lastRefresh and the fetch error below */ }
+}
+
 /* Returns a plain object; never throws. Tries every available token source and
    reports the failure of the last one if none succeed. */
 async function fetchOfficial() {
+  await refreshIfNeeded();
   const sources = readTokens();
   if (!sources.length) {
     return {
@@ -131,10 +265,23 @@ async function fetchOfficial() {
 
   let last = null;
   for (const source of sources) {
-    const result = await trySource(source);
+    let result = await trySource(source);
+
+    /* A 401 despite a token that looked current means the server disagrees with
+       our expiry - refresh once and retry rather than waiting out the backoff. */
+    if (!result.ok && source.name === 'credentials file' && /HTTP 401/.test(result.error || '')) {
+      try {
+        const token = await refreshCredentials();
+        result = await trySource({ name: 'credentials file (refreshed)', token, expiresAt: null });
+      } catch (err) {
+        result.error = result.error + '; refresh failed: ' + err.message;
+      }
+    }
+
     if (result.ok) return result;
     last = result;
   }
+  if (last) last.lastRefresh = lastRefresh;
   return last;
 }
 

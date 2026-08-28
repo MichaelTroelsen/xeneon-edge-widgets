@@ -140,9 +140,18 @@ write-back, Claude Code's copy would become the stale one. The write is atomic
 (temp file, then rename) and a one-time backup is kept at
 `.credentials.json.before-usage-server`.
 
-> Claude Code and the server share one rotating credential. If Claude Code
-> refreshes in memory without persisting, its rotation can invalidate the copy on
-> disk and the badge drops to `LOCAL`. Another `claude auth login` restores it.
+> **Anything else reading the same stored login is part of this.** The AI Limits
+> Stream Deck plugin refreshes the token too and, being strictly read-only, never
+> writes the rotated one back — so after it refreshes, the file holds a refresh
+> token Anthropic has already invalidated. That is exactly the
+> `Refresh token not found or invalid` seen here, and the reason a
+> `claude auth login` token could appear to die overnight.
+>
+> This server is the only participant that writes back, so it refreshes **30
+> minutes ahead of expiry** to win that race and persist the result. The
+> read-only tools then just read a fresh token and never need to refresh at all.
+> If something else refreshes first anyway, recovery is another
+> `claude auth login`.
 
 ### Troubleshooting
 

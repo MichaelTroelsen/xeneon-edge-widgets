@@ -33,9 +33,20 @@ const TOKEN_HOST = 'console.anthropic.com';
 const TOKEN_PATH = '/v1/oauth/token';
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
-/* Refresh a minute early: a token that expires mid-request is a wasted round
-   trip and a confusing 401. */
-const EXPIRY_MARGIN_MS = 60000;
+/* Refresh well ahead of expiry - half an hour - rather than at the last minute.
+ *
+ * This is a race, not just a safety margin. Other tools read the same stored
+ * login: the AI Limits Stream Deck plugin refreshes it too and, being strictly
+ * read-only, never writes the rotated token back. Whoever refreshes first wins,
+ * and the loser's stored copy becomes the invalid one - which is how the file
+ * ends up holding a refresh token Anthropic has already rotated away.
+ *
+ * This server is the only participant that writes back, so it should win. A
+ * wide margin means it refreshes and persists while the current token is still
+ * valid, and the read-only tools then simply read a fresh token and never need
+ * to refresh at all.
+ */
+const EXPIRY_MARGIN_MS = 30 * 60 * 1000;
 
 let refreshInFlight = null;
 let lastRefresh = { at: null, ok: null, error: null };

@@ -69,9 +69,28 @@ Queued `whattask.json` tasks are deliberately **not** shown as subtasks. Waiting
 to start is not running. The count is reported instead, so an empty list reads
 `Nothing running · 86 queued`.
 
-Verify it end to end with `test/activity-probe.workflow.js`, which runs N
-subtasks that genuinely block for S seconds, and `test/activity-probe-check.js`,
-which watches the feed while they do and fails if the lists never showed them.
+Two tests cover this, because they catch different things.
+
+```bash
+node usage-server/test/live-detection.test.js
+```
+
+runs in a couple of seconds and needs nothing but node. It points the server at
+a fixture tree via `CLAUDE_USAGE_PROJECTS_DIR` (unset in normal use) and asserts
+the cases that were got wrong or could be: a run in flight is reported, a
+finished one is not despite its `wf_*.json` existing, a killed run gone stale is
+not, a partly finished run reports only its unfinished agents, and an errored
+agent counts as finished. It fails 9 of its 12 checks against the pre-fix code,
+which is the point of it.
+
+The end-to-end probe needs an agent runner and real tokens, so it is the one you
+run when changing how the widget renders rather than after every edit. Launch
+`test/activity-probe.workflow.js` with the Workflow tool (`args: {agents, seconds}`)
+and run `node usage-server/test/activity-probe-check.js` alongside it: the probe
+makes N subtasks that genuinely block for S seconds, and the checker watches the
+feed and fails if the lists never reported them. Allow ~40 seconds for work to
+appear and the same for it to clear — the server re-indexes every 20s and the
+widget polls every 20s, so a run shorter than that can finish unseen.
 Its label comes from the first user message — usually a slash command, otherwise
 the opening words of the prompt. The `slug` some transcripts carry is absent from
 most of them and a UUID says nothing, so the first message is the only label that

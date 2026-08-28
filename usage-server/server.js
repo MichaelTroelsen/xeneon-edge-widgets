@@ -22,7 +22,13 @@ const statusline = require('./statusline');
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
-const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
+/* Overridable so the detection can be tested against a fixture tree instead of
+   the real one. Without this the only way to exercise the live-run path is to
+   actually run agents - which costs real tokens, takes minutes, and briefly
+   puts fabricated rows on the user's screen if the fixtures go in the real
+   directory. Unset in normal use. */
+const PROJECTS_DIR = process.env.CLAUDE_USAGE_PROJECTS_DIR ||
+  path.join(CLAUDE_DIR, 'projects');
 const CONFIG_PATH = path.join(__dirname, 'limits.json');
 
 const WINDOW_DAYS = 8;                       /* transcripts older than this are ignored */

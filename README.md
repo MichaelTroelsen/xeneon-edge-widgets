@@ -79,6 +79,11 @@ unreachable — most often an expired token in the credentials file — the widg
 falls back to locally measured token counts rather than to a guess, and the badge
 switches to `LOCAL` with the reason in its tooltip. It never falls back silently.
 
+Both windows get a bar, coloured by how close you are: blue, **amber from 80%**,
+**red from 95%**. In `LOCAL` mode the session bar falls back to your busiest
+recent 5-hour block and the weekly bar is hidden — a week has no honest local
+reference to scale against.
+
 Nothing is estimated. A local estimate was tried and abandoned: no weighting of
 local token counts reproduces Anthropic's accounting, and the arithmetic proving
 that is in [usage-server/README.md](usage-server/README.md).

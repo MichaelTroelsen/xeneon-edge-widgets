@@ -257,8 +257,11 @@ body {
   transition: width 0.4s ease;
 }
 
-.meter.is-blocked .fill { background: var(--bad); }
+/* Amber from 80%, red from 95%. is-critical is declared last so it wins when
+   both classes are set. */
 .meter.is-high .fill { background: var(--warn); }
+.meter.is-critical .fill,
+.meter.is-blocked .fill { background: var(--bad); }
 
 /* ------------------------------------------------------------------- lists */
 

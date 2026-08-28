@@ -5,13 +5,14 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.4.0';
+  var WIDGET_VERSION = '1.5.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
   var TAP_SLOP_PX = 12;       /* movement beyond this is a scroll, not a tap */
   var TAP_MAX_MS = 700;
   var HIGH_WATER = 80;        /* percent at which a bar turns amber */
+  var CRITICAL_WATER = 95;    /* and red */
 
   var els = {};
   var timer = null;
@@ -111,6 +112,15 @@
 
   /* ---------- rendering ---------- */
 
+  /* One place decides bar width and colour, so the session and week bars cannot
+     drift apart on their thresholds. */
+  function setBar(meterEl, fillEl, percent) {
+    var p = clampRange(percent, 0, 100, 0);
+    fillEl.style.width = p + '%';
+    meterEl.classList.toggle('is-high', p >= HIGH_WATER && p < CRITICAL_WATER);
+    meterEl.classList.toggle('is-critical', p >= CRITICAL_WATER);
+  }
+
   function stateClass(state) {
     return 'state-' + String(state || 'queued').toLowerCase().replace(/[^a-z_]/g, '');
   }
@@ -199,9 +209,7 @@
        which is why the note spells out which one you are looking at. */
     var peak = s.peakWeighted || 0;
     var frac = peak > 0 ? Math.min(100, (s.usedWeighted / peak) * 100) : 0;
-    var barPct = (live && live.fiveHour) ? live.fiveHour.percent : frac;
-    els.sessionFill.style.width = barPct + '%';
-    els.mSession.classList.toggle('is-high', barPct >= HIGH_WATER);
+    setBar(els.mSession, els.sessionFill, (live && live.fiveHour) ? live.fiveHour.percent : frac);
 
     els.sessionNote.textContent = num(st.messages) + ' msgs · ' + compact(st.output) + ' out' +
       (live ? '' : (peak > 0 ? ' · ' + Math.round(frac) + '% of peak block' : ''));
@@ -212,9 +220,14 @@
     if (live && live.sevenDay) {
       els.weeklyValue.textContent = live.sevenDay.percent + '% used';
       els.weeklySub.textContent = formatWeekday(live.sevenDay.resetsAt);
+      els.weeklyTrack.style.display = '';
+      setBar(els.mWeekly, els.weeklyFill, live.sevenDay.percent);
     } else {
       els.weeklyValue.textContent = compact(wt.total) + ' tok';
       els.weeklySub.textContent = formatWeekday(w.resetsAt);
+      /* No bar without live data: a week has no honest local reference the way
+         a block can be measured against your busiest recent one. */
+      els.weeklyTrack.style.display = 'none';
     }
     els.weeklyNote.textContent = num(wt.messages) + ' msgs · ' + compact(wt.output) + ' out';
 
@@ -356,6 +369,8 @@
     els.mWeekly = document.getElementById('m-weekly');
     els.weeklyValue = document.getElementById('weekly-value');
     els.weeklySub = document.getElementById('weekly-sub');
+    els.weeklyTrack = document.getElementById('weekly-track');
+    els.weeklyFill = document.getElementById('weekly-fill');
     els.sessionNote = document.getElementById('session-note');
     els.weeklyNote = document.getElementById('weekly-note');
     els.workflows = document.getElementById('workflows');

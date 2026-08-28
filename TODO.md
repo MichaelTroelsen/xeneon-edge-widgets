@@ -32,7 +32,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 - [ ] Nothing outstanding.
 
-## Claude Code Usage — 1.2.0
+## Claude Code Usage — 1.7.0
 
 ### Done
 
@@ -73,6 +73,25 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ### Open
 
+- [ ] **Show sessions from the other machine (`tdzlaptop`).** The Activity
+      lists are this-machine-only by construction: the server walks
+      `~/.claude/projects/**/*.jsonl` on the host it runs on, and Claude Code
+      writes transcripts locally with no sync between machines. Verified
+      2026-08-28 — all 13 indexed project directories are local (11 under
+      `C:\Users\mit\...`, 2 from WSL on the same box), and `ListAgents` found no
+      reachable remote session even with `remoteControlAtStartup: true`.
+      **The usage bars already cover the laptop** and need no work: five-hour and
+      weekly utilisation are server-side account figures counting every client
+      on the account. Only the lists are local.
+      Sketch: run the collector on `tdzlaptop`, have it POST its active sessions
+      to this machine (or write somewhere both can read), tag every row with its
+      host so `read what next · icue` is distinguishable from a laptop row, and
+      decide what the widget shows when the peer is unreachable — silence is
+      indistinguishable from idle, which is the trap the active-only filter was
+      built to avoid. Needs the two machines to reach each other, and changes
+      the widget's claim from "what this box is doing" to "what my account is
+      doing": a deliberate scope change, not a setting.
+
 - [ ] **Confirm touch drag works on the device.** Scrolling is verified in a
       browser, but `interactive` is documented only as enabling *click*
       handling — whether the iCUE webview forwards drags is unknown. If it does
@@ -80,15 +99,13 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 - [x] **Confirmed the weekly anchor** (2026-08-28). Thu 21:00 local was taken
       from the usage panel; the statusline's `seven_day.resets_at` — Anthropic's
       own value — agrees. Only affects the measured `LOCAL` fallback anyway.
-- [ ] **The credentials file's access token is stale.** It expired 2026-08-28
-      01:21 UTC and the file has not been rewritten since 27 Aug 19:21, even
-      though Claude Code is running — so it holds the live token in process, not
-      on disk, and there is no Claude entry in Windows Credential Manager. Until
-      the file is refreshed the live path returns `HTTP 401` and the widget uses
-      measured counts. Options: `claude update` (what the tray app does, but may
-      install an update), `claude auth login` (reliable, interactive), or wait.
-      Deliberately **not** using the refresh token directly — rotation could
-      invalidate Claude Code's own session.
+- [x] **The stale access token resolved itself** (2026-08-28). The credentials
+      file was rewritten 19:54 local with an expiry of 29 Aug 03:54, so the
+      `HTTP 401` is gone — no `claude auth login` was needed. It also matters
+      much less now: the widget's figures come from the statusline path, which
+      uses no token at all, so a stale credential no longer costs the live view.
+      The refresh-token rotation race is still real and still worth watching
+      (see the Authentication section of `usage-server/README.md`).
 - [ ] **Decide what to do with the dead budget config.** `limits.json` still
       carries `sessionBudgetWeightedTokens`, `weeklyBudgetWeightedTokens`,
       `weeklyBoost` and `weeklyBuckets`, and the server still computes a

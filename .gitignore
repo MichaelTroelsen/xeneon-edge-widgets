@@ -11,5 +11,5 @@
 # Local scratch
 node_modules/
 *.log
-probe.html
+probe*.html
 test-*.html

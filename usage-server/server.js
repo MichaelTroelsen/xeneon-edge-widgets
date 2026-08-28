@@ -24,6 +24,8 @@ const SESSION_BLOCK_MS = 5 * 60 * 60 * 1000; /* the "current session" is a 5-hou
 const REFRESH_MS = 20000;                    /* how often the index is rebuilt */
 const MAX_WORKFLOWS = 24;
 const MAX_SUBTASKS = 40;
+const MAX_SESSIONS = 20;
+const SESSION_ACTIVE_MS = 15 * 60 * 1000; /* a session is "live" if it spoke this recently */
 
 let config = null;
 let configMtime = 0;
@@ -109,9 +111,47 @@ function weightOf(usage, model, cfg) {
   return raw * multiplier;
 }
 
-function parseLines(text, cfg, records) {
+/* A session's first user message is the best human label available: usually a
+   slash command, otherwise the opening words of the prompt. Slugs exist on only
+   a couple of transcripts, and a UUID says nothing. */
+function extractTitle(line) {
+  let obj;
+  try {
+    obj = JSON.parse(line);
+  } catch (err) {
+    return null;
+  }
+  const content = obj && obj.message && obj.message.content;
+  let text = '';
+  if (typeof content === 'string') text = content;
+  else if (Array.isArray(content) && content[0] && typeof content[0].text === 'string') text = content[0].text;
+  if (!text) return null;
+
+  const command = /<command-name>([^<]+)<\/command-name>/.exec(text);
+  if (command) return command[1].trim();
+
+  const plain = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!plain) return null;
+  return plain.length > 52 ? plain.slice(0, 52) + '…' : plain;
+}
+
+function parseLines(text, cfg, records, meta) {
   for (const line of text.split('\n')) {
     if (!line || line.charCodeAt(0) !== 123 /* '{' */) continue;
+    /* The slug is a far better session label than a UUID. It has to be looked
+       for before the prefilter below, because it does not ride on the lines
+       that carry usage - checking only those left most sessions unnamed. The
+       indexOf costs nothing and stops once a slug is found. */
+    if (meta && !meta.slug && line.indexOf('"slug"') >= 0) {
+      const slug = /"slug":"([^"]+)"/.exec(line);
+      if (slug) meta.slug = slug[1];
+    }
+    /* Capped: without a limit a transcript whose user records never yield text
+       would be JSON.parsed on every one of them, every rebuild. */
+    if (meta && !meta.title && (meta.titleTries || 0) < 5 && line.indexOf('"type":"user"') >= 0) {
+      meta.titleTries = (meta.titleTries || 0) + 1;
+      meta.title = extractTitle(line);
+    }
     /* Cheap prefilter: skip the ~90% of lines that cannot contribute. */
     if (line.indexOf('"usage"') < 0 && line.indexOf('"quotaLimits"') < 0) continue;
     let obj;
@@ -142,9 +182,10 @@ function parseLines(text, cfg, records) {
 function readIncrement(entry, cfg) {
   const prev = fileState.get(entry.file);
   /* Unchanged since the last pass: reuse what we already parsed. */
-  if (prev && prev.size === entry.size && prev.mtime === entry.mtime) return prev.records;
+  if (prev && prev.size === entry.size && prev.mtime === entry.mtime) return prev;
 
   const records = prev && entry.size > prev.size ? prev.records : [];
+  const meta = (prev && entry.size > prev.size) ? prev.meta : {};
   const from = prev && entry.size > prev.size ? prev.size : 0;
 
   try {
@@ -154,17 +195,25 @@ function readIncrement(entry, cfg) {
       if (length > 0) {
         const buf = Buffer.allocUnsafe(length);
         fs.readSync(fd, buf, 0, length, from);
-        parseLines(buf.toString('utf8'), cfg, records);
+        parseLines(buf.toString('utf8'), cfg, records, meta);
       }
     } finally {
       fs.closeSync(fd);
     }
   } catch (err) {
-    return records;
+    return prev || { size: 0, mtime: 0, records, meta };
   }
 
-  fileState.set(entry.file, { size: entry.size, mtime: entry.mtime, records });
-  return records;
+  const state = { size: entry.size, mtime: entry.mtime, records, meta };
+  fileState.set(entry.file, state);
+  return state;
+}
+
+/* A transcript sitting directly under projects/<project>/ is a session; the
+   ones nested deeper belong to subagents and workflows. */
+function isSessionFile(file) {
+  const rel = path.relative(PROJECTS_DIR, file);
+  return rel.split(path.sep).length === 2;
 }
 
 function collectRecords(cfg) {
@@ -175,9 +224,29 @@ function collectRecords(cfg) {
   );
 
   const all = [];
+  const sessions = [];
   for (const entry of files) {
-    for (const rec of readIncrement(entry, cfg)) {
-      if (rec.t >= cutoff) all.push(rec);
+    const state = readIncrement(entry, cfg);
+    let lastAt = 0;
+    let messages = 0;
+    let weighted = 0;
+    for (const rec of state.records) {
+      if (rec.t < cutoff) continue;
+      all.push(rec);
+      messages++;
+      weighted += rec.w;
+      if (rec.t > lastAt) lastAt = rec.t;
+    }
+    if (messages && isSessionFile(entry.file)) {
+      const id = path.basename(entry.file, '.jsonl');
+      sessions.push({
+        id: id,
+        label: (state.meta && (state.meta.title || state.meta.slug)) || id.slice(0, 8),
+        project: projectLabel(path.basename(path.dirname(entry.file))),
+        lastAt: lastAt,
+        messages: messages,
+        tokens: Math.round(weighted)
+      });
     }
   }
 
@@ -188,7 +257,8 @@ function collectRecords(cfg) {
   }
 
   all.sort((a, b) => a.t - b.t);
-  return all;
+  sessions.sort((a, b) => b.lastAt - a.lastAt);
+  return { records: all, sessions: sessions.slice(0, MAX_SESSIONS) };
 }
 
 /* ------------------------------------------------------------ time windows */
@@ -371,7 +441,11 @@ function collectQueuedTasks() {
 function build(nowOverride) {
   const cfg = loadConfig();
   const now = nowOverride || Date.now();
-  const records = collectRecords(cfg);
+  const collected = collectRecords(cfg);
+  const records = collected.records;
+  const sessions = collected.sessions.map(s => Object.assign({}, s, {
+    state: (now - s.lastAt) <= SESSION_ACTIVE_MS ? 'running' : 'done'
+  }));
 
   const block = currentBlock(records, now);
   const sessionUsed = block ? sumWeighted(records, block.start, Math.min(block.end, now), null) : 0;
@@ -415,9 +489,12 @@ function build(nowOverride) {
       resetsAt: week.end,
       buckets
     },
+    sessions,
     workflows,
     subtasks: subtasks.length ? subtasks : queued.slice(0, MAX_SUBTASKS),
     counts: {
+      sessions: sessions.length,
+      sessionsActive: sessions.filter(s => s.state === 'running').length,
       workflows: workflows.length,
       subtasks: subtasks.length,
       queued: queued.length,

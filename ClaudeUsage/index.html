@@ -26,13 +26,15 @@
   <div class="widget-root">
     <div class="content">
       <header class="head">
-        <span class="title">Plan usage limits</span>
+        <span class="title" id="title">Plan usage limits</span>
         <span class="plan" id="plan"></span>
         <span class="updated" id="updated"></span>
+        <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i></span>
         <span class="version" id="version"></span>
         <span class="est" title="Estimated locally">EST</span>
       </header>
 
+      <div class="view view-usage">
       <div class="body">
         <section class="meters">
           <div class="meter" id="m-session">
@@ -72,6 +74,24 @@
           <div class="list" id="list-subtasks">
             <h2>Subtasks</h2>
             <ul id="subtasks"></ul>
+          </div>
+        </section>
+      </div>
+      </div>
+
+      <div class="view view-detail">
+        <section class="lists lists-detail">
+          <div class="list">
+            <h2>Sessions</h2>
+            <ul id="d-sessions"></ul>
+          </div>
+          <div class="list">
+            <h2>Workflows</h2>
+            <ul id="d-workflows"></ul>
+          </div>
+          <div class="list">
+            <h2>Subtasks</h2>
+            <ul id="d-subtasks"></ul>
           </div>
         </section>
       </div>

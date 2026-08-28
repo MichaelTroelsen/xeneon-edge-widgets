@@ -61,6 +61,33 @@ See [usage-server/README.md](usage-server/README.md).
 | `colorTheme` | tabs | `dark` / `light` |
 | `refreshSeconds` | slider 5–120 | 20 |
 
+**Tap the widget** to swap between the usage bars and an activity view listing
+recent sessions, workflows and their subtasks; tap again to go back. Sessions are
+labelled with the prompt or slash command that started them. This needs
+`"interactive": true` in the manifest, without which iCUE never forwards touches
+to the page.
+
+## Verifying a layout
+
+Headless Chrome's `--window-size` includes window chrome, so `--window-size=840,344`
+lays the page out at **824x249** — 95px shorter than the slot. Screenshots taken
+that way silently test the wrong dimensions.
+
+Host the widget in an exactly-sized iframe inside a larger window instead:
+
+```html
+<iframe width="840" height="344" src="ClaudeUsage/index.html"></iframe>
+```
+
+```bash
+chrome --headless=new --hide-scrollbars --virtual-time-budget=9000 \
+       --window-size=1000,500 --screenshot=slot.png slot.html
+```
+
+The iframe gets the true slot viewport whatever the outer window does. Note that
+`file://` iframes are cross-origin, so a parent page cannot click into one — put
+any interaction script inside the widget page itself.
+
 ## Layout notes
 
 Both widgets follow the same rules, which are what make them survive a 344px

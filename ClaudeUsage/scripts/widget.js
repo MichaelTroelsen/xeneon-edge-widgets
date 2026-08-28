@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.0.4';
+  var WIDGET_VERSION = '1.1.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 12;          /* CSS hides the overflow; this just caps DOM churn */
@@ -15,6 +15,9 @@
   var timer = null;
   var data = null;
   var lastError = '';
+  var view = 'usage';   /* 'usage' | 'detail' — toggled by tapping the widget */
+
+  var TITLES = { usage: 'Plan usage limits', detail: 'Activity' };
 
   /* ---------- iCUE property access ---------- */
 
@@ -177,28 +180,64 @@
       els.mBucket.style.display = 'none';
     }
 
-    renderList(els.workflows, data.workflows, function (wf) {
+    var describeWorkflow = function (wf) {
       return wf.project + ' · ' + compact(wf.tokens);
-    });
-
-    renderList(els.subtasks, data.subtasks, function (task) {
+    };
+    var describeSubtask = function (task) {
       return (task.model || '') + (task.tokens ? ' · ' + compact(task.tokens) : '');
-    });
+    };
+    var describeSession = function (s) {
+      return s.project + ' · ' + s.messages;
+    };
+
+    renderList(els.workflows, data.workflows, describeWorkflow);
+    renderList(els.subtasks, data.subtasks, describeSubtask);
+
+    renderList(els.dSessions, data.sessions, describeSession);
+    renderList(els.dWorkflows, data.workflows, describeWorkflow);
+    renderList(els.dSubtasks, data.subtasks, describeSubtask);
 
     showState('content');
     trimLists();
   }
 
   /* A row sliced in half by the panel edge reads as a rendering fault on a
-     hardware display, so drop rows until the list fits its own box. */
+     hardware display, so keep only whole rows.
+     Counted from the measured row height rather than looped on
+     scrollHeight > clientHeight: those two are rounded differently, so a
+     sub-pixel difference made the loop drop rows that actually fitted. */
   function trimLists() {
-    [els.workflows, els.subtasks].forEach(function (ul) {
-      if (!ul || getComputedStyle(ul).display === 'none') return;
-      var guard = 0;
-      while (ul.scrollHeight > ul.clientHeight && ul.children.length > 1 && guard++ < MAX_ROWS) {
-        ul.removeChild(ul.lastChild);
-      }
+    [els.workflows, els.subtasks, els.dSessions, els.dWorkflows, els.dSubtasks].forEach(function (ul) {
+      if (!ul || !ul.children.length) return;
+      var box = ul.clientHeight;
+      if (!box) return; /* hidden view: nothing to measure yet */
+
+      var rowH = ul.children[0].getBoundingClientRect().height;
+      if (!rowH) return;
+      var gap = parseFloat(getComputedStyle(ul).rowGap) || 0;
+
+      /* n rows occupy n*rowH + (n-1)*gap, so solve for n and floor it. */
+      var fits = Math.floor((box + gap) / (rowH + gap));
+      fits = Math.max(1, Math.min(fits, MAX_ROWS));
+      while (ul.children.length > fits) ul.removeChild(ul.lastChild);
     });
+  }
+
+  function applyView() {
+    els.title.textContent = TITLES[view];
+    els.viewUsage.classList.toggle('is-active', view === 'usage');
+    els.viewDetail.classList.toggle('is-active', view === 'detail');
+    Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
+      d.classList.toggle('is-active', d.getAttribute('data-view') === view);
+    });
+    /* Row trimming depends on the box each list actually got, which only
+       exists once the view is displayed. */
+    if (data) trimLists();
+  }
+
+  function toggleView() {
+    view = (view === 'usage') ? 'detail' : 'usage';
+    applyView();
   }
 
   function showState(state) {
@@ -276,6 +315,12 @@
   };
 
   function cacheElements() {
+    els.title = document.getElementById('title');
+    els.viewUsage = document.querySelector('.view-usage');
+    els.viewDetail = document.querySelector('.view-detail');
+    els.dSessions = document.getElementById('d-sessions');
+    els.dWorkflows = document.getElementById('d-workflows');
+    els.dSubtasks = document.getElementById('d-subtasks');
     els.plan = document.getElementById('plan');
     els.mSession = document.getElementById('m-session');
     els.sessionFill = document.getElementById('session-fill');
@@ -314,6 +359,12 @@
 
   cacheElements();
   applyTheme();
+  applyView();
+
+  /* Tap anywhere to swap views. Needs "interactive": true in manifest.json,
+     without which iCUE never forwards touches to the page. */
+  document.addEventListener('click', toggleView);
+
   showState('loading-state');
   startClock();
   fetchFeed();

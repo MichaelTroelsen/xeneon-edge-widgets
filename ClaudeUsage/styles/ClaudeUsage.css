@@ -138,6 +138,38 @@ body {
   padding: calc(var(--layout-unit) * 0.6) calc(var(--layout-unit) * 1.4);
 }
 
+/* Two views on one page: usage, and the activity lists. Tapping the widget
+   swaps them, so the dots have to say which one you are on. */
+.dots {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 1);
+}
+
+.dots .dot {
+  width: calc(var(--layout-unit) * 1.5);
+  height: calc(var(--layout-unit) * 1.5);
+  border-radius: 999px;
+  background: var(--track);
+  transition: background 0.2s ease;
+}
+
+.dots .dot.is-active { background: var(--fill); }
+
+.view { display: none; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.view.is-active { display: flex; }
+
+/* Three lists side by side. Even 840px has room for them; the meta column is
+   what gets dropped there, not a whole list. */
+.lists-detail {
+  flex: 1 1 auto;
+  flex-direction: row;
+}
+
+@media (max-width: 900px) {
+  .lists-detail .meta { display: none; }
+}
+
 /* -------------------------------------------------------------------- body */
 
 .body {
@@ -218,9 +250,13 @@ body {
 
 /* ------------------------------------------------------------------- lists */
 
+/* min-height:0 matters as much as min-width: a flex item defaults to
+   min-height:auto, which refuses to shrink below its content, so the lists
+   would overflow their box and be clipped by the panel instead of trimmed. */
 .lists {
   flex: 2 1 0;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: row;
   gap: calc(var(--layout-unit) * 6);
@@ -244,6 +280,9 @@ body {
   letter-spacing: 0.06em;
 }
 
+/* flex+min-height:0 bounds the list to its box. Without it the ul sizes to its
+   content and only the parent clips, so scrollHeight == clientHeight and the
+   row trimmer sees nothing to trim - leaving a row sliced by the panel edge. */
 .list ul {
   margin: 0;
   padding: 0;
@@ -252,6 +291,7 @@ body {
   flex-direction: column;
   gap: calc(var(--layout-unit) * 1.2);
   overflow: hidden;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -342,8 +382,10 @@ body {
 /* Short slots — S-H 840x344 and S-V 696x416. Nothing but the meters fits, so
    the session percentage grows into the hero role. Keyed on height, not width:
    a width rule here collides with the M-H rule below. */
+/* Scoped to the usage view on purpose: the detail view is nothing but lists,
+   so hiding them there would leave a blank screen. */
 @media (max-height: 460px) {
-  .lists { display: none; }
+  .view-usage .lists { display: none; }
   .meters { justify-content: space-evenly; }
   :root { --font-value: calc(var(--layout-unit) * 6.5); }
 }

@@ -10,7 +10,10 @@
   var STALE_AFTER_MS = 3 * 60 * 60 * 1000; /* cached data older than this is flagged offline */
 
   var DEFAULT_LOCATION = 'Copenhagen';
-  var BOOT_BANNER = '**** COMMODORE 64 WEATHER V1 ****';
+  /* Keep in step with manifest.json - the boot banner is where the widget
+     reports its own version on the device. */
+  var WIDGET_VERSION = '1.1.2';
+  var BOOT_BANNER = '**** COMMODORE 64 WEATHER V' + WIDGET_VERSION + ' ****';
   var BOOT_RAM = '64K RAM SYSTEM  38911 BASIC BYTES FREE';
   var LOAD_LINE = 'LOAD"WEATHER",8,1';
 

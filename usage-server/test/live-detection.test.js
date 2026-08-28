@@ -78,6 +78,34 @@ function writeRun(opts) {
   return runDir;
 }
 
+/* A session transcript is a .jsonl directly under the project directory; one
+   nested deeper belongs to a subagent. A session that has only just been
+   opened contains no message at all - just startup bookkeeping - which is
+   exactly the case that used to be invisible. */
+function writeSession(project, sessionId, opts) {
+  const dir = path.join(PROJECTS, project);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, sessionId + '.jsonl');
+  const lines = (opts.records || [
+    { type: 'mode', mode: 'default' },
+    { type: 'permission-mode', permissionMode: 'auto' },
+    { type: 'system', subtype: 'informational', content: 'started', isMeta: true }
+  ]).map(r => JSON.stringify(r));
+  fs.writeFileSync(file, lines.join('\n') + '\n', 'utf8');
+  if (opts.ageMs) {
+    const when = new Date(Date.now() - opts.ageMs);
+    fs.utimesSync(file, when, when);
+  }
+  return file;
+}
+
+function writeNested(project, sessionId) {
+  const dir = path.join(PROJECTS, project, sessionId, 'subagents');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'nested.jsonl'),
+    JSON.stringify({ type: 'mode', mode: 'default' }) + '\n', 'utf8');
+}
+
 /* ------------------------------------------------------------------ server */
 
 function get(pathname) {
@@ -144,6 +172,10 @@ async function main() {
     agents: [{ id: 'eee1', prompt: 'errored out', finished: 'error' }]
   });
 
+  writeSession('C--fixture-fresh', '0abb6d2c-fresh', {});
+  writeSession('C--fixture-oldidle', 'cafebabe-idle', { ageMs: 60 * 60 * 1000 });
+  writeNested('C--fixture-nested', 'deadbeef-parent');
+
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: Object.assign({}, process.env, {
       CLAUDE_USAGE_PROJECTS_DIR: PROJECTS,
@@ -175,6 +207,19 @@ async function main() {
       [...new Set(feed.subtasks.map(t => t.state))], ['running']);
     check('the model comes from meta.json',
       [...new Set(feed.subtasks.map(t => t.model))], ['haiku']);
+
+    console.log('sessions:');
+    const sessionIds = feed.sessions.map(s => s.id).sort();
+    check('a just-opened session with no messages is reported',
+      sessionIds.includes('0abb6d2c-fresh'), true);
+    check('it is reported as running',
+      (feed.sessions.find(s => s.id === '0abb6d2c-fresh') || {}).state, 'running');
+    check('with a zero message count, not a fabricated one',
+      (feed.sessions.find(s => s.id === '0abb6d2c-fresh') || {}).messages, 0);
+    check('an old idle session is not reported',
+      sessionIds.includes('cafebabe-idle'), false);
+    check('a nested subagent transcript is not a session',
+      sessionIds.includes('nested'), false);
   } finally {
     child.kill();
     fs.rmSync(ROOT, { recursive: true, force: true });

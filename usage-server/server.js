@@ -412,13 +412,22 @@ function collectRecords(cfg) {
       weighted += rec.w;
       if (rec.t > lastAt) lastAt = rec.t;
     }
-    if (messages && isSessionFile(entry.file)) {
+    /* A session that has just been opened has no message to count yet - its
+       transcript holds only startup bookkeeping (mode, permission-mode,
+       attachments) - so requiring a counted message hid it until its first
+       exchange finished. Someone who has just opened a session expects to see
+       it, so a recently written transcript is enough on its own; `lastAt` then
+       falls back to the file's own mtime, which is what makes it read as
+       running. It ages out on the same 15-minute rule as everything else, so a
+       session left open and untouched does eventually drop off. */
+    const startedRecently = (Date.now() - entry.mtime) <= SESSION_ACTIVE_MS;
+    if ((messages || startedRecently) && isSessionFile(entry.file)) {
       const id = path.basename(entry.file, '.jsonl');
       sessions.push({
         id: id,
         label: (state.meta && (state.meta.title || state.meta.slug)) || id.slice(0, 8),
         project: projectLabel(path.basename(path.dirname(entry.file))),
-        lastAt: lastAt,
+        lastAt: lastAt || entry.mtime,
         messages: messages,
         tokens: Math.round(weighted)
       });

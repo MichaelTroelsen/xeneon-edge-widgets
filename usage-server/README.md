@@ -33,7 +33,14 @@ is the only outbound traffic, it goes only to `api.anthropic.com` and
 | Workflow list | running: `~/.claude/projects/*/*/subagents/workflows/wf_*/journal.jsonl` | exact |
 | Subtask list | running: the agents in that journal with a `started` line and no `result` | exact |
 
-A session counts as `running` if it produced a message in the last 15 minutes.
+A session counts as `running` if it produced a message in the last 15 minutes,
+**or** if its transcript was written that recently even with no message in it
+at all. The second half matters more than it sounds: a session that has just
+been opened contains only startup bookkeeping - `mode`, `permission-mode`, an
+attachment or two - and no user or assistant message, so requiring a counted
+message hid it until its first exchange had finished. It is named by its first
+user message once there is one, and by its short id (`0abb6d2c`) until then,
+with a message count of 0.
 
 ### The lists show what is running, not what has run
 

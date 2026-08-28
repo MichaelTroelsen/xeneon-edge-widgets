@@ -43,16 +43,54 @@ let lastQuota = null; /* most recent 429 quotaLimits record seen, if any */
    rebuilds every 20s but this is an undocumented endpoint on someone else's
    server, so it is polled far less often and always from cache in between. */
 const OFFICIAL_INTERVAL_MS = 60000;
+const OFFICIAL_MAX_BACKOFF_MS = 30 * 60 * 1000;
 let officialState = { ok: false, error: 'not fetched yet', fetchedAt: null };
 let officialInFlight = false;
+let officialFailures = 0;
+let officialTimer = null;
+
+/* Retrying a dead token every minute is how a 401 turns into a 429 — which is
+   exactly what happened. Failures back off exponentially to half an hour;
+   success returns to the normal cadence. */
+function scheduleOfficial() {
+  if (officialTimer) clearTimeout(officialTimer);
+  const delay = officialFailures === 0
+    ? OFFICIAL_INTERVAL_MS
+    : Math.min(OFFICIAL_INTERVAL_MS * Math.pow(2, officialFailures), OFFICIAL_MAX_BACKOFF_MS);
+  officialTimer = setTimeout(refreshOfficial, delay);
+  if (officialTimer.unref) officialTimer.unref();
+}
 
 function refreshOfficial() {
   if (officialInFlight) return;
   officialInFlight = true;
   official.fetchOfficial()
-    .then(result => { officialState = result; })
-    .catch(err => { officialState = { ok: false, error: String(err && err.message || err), fetchedAt: Date.now() }; })
-    .then(() => { officialInFlight = false; });
+    .then(result => {
+      officialState = result;
+      officialFailures = result.ok ? 0 : officialFailures + 1;
+    })
+    .catch(err => {
+      officialState = { ok: false, error: String(err && err.message || err), fetchedAt: Date.now() };
+      officialFailures++;
+    })
+    .then(() => {
+      officialInFlight = false;
+      scheduleOfficial();
+    });
+}
+
+/* The credentials file being rewritten is the signal that a retry is worth
+   making immediately, rather than waiting out a long backoff. */
+function watchCredentials() {
+  try {
+    fs.watch(path.join(HOME, '.claude'), (event, filename) => {
+      if (filename !== '.credentials.json') return;
+      officialFailures = 0;
+      refreshOfficial();
+    }).unref();
+  } catch (err) {
+    /* Watching is an optimisation; the backoff still recovers on its own. */
+  }
 }
 
 /* ------------------------------------------------------------------ config */
@@ -662,8 +700,8 @@ const server = http.createServer((req, res) => {
 
 rebuild();
 setInterval(rebuild, REFRESH_MS).unref();
-refreshOfficial();
-setInterval(refreshOfficial, OFFICIAL_INTERVAL_MS).unref();
+refreshOfficial();   /* schedules its own next run, with backoff on failure */
+watchCredentials();
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude usage feed on http://127.0.0.1:${PORT}/usage`);

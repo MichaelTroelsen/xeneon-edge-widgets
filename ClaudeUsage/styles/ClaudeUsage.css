@@ -107,8 +107,20 @@ body {
   color: var(--muted);
 }
 
-.head .version {
+/* When the feed was last rebuilt. It turns amber once the data stops being
+   refreshed, so a dead feed is visible rather than looking like live numbers
+   that simply are not moving. */
+.head .updated {
   margin-left: auto;
+  font-size: var(--font-badge);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.head .updated.is-stale { color: var(--warn); }
+
+.head .version {
   font-size: var(--font-badge);
   color: var(--muted);
   font-variant-numeric: tabular-nums;

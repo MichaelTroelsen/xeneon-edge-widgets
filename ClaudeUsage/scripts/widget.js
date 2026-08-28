@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.0.3';
+  var WIDGET_VERSION = '1.0.4';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 12;          /* CSS hides the overflow; this just caps DOM churn */
@@ -76,6 +76,23 @@
     return 'Resets ' + DAYS[d.getDay()] + ' ' + hour12 + minPart + ' ' + suffix;
   }
 
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  /* Built from parts rather than toLocaleString: the widget runs in an embedded
+     webview whose locale is not the one the user picked in iCUE. */
+  function formatStamp(ms) {
+    if (!ms) return '';
+    var d = new Date(ms);
+    var h = d.getHours();
+    var suffix = h >= 12 ? 'PM' : 'AM';
+    var hour12 = h % 12;
+    if (hour12 === 0) hour12 = 12;
+    var mins = d.getMinutes();
+    return 'Updated ' + d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' +
+      hour12 + ':' + (mins < 10 ? '0' + mins : mins) + ' ' + suffix;
+  }
+
   function compact(n) {
     if (!n) return '0';
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -132,6 +149,13 @@
     if (!data) return;
 
     els.plan.textContent = data.plan || '';
+
+    els.updated.textContent = formatStamp(data.generatedAt);
+    /* Three missed refresh cycles is well past coincidence: the feed has
+       stopped and these numbers are frozen. */
+    var staleAfter = readRefreshSeconds() * 3000;
+    els.updated.classList.toggle('is-stale',
+      !!data.generatedAt && (Date.now() - data.generatedAt) > staleAfter);
 
     setMeter(els.mSession, els.sessionFill, els.sessionValue,
       data.session ? data.session.percent : 0,
@@ -268,6 +292,7 @@
     els.workflows = document.getElementById('workflows');
     els.subtasks = document.getElementById('subtasks');
     els.errorHint = document.getElementById('error-hint');
+    els.updated = document.getElementById('updated');
     els.version = document.getElementById('version');
     if (els.version) els.version.textContent = 'v' + WIDGET_VERSION;
   }

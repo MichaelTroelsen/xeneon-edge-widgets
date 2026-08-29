@@ -38,8 +38,10 @@ temperature and place on the left, the condition sprite with the day's low and
 high beneath it in the middle, the timed readings stacked on the right.
 
 ```
-**** COMMODORE 64 WEATHER V1.2.0 ****
-LOAD"WEATHER",8,1
+**** COMMODORE 64 BASIC V2 ****
+64K RAM SYSTEM  38911 BASIC BYTES FREE
+
+LOAD"WEATHER 1.4.0",8,1
 
   18°C              ☁            ↑ 06:16
                                  ↓ 20:26
@@ -62,30 +64,38 @@ sun swapped for a moon after sunset via the API's `is_day` flag.
 
 Seven, chosen from the widget's settings:
 
-| Theme | Screen | Boot line |
+| Theme | Screen | First boot line |
 |---|---|---|
-| `c64` | light blue on blue | `**** COMMODORE 64 WEATHER V1.3.0 ****` |
-| `pet` | green phosphor on black | `*** COMMODORE WEATHER BASIC ***` |
-| `bbc` | white on black, teletext accents | `BBC COMPUTER 32K` |
-| `cpc` | bright yellow on blue | `AMSTRAD 64K MICROCOMPUTER  (V1)` |
-| `spectrum` | black on white, grey border | `(C) 1982 SINCLAIR RESEARCH LTD` |
-| `amiga` | white on Workbench blue, orange accents | `WORKBENCH RELEASE 1.3` |
+| `c64` | light blue on blue | `**** COMMODORE 64 BASIC V2 ****` |
+| `pet` | green phosphor on black | `*** COMMODORE BASIC 4.0 ***` |
+| `bbc` | white on black, teletext accents | `BBC Computer 32K` |
+| `cpc` | bright yellow on `#000088` blue | `Amstrad 64K Microcomputer  (v1)` |
+| `spectrum` | black on `#d0d0d0` paper, grey border | `© 1982 Sinclair Research Ltd` |
+| `amiga` | Kickstart 3.1 ROM screen — `#e9a888` on `#411040` | `3.1 ROM  40.063` |
 | `modern` | system type, white and orange on black | none |
 
 Each theme is a redefinition of the seven palette tokens plus a boot screen and
 a cursor style — block, underline for the BBC's prompt, or none for Amiga and
-Modern, which had no console conceit to keep. `modern` additionally switches the
+Modern, which had no console conceit to keep. Changing theme (in settings, or
+by tapping the widget) replays that machine's boot screen for two seconds
+before handing over to the weather readout. `modern` additionally switches the
 renderer from the 8×8 set to real system text, because there is no pixel font
 for it to be faithful to.
 
-**What is and is not authentic.** The palettes and the screen furniture are the
-faithful part. The boot lines are a homage in the same spirit as the original
-C64 one — they say WEATHER where the real machine said BASIC — and the
-letterforms in every pixel theme are **this project's own hand-authored 8×8
-set, not a ROM dump**. Per-machine ROM fonts would be the next step in
-authenticity and are deliberately not claimed here; `petscii.js` takes per-theme
-glyph overrides (`PETSCII.setFont`) so they can be added a letterform at a time
-without touching anything else.
+**What is and is not authentic.** The palettes and the boot screens are the
+faithful part: `boot` is each machine's real startup text, verbatim and at its
+real length, and the widget's own line — the one carrying the version, e.g.
+`LOAD"WEATHER 1.4.0",8,1` — is `load`, which on every one of these machines was
+something the user typed, not something the ROM printed. Case follows the
+machine: the C64 and the PET boot in their uppercase/graphics character set and
+are folded to capitals, while the BBC, CPC, Spectrum and Amiga printed mixed
+case and are rendered as written. What is **not** authentic is the font itself:
+the letterforms in every pixel theme, uppercase, lowercase and the `©` sign
+alike, are **this project's own hand-authored 8×8 set, not a ROM dump**.
+Per-machine ROM fonts would be the next step in authenticity and are
+deliberately not claimed here; `petscii.js` takes per-theme glyph overrides
+(`PETSCII.setFont`) so they can be added a letterform at a time without
+touching anything else.
 
 The setting is a `combobox` rather than `tab-buttons` for two reasons: seven
 options do not fit tab buttons, and iCUE's `TabButtonsEditorSetting.qml:33`

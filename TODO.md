@@ -94,7 +94,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       TabButtonsEditorSetting.qml:33 calls `rowCount()` on a QVariantList, which
       throws for every possible payload — Corsair's bundled widgets included.
 
-## Claude Code Usage — 1.9.0
+## Claude Code Usage — 1.9.1
 
 ### Done
 

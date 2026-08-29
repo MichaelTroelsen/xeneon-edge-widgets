@@ -103,7 +103,8 @@ just-opened-session rule fails 3 more, which is the point of having them.
 `statusline.test.js` covers the other half: the freshness rules (current,
 stale past 10 minutes, withheld past 45, withheld for a future timestamp, a
 malformed file, an absent file, one window present and the other not, no windows
-at all), plus the credential and redaction checks above. 28 checks.
+at all), plus the credential and redaction checks above, and the unhooked-wrapper
+detection. 35 checks.
 
 Three environment overrides exist for these tests and are unset in normal use:
 `CLAUDE_USAGE_PROJECTS_DIR`, `CLAUDE_USAGE_STATUSLINE_FILE` and
@@ -165,6 +166,22 @@ window can be absent independently, and a window disappears once its
 Claude Code session is open — so `statusline.js` shows a reading as current for
 10 minutes, degrades it to stale after that, and stops serving it entirely at
 45 minutes rather than presenting an undercount as live.
+
+**If it silently stops being fed, the feed says so.** Changing your statusline
+or reinstalling `ccstatusline` overwrites `statusLine.command` and unhooks the
+wrapper; the file then simply stops updating, which looks exactly like an idle
+machine. So when a Claude Code session is active *and* the file is not current,
+`diagnostics.statusline.likelyUnhooked` is set and the reason is appended to
+`official.error` — which is what the widget's badge tooltip already renders, so
+the diagnosis reaches the device with no widget change. `/usagehtml` reports the
+same thing under **Statusline feed**:
+
+```
+file     ~/.claude/statusline-usage.json
+present  yes      age  38 min      current  no
+warning  a Claude Code session is active but ... is 38 min old -
+         is statusline-tee.js still wired into statusLine.command?
+```
 
 ### 2. The OAuth endpoint (a request, and heavily throttled)
 
@@ -391,6 +408,14 @@ Anthropic's own value, came back as Thursday 21:00 local. It only affects the
 measured `LOCAL` fallback anyway — both live paths carry absolute reset
 timestamps. If yours resets on another day set `weekday` (0 = Sunday) and
 `hour`.
+
+## Continuous integration
+
+`.github/workflows/tests.yml` runs both hermetic suites on every push and pull
+request, across Ubuntu and Windows on Node 20 and 22, plus a `node --check` over
+every source file. Ubuntu is there to catch the path and line-ending assumptions
+that are easy to make while developing on Windows. The end-to-end probe is
+deliberately excluded: it needs an agent runner and spends real tokens.
 
 ## Endpoints
 

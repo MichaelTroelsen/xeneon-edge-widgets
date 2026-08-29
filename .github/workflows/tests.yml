@@ -37,9 +37,13 @@ jobs:
           node --check usage-server/statusline-tee.js
           node --check usage-server/usagehtml.js
           node --check ClaudeUsage/scripts/widget.js
+          node --check C64Weather/scripts/widget.js
+          node --check C64Weather/scripts/petscii.js
       - name: live detection
         run: node usage-server/test/live-detection.test.js
       - name: statusline and credentials
         run: node usage-server/test/statusline.test.js
       - name: c64 font and art
         run: node C64Weather/test/font.test.js
+      - name: c64 theme cycling
+        run: node C64Weather/test/theme.test.js

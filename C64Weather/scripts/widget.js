@@ -12,7 +12,7 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.3.1';
+  var WIDGET_VERSION = '1.3.2';
 
   /* ---------- themes ----------
      Each theme is a palette (CSS class), a boot screen, and a font mode. The
@@ -86,9 +86,42 @@
 
   var THEME_ORDER = ['c64', 'pet', 'bbc', 'cpc', 'spectrum', 'amiga', 'modern'];
 
-  function themeName() {
+  /* Tapping the screen steps to the next theme in THEME_ORDER. The iCUE
+     property is still the setting; a tap is an override layered over it and
+     remembered alongside the property value it was made against. When that
+     value changes the user has spoken through the settings panel - the more
+     deliberate act of the two - so the override is dropped rather than
+     silently outranking the new choice. */
+  var TAP_SLOP_PX = 12;   /* movement beyond this is a drag, not a tap */
+  var TAP_MAX_MS = 700;
+  var themeOverride = null;      /* theme id chosen by tapping, or null */
+  var themeOverrideBase = null;  /* the property value at the time of that tap */
+
+  function settingThemeName() {
     var raw = String(getIcueProperty('theme') || 'c64').toLowerCase();
     return THEMES[raw] ? raw : 'c64';
+  }
+
+  function themeName() {
+    var base = settingThemeName();
+    if (!themeOverride) return base;
+    if (themeOverrideBase !== base) {
+      themeOverride = null;
+      themeOverrideBase = null;
+      saveThemeOverride();
+      return base;
+    }
+    return themeOverride;
+  }
+
+  function cycleTheme() {
+    var base = settingThemeName();
+    var i = THEME_ORDER.indexOf(themeName());   /* may clear a stale override */
+    themeOverride = THEME_ORDER[(i + 1) % THEME_ORDER.length];
+    themeOverrideBase = base;
+    saveThemeOverride();
+    renderStatic();
+    render();
   }
 
   function applyTheme() {
@@ -166,6 +199,35 @@
     try {
       localStorage.setItem(storageKey(), JSON.stringify(reading));
     } catch (e) { /* storage unavailable — cache is a bonus, not a requirement */ }
+  }
+
+  /* Kept apart from the reading cache: a corrupt or absent reading must not
+     cost the chosen theme, and vice versa. */
+  function themeKey() {
+    return storageKey() + ':theme';
+  }
+
+  function saveThemeOverride() {
+    try {
+      if (themeOverride) {
+        localStorage.setItem(themeKey(),
+          JSON.stringify({ name: themeOverride, base: themeOverrideBase }));
+      } else {
+        localStorage.removeItem(themeKey());
+      }
+    } catch (e) { /* storage unavailable — the override just lasts the session */ }
+  }
+
+  function loadThemeOverride() {
+    try {
+      var raw = localStorage.getItem(themeKey());
+      if (!raw) return;
+      var parsed = JSON.parse(raw);
+      if (parsed && THEMES[parsed.name]) {
+        themeOverride = parsed.name;
+        themeOverrideBase = parsed.base;
+      }
+    } catch (e) { /* fall back to the setting */ }
   }
 
   function loadCache() {
@@ -447,6 +509,10 @@
   function onIcueDataUpdated() {
     var query = readLocation();
     var locationChanged = (lastQuery !== null && lastQuery !== query);
+    /* The theme setting can change here too, and the boot screen is only drawn
+       by renderStatic - without this a theme picked in the settings panel did
+       not appear until the widget was reloaded. */
+    renderStatic();
     render();
     scheduleRefresh();
     refresh(locationChanged);
@@ -508,10 +574,45 @@
     onIcueDataUpdated();
   }
 
+  /* Tap anywhere to step to the next theme. Needs "interactive": true in
+     manifest.json, without which iCUE never forwards touches to the page.
+     A plain click listener would also fire at the end of a drag, so a gesture
+     counts as a tap only if the pointer barely moved and was not held. Pointer
+     events cover mouse and touch alike; the click fallback is for any context
+     that does not deliver them. */
+  function bindTap() {
+    var startX = 0, startY = 0, startT = 0, tracking = false;
+
+    function down(e) {
+      tracking = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startT = Date.now();
+    }
+
+    function up(e) {
+      if (!tracking) return;
+      tracking = false;
+      var moved = Math.abs(e.clientX - startX) > TAP_SLOP_PX ||
+                  Math.abs(e.clientY - startY) > TAP_SLOP_PX;
+      if (!moved && (Date.now() - startT) <= TAP_MAX_MS) cycleTheme();
+    }
+
+    if (typeof window.PointerEvent === 'function') {
+      document.addEventListener('pointerdown', down);
+      document.addEventListener('pointerup', up);
+      document.addEventListener('pointercancel', function () { tracking = false; });
+    } else {
+      document.addEventListener('click', cycleTheme);
+    }
+  }
+
   cacheElements();
+  loadThemeOverride();
   renderStatic();
   showState('loading-state');
   current = loadCache();
   if (current) render();
+  bindTap();
   bootCheck();
 })();

@@ -12,10 +12,98 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.2.0';
-  var BOOT_BANNER = '**** COMMODORE 64 WEATHER V' + WIDGET_VERSION + ' ****';
-  var BOOT_RAM = '64K RAM SYSTEM  38911 BASIC BYTES FREE';
-  var LOAD_LINE = 'LOAD"WEATHER",8,1';
+  var WIDGET_VERSION = '1.3.0';
+
+  /* ---------- themes ----------
+     Each theme is a palette (CSS class), a boot screen, and a font mode. The
+     palette tokens were already the only thing the stylesheet consumed, so a
+     theme is a token redefinition rather than a second stylesheet.
+
+     HONESTY, because "authentic" is the whole point of these: the boot text is
+     a homage in the same spirit as the existing C64 one - it says WEATHER where
+     the real machine said BASIC - and the letterforms are the project's own 8x8
+     set, NOT a ROM dump. What is faithful is the palette, the screen furniture
+     and the wording's shape. See README.md. */
+  var THEMES = {
+    c64: {
+      label: 'Commodore 64',
+      banner: '**** COMMODORE 64 WEATHER V' + WIDGET_VERSION + ' ****',
+      ram: '64K RAM SYSTEM  38911 BASIC BYTES FREE',
+      load: 'LOAD"WEATHER",8,1',
+      ready: 'READY.',
+      cursor: 'block'
+    },
+    pet: {
+      label: 'Commodore PET',
+      banner: '*** COMMODORE WEATHER BASIC ***',
+      ram: '31743 BYTES FREE',
+      load: 'LOAD"WEATHER",8,1',
+      ready: 'READY.',
+      cursor: 'block'
+    },
+    bbc: {
+      label: 'BBC Micro',
+      banner: 'BBC COMPUTER 32K',
+      ram: 'WEATHER BASIC',
+      load: '>CHAIN "WEATHER"',
+      ready: '>',
+      cursor: 'underline'
+    },
+    cpc: {
+      label: 'Amstrad CPC',
+      banner: 'AMSTRAD 64K MICROCOMPUTER  (V1)',
+      ram: 'BASIC 1.0',
+      load: 'RUN"WEATHER',
+      ready: 'READY',
+      cursor: 'block'
+    },
+    spectrum: {
+      label: 'ZX Spectrum',
+      banner: '(C) 1982 SINCLAIR RESEARCH LTD',
+      ram: '48K SPECTRUM',
+      load: 'LOAD ""',
+      ready: '0 OK, 0:1',
+      cursor: 'block'
+    },
+    amiga: {
+      label: 'Amiga',
+      banner: 'WORKBENCH RELEASE 1.3',
+      ram: 'WEATHER',
+      load: '',
+      ready: '',
+      cursor: 'none'
+    },
+    modern: {
+      label: 'Modern',
+      banner: '',
+      ram: '',
+      load: '',
+      ready: '',
+      cursor: 'none',
+      font: 'system'
+    }
+  };
+
+  var THEME_ORDER = ['c64', 'pet', 'bbc', 'cpc', 'spectrum', 'amiga', 'modern'];
+
+  function themeName() {
+    var raw = String(getIcueProperty('theme') || 'c64').toLowerCase();
+    return THEMES[raw] ? raw : 'c64';
+  }
+
+  function applyTheme() {
+    var name = themeName();
+    var t = THEMES[name];
+    PETSCII.setFont(t.font === 'system' ? 'system' : 'pixel', t.glyphs || null);
+    var root = document.querySelector('.widget-root');
+    if (root) {
+      THEME_ORDER.forEach(function (n) { root.classList.remove('theme-' + n); });
+      root.classList.add('theme-' + name);
+      root.classList.toggle('is-bare', !t.banner);
+      root.setAttribute('data-cursor', t.cursor);
+    }
+    return t;
+  }
 
   var els = {};
   var refreshTimer = null;
@@ -294,10 +382,11 @@
   }
 
   function renderStatic() {
-    PETSCII.setText(els.banner, BOOT_BANNER);
-    PETSCII.setText(els.ram, BOOT_RAM);
-    PETSCII.setText(els.load, LOAD_LINE);
-    PETSCII.setText(els.ready, 'READY.');
+    var theme = applyTheme();
+    PETSCII.setText(els.banner, theme.banner);
+    PETSCII.setText(els.ram, theme.ram);
+    PETSCII.setText(els.load, theme.load);
+    PETSCII.setText(els.ready, theme.ready);
     PETSCII.setText(els.loadingA, 'SEARCHING FOR WEATHER');
     PETSCII.setText(els.loadingB, 'LOADING');
     PETSCII.setText(els.errorA, '?DEVICE NOT PRESENT  ERROR');

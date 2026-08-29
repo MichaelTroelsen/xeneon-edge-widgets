@@ -11,6 +11,10 @@
   --c64-cyan: #70a4b2;
   --c64-grey: #959595;
   --c64-lightred: #9a6759;
+  /* The frame was always the same light blue as the text on a C64, so one token
+     served both. A theme where the border is not the ink colour needs them
+     apart - Spectrum writes black on white inside a coloured border. */
+  --frame: var(--c64-border);
 
   /* Baselines */
   --layout-unit: 1vmin;
@@ -53,7 +57,7 @@ body {
   height: 100%;
   box-sizing: border-box;
   padding: var(--border-width);
-  background: var(--c64-border);
+  background: var(--frame);
 }
 
 .screen {
@@ -320,3 +324,133 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* ------------------------------------------------------------------ themes
+   Every rule above consumes only the tokens, so a theme is a redefinition of
+   them rather than a second stylesheet.
+
+   What is faithful here is the PALETTE and the screen furniture. The
+   letterforms are this project's own 8x8 set in every pixel theme - they are
+   not ROM dumps, and nothing here claims they are. See README.md.
+   ------------------------------------------------------------------------ */
+
+/* Commodore 64 - light blue on blue, the default, unchanged. */
+
+/* Commodore PET - single-colour green phosphor, no coloured border. */
+.theme-pet {
+  --c64-screen: #000000;
+  --c64-border: #33ff33;
+  --frame: #000000;
+  --c64-white: #aaffaa;
+  --c64-yellow: #33ff33;
+  --c64-cyan: #33ff33;
+  --c64-grey: #1f8f1f;
+  --c64-lightred: #33ff33;
+}
+
+/* BBC Micro - white on black, with the teletext primaries for the sprites. */
+.theme-bbc {
+  --c64-screen: #000000;
+  --c64-border: #ffffff;
+  --frame: #000000;
+  --c64-white: #ffffff;
+  --c64-yellow: #ffff00;
+  --c64-cyan: #00ffff;
+  --c64-grey: #aaaaaa;
+  --c64-lightred: #ff0000;
+}
+
+/* Amstrad CPC - bright yellow on blue, the 464's defining pairing. */
+.theme-cpc {
+  --c64-screen: #000080;
+  --c64-border: #ffff00;
+  --frame: #000080;
+  --c64-white: #ffffff;
+  --c64-yellow: #ffff00;
+  --c64-cyan: #00ffff;
+  --c64-grey: #8080ff;
+  --c64-lightred: #ff8080;
+}
+
+/* ZX Spectrum - black on white, inside a coloured border. */
+.theme-spectrum {
+  --c64-screen: #ffffff;
+  --c64-border: #000000;
+  --frame: #d7d7d7;
+  --c64-white: #000000;
+  --c64-yellow: #cdcd00;
+  --c64-cyan: #00cdcd;
+  --c64-grey: #7f7f7f;
+  --c64-lightred: #cd0000;
+}
+
+/* Amiga - Workbench 1.x blue and orange. */
+.theme-amiga {
+  --c64-screen: #0055aa;
+  --c64-border: #ffffff;
+  --frame: #0055aa;
+  --c64-white: #ffffff;
+  --c64-yellow: #ff8800;
+  --c64-cyan: #77aaff;
+  --c64-grey: #aaaaaa;
+  --c64-lightred: #ff8800;
+}
+
+/* Modern - the user's own black/white/orange, no border, no pixel font. */
+.theme-modern {
+  --c64-screen: #000000;
+  --c64-border: #ffffff;
+  --frame: #000000;
+  --c64-white: #ffffff;
+  --c64-yellow: #f26722;
+  --c64-cyan: #f26722;
+  --c64-grey: #808080;
+  --c64-lightred: #f26722;
+}
+
+/* Not every machine sat at a blinking block. The Amiga booted to Workbench with
+   no prompt at all, and the Modern theme has no console conceit to keep. */
+.widget-root[data-cursor="none"] .cursor { display: none; }
+
+/* The BBC's prompt cursor was an underline, not a filled cell. */
+.widget-root[data-cursor="underline"] .cursor {
+  height: calc(var(--layout-unit) * 0.8);
+  align-self: flex-end;
+}
+
+/* A theme with no boot screen hides the frame and the boot furniture outright
+   rather than rendering an empty line where they would have been. */
+.widget-root.is-bare .border,
+.widget-root.is-bare .boot,
+.widget-root.is-bare .ready-line { display: none; }
+
+.widget-root.is-bare .screen {
+  border: 0;
+  padding: var(--space-pad);
+}
+
+/* System type for the Modern theme: setText writes textContent rather than an
+   SVG, so these are ordinary text nodes and want ordinary font rules. */
+.theme-modern .screen {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-weight: 300;
+}
+
+/* One accent colour for the condition art, overriding the per-condition
+   palette the pixel themes use - Modern is a two-colour design. */
+.theme-modern .sprite,
+.theme-modern .sprite-sun,
+.theme-modern .sprite-moon,
+.theme-modern .sprite-partly,
+.theme-modern .sprite-cloud,
+.theme-modern .sprite-fog,
+.theme-modern .sprite-drizzle,
+.theme-modern .sprite-rain,
+.theme-modern .sprite-snow,
+.theme-modern .sprite-storm { color: #f26722; }
+
+.theme-modern .temp,
+.theme-modern .city,
+.theme-modern .stat .val,
+.theme-modern .hilo { line-height: 1; }

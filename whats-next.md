@@ -186,9 +186,9 @@ long `sk-…`, `Bearer …`, `ghp_…` with `[redacted]`. Narrow on purpose —
   never written to disk.
 - **A workflow launched from a script outside the session's
   `workflows/scripts/`** falls back to its short run id (`wf f354826c-6c2`).
-- **~40 s lag each way** — `REFRESH_MS` 20 s + widget poll 20 s. A run shorter
-  than that can begin and end unseen. Tightening is cheap (~0.2% of a core at
-  20 s) but **both** numbers must drop together.
+- **~20 s lag each way** — `REFRESH_MS` 10 s + widget poll 10 s (default). A run
+  shorter than that can begin and end unseen. Tightening is cheap (~0.2% of a
+  core at 10 s) but **both** numbers must drop together.
 - The credential test proves the payload does not echo the credentials file with
   remote polling **disabled**. It does not prove behaviour mid-request.
 
@@ -270,7 +270,7 @@ path, and check `git status` before committing a scripted edit.**
 
 | Constant | Value | File |
 |---|---|---|
-| `REFRESH_MS` | 20 s | server.js |
+| `REFRESH_MS` | 10 s | server.js |
 | `SESSION_ACTIVE_MS` | 15 min | server.js |
 | `LIVE_RUN_STALE_MS` | 15 min | server.js |
 | `OFFICIAL_INTERVAL_MS` | 12 min | server.js |
@@ -291,7 +291,7 @@ path, and check `git status` before committing a scripted edit.**
   from `/api/oauth/usage`.
 - `.icuewidget` packages are **gitignored** — do not try to commit them.
 - Serving `/usage` never triggers an upstream fetch; polling the local feed is
-  free. `?at=` rebuilds on demand, which is how the tests avoid waiting 20 s.
+  free. `?at=` rebuilds on demand, which is how the tests avoid waiting 10 s.
 - **iCUE caches the page**; the header version is the only reliable indicator of
   what is running. Re-adding mints a new GUID and resets properties. **Do not
   restart iCUE** — it orphaned the dashboard layout once.
@@ -315,8 +315,10 @@ path, and check `git status` before committing a scripted edit.**
 - `main` == `origin/main` at **`bb2ea7d`**; working tree clean.
 - **CI green** across all four matrix jobs (Ubuntu/Windows × Node 20/22), 35 s.
 - **C64 Weather 1.2.0** — unchanged all session, live on the Edge.
-- **Claude Code Usage 1.8.0** — in the repo and in the installed folder;
-  **the device is still showing 1.7.0** (see Work Remaining).
+- **Claude Code Usage 1.9.0** — in the repo (three views now: usage, activity,
+  and a token breakdown behind the two bars, cycling on a three-dot
+  indicator). The installed folder and device version were last checked at
+  1.8.0 vs the device's 1.7.0 (see Work Remaining) — not re-verified since.
 - `usage-server` — running under `ClaudeUsageFeed`.
 
 ## Live state, just measured
@@ -352,5 +354,5 @@ It matters much less either way: the widget's figures need no token.
 
 - Does `/api/oauth/usage` ever stop 429ing for this account? (Cosmetic now.)
 - Does the iCUE webview forward touch **drags**?
-- Should the 20 s/20 s intervals be tightened? Cheap, but not requested.
+- Should the 10 s/10 s intervals be tightened? Cheap, but not requested.
 </current_state>

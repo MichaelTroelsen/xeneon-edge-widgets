@@ -1,6 +1,6 @@
 # iCUE widgets — TODO
 
-## C64 Weather — 1.2.0
+## C64 Weather — 1.3.0
 
 ### Done
 
@@ -27,12 +27,34 @@ Detail shown per slot:
 
 The condition sprite is already weather-driven — sun, moon, partly, cloud, fog,
 drizzle, rain, snow, thunderstorm — with a palette colour per condition.
+- [x] **Font and art regression test** (2026-08-29). `test/font.test.js` checks
+      every rendered string is spellable in the hand-built font, every sprite
+      and glyph name the widget asks for exists, and the extraction itself is
+      checked so the test can't pass vacuously against an empty match list —
+      14 checks. Mutation-checked (deleting `|` from the font fails the
+      punctuation check). Added to CI alongside the two usage-server suites.
+
+- [x] **Seven themes** (1.3.0). C64, Commodore PET, BBC Micro, Amstrad CPC, ZX
+      Spectrum, Amiga and Modern, selected with a `combobox`. Each is a
+      redefinition of the seven palette tokens plus a boot screen and cursor
+      style; `modern` switches the renderer to system text. Palettes and screen
+      furniture are the faithful part - the letterforms are still this project's
+      own 8x8 set, and `PETSCII.setFont` now takes per-theme glyph overrides so
+      ROM-accurate fonts can be added later without touching anything else.
 
 ### Open
 
-- [ ] Nothing outstanding.
+- [ ] **Per-machine ROM letterforms.** The themes share one hand-authored 8x8
+      font. Authentic per-machine fonts need real ROM dumps to check against;
+      inventing 240 bitmaps would look authentic while being fiction. The hook
+      exists (`PETSCII.setFont(mode, glyphs)`), so this is additive.
+- [ ] **Smooth condition art for the Modern theme.** It uses system type but
+      still draws the pixel sprite; the reference design has a smooth outlined
+      icon.
+- [ ] **`tab-buttons` throws in iCUE's settings panel for `tempUnit`** — see
+      the "Both widgets" section below; not yet investigated.
 
-## Claude Code Usage — 1.8.0
+## Claude Code Usage — 1.9.0
 
 ### Done
 
@@ -49,8 +71,9 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 - [x] **Version and last-updated in the header.** The timestamp is the feed's
       `generatedAt`, and turns amber after three missed refresh cycles so a dead
       feed is distinguishable from live numbers that are not moving.
-- [x] **Tap to switch views** — usage bars ↔ activity (sessions, workflows,
-      subtasks), with a two-dot indicator.
+- [x] **Tap to switch views** — usage bars, activity (sessions, workflows,
+      subtasks), and a token breakdown behind the two bars (1.9.0), cycling
+      through a three-dot indicator.
 - [x] **Scrollable lists**, replacing the row trimming that made anything past
       the first handful unreachable. Headings carry totals, a fade marks an
       overflowing list, and scroll position survives a refresh.
@@ -85,7 +108,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       probe run. It is the run's transcript directory: an agent with a `started`
       line in `journal.jsonl` and no `result` is running.
 - [x] **Tests for it.** `test/live-detection.test.js` runs the server against a
-      fixture tree via `CLAUDE_USAGE_PROJECTS_DIR` — 17 checks, ~2 seconds, no
+      fixture tree via `CLAUDE_USAGE_PROJECTS_DIR` — 18 checks, ~2 seconds, no
       tokens. `test/activity-probe.workflow.js` plus `test/activity-probe-check.js`
       is the end-to-end version: N subtasks that genuinely block for S seconds,
       with the feed watched while they do. Both were mutation-checked — reverting
@@ -93,7 +116,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       fails 3.
 
 - [x] **Tested the statusline path and the credential claim** (2026-08-29).
-      `test/statusline.test.js` — 28 checks covering the freshness rules and
+      `test/statusline.test.js` — 35 checks covering the freshness rules and
       asserting no credential material reaches `/usage` or `/usagehtml`. Added
       `CLAUDE_USAGE_STATUSLINE_FILE` and `CLAUDE_USAGE_CREDENTIALS_FILE` to make
       it hermetic, and **`CLAUDE_USAGE_NO_REMOTE`** because the fixture tests
@@ -161,6 +184,11 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       quietly showed measured tokens — the exact silent fallback this project
       had already removed once. Now the badge reads `LIVE¹` and the meter is
       marked `· measured`.
+- [x] **Third view: the token breakdown** (1.9.0). Cycling past the usage bars
+      and activity lists reaches a per-window token and per-model breakdown
+      (`renderTokens`/`renderModels` in `widget.js`), with the countdown to
+      reset and the weighted-usage note moved in alongside it. The view
+      indicator is now three dots, not two.
 - [ ] **If the real formula is ever wanted**, it needs several panel readings at
       known times across one block, then candidate models tested against them —
       cache reads free, per-request cost, non-linear curve, reporting lag. Two

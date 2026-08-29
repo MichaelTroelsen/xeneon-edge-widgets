@@ -90,8 +90,24 @@
     }
   }
 
+  /* A theme may replace individual letterforms rather than the whole set: the
+     characters that carry a machine's identity are a handful, and inventing a
+     complete ROM font we cannot check against a dump would look authentic
+     while being fiction. Overrides are consulted first, the base set second. */
+  var overrides = {};
+
+  /* 'pixel' draws every character from the 8x8 set; 'system' hands the string
+     to the browser as real text, which is what the Modern theme wants - there
+     is no pixel font to be faithful to there. */
+  var fontMode = 'pixel';
+
+  function setFont(mode, glyphs) {
+    fontMode = (mode === 'system') ? 'system' : 'pixel';
+    overrides = glyphs || {};
+  }
+
   function glyphRows(ch) {
-    var bytes = FONT[ch] || MISSING;
+    var bytes = overrides[ch] || FONT[ch] || MISSING;
     var rows = [];
     for (var y = 0; y < CELL_H; y++) {
       var row = [];
@@ -125,7 +141,11 @@
   function setText(el, text) {
     if (!el) return;
     var str = String(text == null ? '' : text);
-    el.innerHTML = textSVG(str);
+    if (fontMode === 'system') {
+      el.textContent = str;
+    } else {
+      el.innerHTML = textSVG(str);
+    }
     el.setAttribute('aria-label', str);
   }
 
@@ -387,6 +407,8 @@
     setText: setText,
     setSprite: setSprite,
     setGlyph: setGlyph,
+    setFont: setFont,
+    fontMode: function () { return fontMode; },
     spriteNames: Object.keys(SPRITES),
     glyphNames: Object.keys(GLYPHS)
   };

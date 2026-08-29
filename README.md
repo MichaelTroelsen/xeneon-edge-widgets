@@ -28,6 +28,7 @@ so switching °C/°F costs no request and works from cache while offline.
 
 | Setting | Type | Default |
 |---|---|---|
+| `theme` | combobox | `c64` — seven machines, below |
 | `cityName` | text | `Copenhagen` — city name or `lat,lon` |
 | `tempUnit` | tabs | `auto` (follows iCUE) / C / F |
 | `refreshMinutes` | slider 5–120 | 15 |
@@ -56,6 +57,39 @@ confirmed on the device.
 The sprite follows the conditions: sun, moon, partly cloudy, overcast, fog,
 drizzle, rain, snow and thunderstorm, each in its own palette colour, with the
 sun swapped for a moon after sunset via the API's `is_day` flag.
+
+### Themes
+
+Seven, chosen from the widget's settings:
+
+| Theme | Screen | Boot line |
+|---|---|---|
+| `c64` | light blue on blue | `**** COMMODORE 64 WEATHER V1.3.0 ****` |
+| `pet` | green phosphor on black | `*** COMMODORE WEATHER BASIC ***` |
+| `bbc` | white on black, teletext accents | `BBC COMPUTER 32K` |
+| `cpc` | bright yellow on blue | `AMSTRAD 64K MICROCOMPUTER  (V1)` |
+| `spectrum` | black on white, grey border | `(C) 1982 SINCLAIR RESEARCH LTD` |
+| `amiga` | white on Workbench blue, orange accents | `WORKBENCH RELEASE 1.3` |
+| `modern` | system type, white and orange on black | none |
+
+Each theme is a redefinition of the seven palette tokens plus a boot screen and
+a cursor style — block, underline for the BBC's prompt, or none for Amiga and
+Modern, which had no console conceit to keep. `modern` additionally switches the
+renderer from the 8×8 set to real system text, because there is no pixel font
+for it to be faithful to.
+
+**What is and is not authentic.** The palettes and the screen furniture are the
+faithful part. The boot lines are a homage in the same spirit as the original
+C64 one — they say WEATHER where the real machine said BASIC — and the
+letterforms in every pixel theme are **this project's own hand-authored 8×8
+set, not a ROM dump**. Per-machine ROM fonts would be the next step in
+authenticity and are deliberately not claimed here; `petscii.js` takes per-theme
+glyph overrides (`PETSCII.setFont`) so they can be added a letterform at a time
+without touching anything else.
+
+The setting is a `combobox` rather than `tab-buttons` for two reasons: seven
+options do not fit tab buttons, and iCUE's `TabButtonsEditorSetting.qml:33`
+throws on every payload — see `TODO.md`.
 
 ## Claude Code Usage
 

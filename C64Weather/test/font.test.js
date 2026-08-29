@@ -73,9 +73,14 @@ check('the punctuation the widget uses is spellable', unspellable(PUNCTUATION), 
 const literals = [...widgetSrc.matchAll(/PETSCII\.setText\([^,]+,\s*'((?:[^'\\]|\\.)*)'\s*\)/g)]
   .map(m => m[1].replace(/\\'/g, "'"));
 
-/* Named constants rendered through setText, e.g. var BOOT_RAM = '...' */
-const constants = [...widgetSrc.matchAll(/var (BOOT_RAM|LOAD_LINE)\s*=\s*'((?:[^'\\]|\\.)*)'/g)]
-  .map(m => m[2].replace(/\\'/g, "'"));
+/* Every theme's boot screen. This is where an unspellable character now enters:
+   a theme is authored as plain text, and nothing else looks at it before it
+   reaches the device. */
+const themeStrings = [...widgetSrc.matchAll(/^\s*(?:banner|ram|load|ready):\s*'((?:[^'\\]|\\.)*)'/gm)]
+  .map(m => m[1].replace(/\\'/g, "'"))
+  .filter(Boolean);
+
+const themeIds = [...widgetSrc.matchAll(/^ {4}([a-z0-9]+): \{$/gm)].map(m => m[1]);
 
 /* The weather-code table: ['LIGHT DRIZZLE', 'drizzle'] */
 const conditions = [...widgetSrc.matchAll(/\[\s*'([A-Z ]+)'\s*,\s*(?:isDay \? )?'([a-z]+)'/g)]
@@ -89,18 +94,21 @@ const nightSprites = [...widgetSrc.matchAll(/isDay \? '([a-z]+)' : '([a-z]+)'/g)
 console.log('extraction:');
 /* A check that did not run is not a pass: if these stop matching, everything
    below would succeed against an empty list. */
-check('setText literals were found', literals.length >= 8, true);
-check('boot constants were found', constants.length, 2);
+/* 7 today: the loading, error, empty and offline lines. The four boot lines
+   moved into the theme table and are counted as themeStrings instead. */
+check('setText literals were found', literals.length >= 7, true);
+check('every theme was found', themeIds.length >= 7, true);
+check('theme boot strings were found', themeStrings.length >= 15, true);
 check('the condition table was found', conditions.length >= 25, true);
 check('day/night sprite pairs were found', nightSprites.length >= 4, true);
 
 console.log('spellability:');
-for (const text of [...literals, ...constants]) {
+for (const text of [...literals, ...themeStrings]) {
   const bad = unspellable(text);
   if (bad.length) failures++;
   if (bad.length) console.log(`  FAIL  "${text}" needs ${JSON.stringify(bad)}`);
 }
-console.log(`  ${failures ? 'see above' : 'pass'}  all ${literals.length + constants.length} rendered literals are spellable`);
+console.log(`  ${failures ? 'see above' : 'pass'}  all ${literals.length + themeStrings.length} literals and theme strings are spellable`);
 
 const badConditions = conditions.filter(c => unspellable(c.text).length);
 check('every weather-code description is spellable', badConditions.map(c => c.text), []);

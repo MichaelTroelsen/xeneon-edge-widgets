@@ -33,7 +33,13 @@ const CONFIG_PATH = path.join(__dirname, 'limits.json');
 
 const WINDOW_DAYS = 8;                       /* transcripts older than this are ignored */
 const SESSION_BLOCK_MS = 5 * 60 * 60 * 1000; /* the "current session" is a 5-hour block */
-const REFRESH_MS = 20000;                    /* how often the index is rebuilt */
+/* 10s rather than 20s, which halves the delay before a new session or a
+   starting workflow appears. Measured over 11,146 messages: ~70 ms per
+   incremental rebuild through the HTTP path, so under 0.7% of one core - and
+   that is an upper bound, since the timer's rebuild neither serialises nor
+   sends. The widget polls on the same interval, so the two together bound the
+   lag at roughly 20s rather than 40s. */
+const REFRESH_MS = 10000;                    /* how often the index is rebuilt */
 const MAX_WORKFLOWS = 24;
 const MAX_SUBTASKS = 40;
 const MAX_SESSIONS = 20;

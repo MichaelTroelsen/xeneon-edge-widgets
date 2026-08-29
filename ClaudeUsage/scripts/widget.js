@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.8.0';
+  var WIDGET_VERSION = '1.8.1';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -52,7 +52,7 @@
   }
 
   function readRefreshSeconds() {
-    return clampRange(getIcueProperty('refreshSeconds'), 5, 120, 20);
+    return clampRange(getIcueProperty('refreshSeconds'), 5, 120, 10);
   }
 
   /* ---------- formatting ---------- */

@@ -119,9 +119,9 @@ run when changing how the widget renders rather than after every edit. Launch
 `test/activity-probe.workflow.js` with the Workflow tool (`args: {agents, seconds}`)
 and run `node usage-server/test/activity-probe-check.js` alongside it: the probe
 makes N subtasks that genuinely block for S seconds, and the checker watches the
-feed and fails if the lists never reported them. Allow ~40 seconds for work to
-appear and the same for it to clear — the server re-indexes every 20s and the
-widget polls every 20s, so a run shorter than that can finish unseen.
+feed and fails if the lists never reported them. Allow ~20 seconds for work to
+appear and the same for it to clear — the server re-indexes every 10s and the
+widget polls every 10s, so a run shorter than that can still finish unseen.
 
 ## Anthropic's own figures
 
@@ -433,10 +433,11 @@ deliberately excluded: it needs an agent runner and spends real tokens.
 ## Cost
 
 The index is incremental: a file is only re-parsed from the byte offset where it
-last ended. Measured on the machine it was developed on, over 10,685 messages:
-a cold build takes **~440 ms**, an incremental rebuild **~40 ms**, and serving
-the cached snapshot ~0.8 ms. It refreshes every 20 s, so the steady-state cost
-is roughly 0.2% of one core.
+last ended. Measured on the machine it was developed on: a cold build takes
+**~440 ms** (10,685 messages), an incremental rebuild **~70 ms** through the
+HTTP path (11,146 messages — an upper bound, since the timer's rebuild neither
+serialises nor sends), and serving the cached snapshot ~0.8 ms. It refreshes
+every **10 s**, so the steady-state cost is under 0.7% of one core.
 
 ## Running it at logon
 

@@ -113,7 +113,7 @@ the activity tables with their totals (`3 active of 24 seen`) — open
 |---|---|---|
 | `feedUrl` | text | `http://127.0.0.1:41777/usage` |
 | `colorTheme` | tabs | `dark` / `light` |
-| `refreshSeconds` | slider 5–120 | 20 |
+| `refreshSeconds` | slider 5–120 | 10 |
 
 **Tap the widget** to swap between the usage bars and an activity view; tap
 again to go back. This needs `"interactive": true` in the manifest, without which
@@ -123,8 +123,8 @@ iCUE never forwards touches to the page.
 session appears as soon as it is opened, and drops off 15 minutes after it last
 did anything; a workflow and its subtasks appear while their agents are in
 flight. Sessions are labelled with the prompt or slash command that started them.
-Expect up to ~40s of lag in each direction: the feed re-indexes every 20s and the
-widget polls every 20s, so a very short run can begin and end unseen.
+Expect up to ~20s of lag in each direction: the feed re-indexes every 10s and the
+widget polls every 10s, so a very short run can still begin and end unseen.
 
 **The lists scroll.** Each column scrolls independently, the heading carries the
 count (`SESSIONS · 1 ACTIVE`, or `WORKFLOWS · NONE ACTIVE` when idle) and a fade

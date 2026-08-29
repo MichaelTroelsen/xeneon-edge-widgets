@@ -9,10 +9,21 @@
  * a running workflow and a running subtask actually appear, and did they go
  * away afterwards.
  *
- * Usage, in a second terminal, started BEFORE or just as the workflow starts:
+ * Usage, in a second terminal, started before, during, or after the workflow:
  *   node usage-server/test/activity-probe-check.js [seconds]
  *
  * Exit code 0 if the lists reported the run, 1 if they did not.
+ *
+ * Started late enough (or unlucky enough on poll timing), this checker can
+ * miss the run's active window entirely: the active counts.workflows /
+ * counts.subtasks are only ever non-zero while the run is actually in
+ * flight, so a run that starts and fully drains between two polls - or one
+ * that had already ended by the time this process made its first request -
+ * would otherwise show 0/0 on every single poll and be reported as a false
+ * FAIL despite having genuinely happened. counts.workflowsSeen /
+ * .subtasksSeen back that up: they come from the wf_*.json a run writes when
+ * it ENDS, so a rise against this run's own first-poll baseline proves a run
+ * completed during the watch even when its active window was never caught.
  */
 
 'use strict';
@@ -48,6 +59,14 @@ async function main() {
   let sawSubtask = false;
   let peakWorkflows = 0;
   let peakSubtasks = 0;
+  /* Baseline for the Seen totals, captured on this run's first successful
+     poll - whatever the state of the world already is at that moment,
+     regardless of whether a probe workflow started before, during, or after
+     this checker did. null until that first poll lands. */
+  let baseWorkflowsSeen = null;
+  let baseSubtasksSeen = null;
+  let seenLatchedWorkflow = false;
+  let seenLatchedSubtask = false;
   const deadline = Date.now() + WATCH_SECONDS * 1000;
 
   while (Date.now() < deadline) {
@@ -63,8 +82,21 @@ async function main() {
     const c = feed.counts || {};
     const w = c.workflows || 0;
     const t = c.subtasks || 0;
+    const wSeen = c.workflowsSeen;
+    const tSeen = c.subtasksSeen;
+
+    if (baseWorkflowsSeen === null && typeof wSeen === 'number') baseWorkflowsSeen = wSeen;
+    if (baseSubtasksSeen === null && typeof tSeen === 'number') baseSubtasksSeen = tSeen;
+
     if (w) sawWorkflow = true;
     if (t) sawSubtask = true;
+    /* A run whose active window this checker never caught still wrote its
+       wf_*.json when it ended - that is the one moment it is guaranteed to
+       leave a mark. A rise in the Seen totals past this run's own baseline
+       means a run completed during the watch even with w and t both 0 on
+       every poll we happened to make. */
+    if (typeof wSeen === 'number' && wSeen > baseWorkflowsSeen) { sawWorkflow = true; seenLatchedWorkflow = true; }
+    if (typeof tSeen === 'number' && tSeen > baseSubtasksSeen) { sawSubtask = true; seenLatchedSubtask = true; }
     peakWorkflows = Math.max(peakWorkflows, w);
     peakSubtasks = Math.max(peakSubtasks, t);
 
@@ -82,8 +114,10 @@ async function main() {
 
   const ok = sawWorkflow && sawSubtask;
   console.log('');
-  console.log(`  running workflow appeared: ${sawWorkflow ? 'yes' : 'NO'}  (peak ${peakWorkflows})`);
-  console.log(`  running subtask appeared:  ${sawSubtask ? 'yes' : 'NO'}  (peak ${peakSubtasks})`);
+  console.log(`  running workflow appeared: ${sawWorkflow ? 'yes' : 'NO'}  (peak ${peakWorkflows})` +
+    (seenLatchedWorkflow && !peakWorkflows ? '  [via workflowsSeen rise - active window was never caught]' : ''));
+  console.log(`  running subtask appeared:  ${sawSubtask ? 'yes' : 'NO'}  (peak ${peakSubtasks})` +
+    (seenLatchedSubtask && !peakSubtasks ? '  [via subtasksSeen rise - active window was never caught]' : ''));
   console.log('');
   console.log(ok
     ? 'PASS - the activity lists reported work while it was in flight'

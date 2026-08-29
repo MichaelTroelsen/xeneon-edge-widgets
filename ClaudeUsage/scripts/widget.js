@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.8.1';
+  var WIDGET_VERSION = '1.9.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -18,9 +18,10 @@
   var timer = null;
   var data = null;
   var lastError = '';
-  var view = 'usage';   /* 'usage' | 'detail' — toggled by tapping the widget */
+  var VIEWS = ['usage', 'detail', 'tokens'];
+  var view = 'usage';   /* tapping the widget cycles through VIEWS */
 
-  var TITLES = { usage: 'Claude Code usage', detail: 'Activity' };
+  var TITLES = { usage: 'Claude Code usage', detail: 'Activity', tokens: 'Tokens' };
 
   /* ---------- iCUE property access ---------- */
 
@@ -159,7 +160,16 @@
 
       var label = document.createElement('span');
       label.className = 'label';
-      label.textContent = item.label || item.name || item.summary || '';
+      /* Sessions lead with their project: the same slash command runs in
+         several repos, so the label alone does not say which one this is. */
+      var text = item.label || item.name || item.summary || '';
+      if (item.project && item.messages !== undefined) {
+        var proj = document.createElement('span');
+        proj.className = 'proj';
+        proj.textContent = item.project + ' · ';
+        label.appendChild(proj);
+      }
+      label.appendChild(document.createTextNode(text));
 
       var meta = document.createElement('span');
       meta.className = 'meta';
@@ -171,6 +181,67 @@
       ul.appendChild(li);
     });
     ul.scrollTop = scrollTop;
+  }
+
+  /* One row per token class, with its share of the total - the share is what
+     makes a cache-read-dominated window obvious at a glance. */
+  function renderTokens(tbody, t) {
+    tbody.textContent = '';
+    if (!t) return;
+    var total = t.total || 0;
+    var rows = [
+      ['output', t.output], ['cache creation', t.cacheCreation],
+      ['cache read', t.cacheRead], ['input', t.input]
+    ];
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      tr.appendChild(cell('th', r[0], ''));
+      tr.appendChild(cell('td', num(r[1]), 'n'));
+      tr.appendChild(cell('td', total ? (r[1] / total * 100).toFixed(1) + '%' : '—', 'pct'));
+      tbody.appendChild(tr);
+    });
+    var sum = document.createElement('tr');
+    sum.className = 'sum';
+    sum.appendChild(cell('th', 'total', ''));
+    sum.appendChild(cell('td', num(total), 'n'));
+    sum.appendChild(cell('td', '', 'pct'));
+    tbody.appendChild(sum);
+    var msgs = document.createElement('tr');
+    msgs.appendChild(cell('th', 'messages', ''));
+    msgs.appendChild(cell('td', num(t.messages), 'n'));
+    msgs.appendChild(cell('td', '', 'pct'));
+    tbody.appendChild(msgs);
+  }
+
+  function renderModels(tbody, t) {
+    tbody.textContent = '';
+    var by = t && t.byModel;
+    if (!by) return;
+    var names = Object.keys(by).sort(function (a, b) { return by[b].weighted - by[a].weighted; });
+    if (!names.length) return;
+    var head = document.createElement('tr');
+    /* Not 'head': the page header is .head { display: flex }, which also
+       matched this row and destroyed its table layout. */
+    head.className = 'mdl-head';
+    head.appendChild(cell('th', 'model', ''));
+    head.appendChild(cell('td', 'msgs', 'n'));
+    head.appendChild(cell('td', 'output', 'n'));
+    tbody.appendChild(head);
+    names.forEach(function (m) {
+      var tr = document.createElement('tr');
+      /* The dated suffix on some model ids costs a third of the column. */
+      tr.appendChild(cell('th', m.replace(/^claude-/, '').replace(/-\d{8}$/, ''), ''));
+      tr.appendChild(cell('td', num(by[m].messages), 'n'));
+      tr.appendChild(cell('td', compact(by[m].output), 'n'));
+      tbody.appendChild(tr);
+    });
+  }
+
+  function cell(tag, text, cls) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    el.textContent = text;
+    return el;
   }
 
   function render() {
@@ -274,8 +345,10 @@
     var describeSubtask = function (task) {
       return (task.model || '') + (task.tokens ? ' · ' + compact(task.tokens) : '');
     };
+    /* The project now leads the row, so the meta column carries only the
+       message count - repeating the project there would say it twice. */
     var describeSession = function (s) {
-      return s.project + ' · ' + s.messages;
+      return String(s.messages);
     };
 
     /* A backlog is worth saying out loud: an empty subtask list with 86 tasks
@@ -289,6 +362,18 @@
     renderList(els.dSessions, data.sessions, describeSession);
     renderList(els.dWorkflows, data.workflows, describeWorkflow);
     renderList(els.dSubtasks, data.subtasks, describeSubtask, noSubtasks);
+
+    /* Third view: the token breakdown behind the two bars. */
+    renderTokens(els.tokSession, st);
+    renderTokens(els.tokWeekly, wt);
+    renderModels(els.mdlSession, st);
+    renderModels(els.mdlWeekly, wt);
+    els.tokSessionSub.textContent = s.active
+      ? (formatCountdown(s.resetsAt) || '') : 'No active block';
+    els.tokWeeklySub.textContent = formatWeekday(w.resetsAt);
+    els.tokSessionNote.textContent = 'weighted ' + num(s.usedWeighted) +
+      (s.peakWeighted ? ' · peak block ' + compact(s.peakWeighted) : '');
+    els.tokWeeklyNote.textContent = 'weighted ' + num(w.usedWeighted);
 
     showState('content');
     markScrollable();
@@ -309,6 +394,7 @@
     els.title.textContent = TITLES[view];
     els.viewUsage.classList.toggle('is-active', view === 'usage');
     els.viewDetail.classList.toggle('is-active', view === 'detail');
+    els.viewTokens.classList.toggle('is-active', view === 'tokens');
     Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
       d.classList.toggle('is-active', d.getAttribute('data-view') === view);
     });
@@ -318,7 +404,7 @@
   }
 
   function toggleView() {
-    view = (view === 'usage') ? 'detail' : 'usage';
+    view = VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length];
     applyView();
   }
 
@@ -403,6 +489,15 @@
     els.dSessions = document.getElementById('d-sessions');
     els.dWorkflows = document.getElementById('d-workflows');
     els.dSubtasks = document.getElementById('d-subtasks');
+    els.viewTokens = document.querySelector('.view-tokens');
+    els.tokSession = document.getElementById('tok-session');
+    els.tokWeekly = document.getElementById('tok-weekly');
+    els.mdlSession = document.getElementById('mdl-session');
+    els.mdlWeekly = document.getElementById('mdl-weekly');
+    els.tokSessionSub = document.getElementById('tok-session-sub');
+    els.tokWeeklySub = document.getElementById('tok-weekly-sub');
+    els.tokSessionNote = document.getElementById('tok-session-note');
+    els.tokWeeklyNote = document.getElementById('tok-weekly-note');
     els.sessionName = document.querySelector('#m-session .name');
     els.weeklyName = document.querySelector('#m-weekly .name');
     els.plan = document.getElementById('plan');

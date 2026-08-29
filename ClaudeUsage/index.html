@@ -29,7 +29,7 @@
         <span class="title" id="title">Claude Code usage</span>
         <span class="plan" id="plan"></span>
         <span class="updated" id="updated"></span>
-        <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i></span>
+        <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i><i class="dot" data-view="tokens"></i></span>
         <span class="live" id="live">LIVE</span>
         <span class="version" id="version"></span>
       </header>
@@ -69,6 +69,25 @@
           </div>
         </section>
       </div>
+      </div>
+
+      <div class="view view-tokens">
+        <section class="cols">
+          <div class="col">
+            <h2 id="tok-session-head">Current 5-hour block</h2>
+            <div class="col-sub" id="tok-session-sub"></div>
+            <table class="tok"><tbody id="tok-session"></tbody></table>
+            <div class="col-note" id="tok-session-note"></div>
+            <table class="mdl"><tbody id="mdl-session"></tbody></table>
+          </div>
+          <div class="col">
+            <h2>This week</h2>
+            <div class="col-sub" id="tok-weekly-sub"></div>
+            <table class="tok"><tbody id="tok-weekly"></tbody></table>
+            <div class="col-note" id="tok-weekly-note"></div>
+            <table class="mdl"><tbody id="mdl-weekly"></tbody></table>
+          </div>
+        </section>
       </div>
 
       <div class="view view-detail">

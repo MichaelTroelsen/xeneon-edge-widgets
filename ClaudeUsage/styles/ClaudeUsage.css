@@ -171,7 +171,99 @@ body {
 
 .dots .dot.is-active { background: var(--fill); }
 
+/* The project that a session belongs to, ahead of its label. Muted so the
+   label still reads as the row's subject. */
+.list li .label .proj { color: var(--muted); }
+
 .view { display: none; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+
+/* Token breakdown: the two windows side by side, each a class table and a
+   per-model table. Scrolls rather than trims, like the activity lists - a row
+   hidden here would be unreachable. */
+.cols {
+  display: flex;
+  gap: calc(var(--layout-unit) * 4);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cols .col {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.cols .col h2 {
+  font-size: var(--font-name);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 calc(var(--layout-unit) * 0.5);
+}
+
+.cols .col-sub,
+.cols .col-note {
+  font-size: var(--font-meta);
+  color: var(--muted);
+  margin-bottom: calc(var(--layout-unit) * 1);
+}
+
+/* Fixed layout with declared widths: with auto layout the header row and the
+   data rows sized independently and the columns did not line up. */
+.cols table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--font-meta);
+}
+
+.cols .tok th { width: 44%; }
+.cols .tok td.n { width: 38%; }
+.cols .tok td.pct { width: 18%; }
+
+.cols .mdl th { width: 44%; }
+.cols .mdl td.n { width: 28%; }
+
+.cols table th,
+.cols table td {
+  padding: calc(var(--layout-unit) * 0.5) 0;
+  text-align: left;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cols table td.n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.cols table td.pct {
+  text-align: right;
+  color: var(--muted);
+}
+
+.cols .tok tr.sum th,
+.cols .tok tr.sum td {
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cols .mdl { margin-top: calc(var(--layout-unit) * 1); }
+.cols .mdl tr.mdl-head th,
+.cols .mdl tr.mdl-head td {
+  border-bottom: 1px solid var(--line);
+  font-size: calc(var(--font-meta) * 0.92);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
 .view.is-active { display: flex; }
 
 /* Three lists side by side. Even 840px has room for them; the meta column is

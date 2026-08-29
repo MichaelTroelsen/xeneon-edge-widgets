@@ -115,14 +115,20 @@ the activity tables with their totals (`3 active of 24 seen`) — open
 | `colorTheme` | tabs | `dark` / `light` |
 | `refreshSeconds` | slider 5–120 | 10 |
 
-**Tap the widget** to swap between the usage bars and an activity view; tap
-again to go back. This needs `"interactive": true` in the manifest, without which
+**Tap the widget** to cycle three views: the usage bars, an activity view, and
+a token breakdown; a third tap returns to the start. The **Tokens** view carries
+what the bars are drawn from — output, cache creation, cache read and input for
+both windows with each class's share of the total, the weighted figure, and a
+per-model table. On this account cache reads are ~98% of every window, which is
+the single most useful thing the page says. This needs `"interactive": true` in the manifest, without which
 iCUE never forwards touches to the page.
 
 **The activity view shows only what is running** — not a history of what ran. A
 session appears as soon as it is opened, and drops off 15 minutes after it last
 did anything; a workflow and its subtasks appear while their agents are in
-flight. Sessions are labelled with the prompt or slash command that started them.
+flight. Sessions are labelled with the prompt or slash command that started them,
+prefixed by their project — the same slash command runs in several repos, so the
+label alone does not say which one you are looking at.
 Expect up to ~20s of lag in each direction: the feed re-indexes every 10s and the
 widget polls every 10s, so a very short run can still begin and end unseen.
 

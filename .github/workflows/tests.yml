@@ -1,0 +1,43 @@
+name: tests
+
+# The two hermetic suites: no network, no credentials, no agent runner. They
+# spawn the real server against fixture trees, so they exercise the paths that
+# have actually broken here - live-run detection and the statusline reading -
+# rather than a mocked stand-in.
+#
+# The end-to-end probe (test/activity-probe.workflow.js) is deliberately not
+# here: it needs an agent runner and spends real tokens.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # windows is the platform this is developed and run on; ubuntu catches
+        # the path and line-ending assumptions that are easy to make on it.
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: syntax check
+        run: |
+          node --check usage-server/server.js
+          node --check usage-server/official.js
+          node --check usage-server/statusline.js
+          node --check usage-server/statusline-tee.js
+          node --check usage-server/usagehtml.js
+          node --check ClaudeUsage/scripts/widget.js
+      - name: live detection
+        run: node usage-server/test/live-detection.test.js
+      - name: statusline and credentials
+        run: node usage-server/test/statusline.test.js

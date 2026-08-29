@@ -174,6 +174,35 @@ async function main() {
       check(`no "${needle}" anywhere in /usage`, usage.includes(needle), false);
     }
 
+    console.log('unhooked-wrapper detection:');
+    /* An active session plus no recent statusline write is the signature of the
+       wrapper no longer being wired into statusLine.command. Without a session
+       it is just an idle machine and must not be reported as a fault. */
+    const freshSession = path.join(PROJECTS, 'C--fixture-live-sess');
+    fs.mkdirSync(freshSession, { recursive: true });
+    fs.writeFileSync(path.join(freshSession, 'feedface-live.jsonl'),
+      JSON.stringify({ type: 'mode', mode: 'default' }) + '\n', 'utf8');
+
+    fs.unlinkSync(SL_FILE);
+    let d = await snapshot();
+    check('an absent file with an active session is flagged',
+      d.diagnostics.statusline.likelyUnhooked, true);
+    check('and the hint names the file', (d.diagnostics.statusline.hint || '').includes('statusline-usage'), true);
+    check('the hint reaches official.error for the tooltip',
+      (d.official.error || '').includes('statusline-tee.js'), true);
+
+    writeStatusline(reading(30 * MINUTE, BOTH));
+    d = await snapshot();
+    check('a long-stale file with an active session is flagged',
+      d.diagnostics.statusline.likelyUnhooked, true);
+    check('the hint gives its age', /\d+ min old/.test(d.diagnostics.statusline.hint || ''), true);
+
+    writeStatusline(reading(0, BOTH));
+    d = await snapshot();
+    check('a current file is not flagged', d.diagnostics.statusline.likelyUnhooked, false);
+    check('and no hint is attached', d.diagnostics.statusline.hint, null);
+    check('a healthy reading keeps a clean error field', d.official.error == null, true);
+
     console.log('label redaction:');
     /* Subtask rows are named from the agent's prompt, so a key pasted into one
        would otherwise be rendered on the display. Build a live run whose prompt

@@ -103,6 +103,16 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       prompt text, so a pasted key would have been rendered on the display.
       `sk-ant-…`, long `sk-…`, `Bearer …` and `ghp_…` become `[redacted]`.
 
+- [x] **Detect an unhooked statusline wrapper** (2026-08-29). An active session
+      plus a file that is not current means `statusLine.command` probably no
+      longer runs `statusline-tee.js`. Reported as
+      `diagnostics.statusline.likelyUnhooked`, appended to `official.error` so
+      the widget's existing tooltip shows it without a widget change, and given
+      its own section on `/usagehtml`.
+- [x] **CI** (2026-08-29). `.github/workflows/tests.yml` — both hermetic suites
+      on Ubuntu and Windows, Node 20 and 22, plus `node --check` over every
+      source file, on push and pull request.
+
 ### Open
 
 - [ ] **Show sessions from the other machine (`tdzlaptop`).** The Activity

@@ -138,6 +138,7 @@ function render(snapshot, cfg) {
     '.warnbox{background:#2a2118;border:1px solid var(--warn);border-radius:10px;' +
     'padding:12px 14px;margin:18px 0;color:#f0d9b8}' +
     '.warnbox b{color:var(--warn)}' +
+    '.warn{color:var(--warn)}' +
     'code{background:#000;padding:1px 5px;border-radius:4px;font-size:12px}' +
     'a{color:var(--fill)}' +
     '</style></head><body>';
@@ -260,6 +261,16 @@ function render(snapshot, cfg) {
       ' · cache creation ×' + w.cacheCreation + ' · cache read ×' + w.cacheRead + '</td></tr>' +
     '<tr><th>weekly anchor</th><td>weekday ' + (cfg.weeklyAnchor || {}).weekday +
       ' at ' + (cfg.weeklyAnchor || {}).hour + ':00 local</td></tr>' +
+    '</tbody></table>';
+
+  /* Says whether the no-request path is actually being fed, and why not. */
+  const sl = (s.diagnostics || {}).statusline || {};
+  html += '<h2>Statusline feed</h2><table class="grid"><tbody>' +
+    '<tr><th>file</th><td><code>' + esc(sl.file || 'unknown') + '</code></td></tr>' +
+    '<tr><th>present</th><td>' + (sl.present ? 'yes' : 'no') + '</td></tr>' +
+    '<tr><th>age</th><td>' + (sl.ageMs == null ? '—' : Math.round(sl.ageMs / 60000) + ' min') + '</td></tr>' +
+    '<tr><th>current</th><td>' + (sl.current ? 'yes' : 'no') + '</td></tr>' +
+    (sl.hint ? '<tr><th>warning</th><td class="warn">' + esc(sl.hint) + '</td></tr>' : '') +
     '</tbody></table>';
 
   html += '<h2>Endpoints</h2><table class="grid"><tbody>' +

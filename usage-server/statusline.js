@@ -102,4 +102,22 @@ function read(now) {
   };
 }
 
-module.exports = { read, FILE, MAX_AGE_MS };
+/* What the file looks like right now, regardless of whether it is servable.
+   The point is telling "nothing has run recently" apart from "the wrapper is no
+   longer wired up", which look identical from the reading alone. */
+function health(now) {
+  let stat;
+  try {
+    stat = fs.statSync(FILE);
+  } catch (err) {
+    return { file: FILE, present: false, ageMs: null };
+  }
+  let capturedAt = null;
+  try {
+    capturedAt = Number(JSON.parse(fs.readFileSync(FILE, 'utf8')).capturedAt) || null;
+  } catch (err) { /* unreadable or malformed; mtime still tells us something */ }
+  const at = capturedAt || stat.mtimeMs;
+  return { file: FILE, present: true, ageMs: Math.max(0, now - at), capturedAt: capturedAt };
+}
+
+module.exports = { read, health, FILE, MAX_AGE_MS, FRESH_MS };

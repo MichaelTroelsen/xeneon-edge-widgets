@@ -188,6 +188,16 @@ function officialForSnapshot(now) {
   return fromStatusline || fromApi || officialState;
 }
 
+/* The hint rides on official.error so it reaches the widget's tooltip without
+   the widget needing to know about it - and only when there is no live reading
+   to show, since a working display does not need to be explained. */
+function withHint(official, hint) {
+  if (!hint || (official && official.ok && !official.stale)) return official;
+  return Object.assign({}, official, {
+    error: official && official.error ? official.error + ' · ' + hint : hint
+  });
+}
+
 /* The credentials file being rewritten is the signal that a retry is worth
    making immediately, rather than waiting out a long backoff. */
 function watchCredentials() {
@@ -851,6 +861,21 @@ function build(nowOverride) {
 
   const { workflows, subtasks } = collectWorkflows();
   const queued = collectQueuedTasks();
+  /* If Claude Code is being used right now, the statusline should be writing.
+     When it is not, the likely cause is that statusLine.command no longer runs
+     the wrapper - changing your statusline or reinstalling ccstatusline silently
+     unhooks it, and the symptom is indistinguishable from an idle machine. Say
+     so, rather than leaving the reading to age out with no explanation. */
+  const slHealth = statusline.health(now);
+  const slCurrent = slHealth.present && slHealth.ageMs != null && slHealth.ageMs <= statusline.FRESH_MS;
+  const wrapperSuspect = activeSessions.length > 0 && !slCurrent;
+  const wrapperHint = !wrapperSuspect ? null
+    : (slHealth.present
+        ? ('a Claude Code session is active but ' + statusline.FILE + ' is ' +
+           Math.round(slHealth.ageMs / 60000) + ' min old - is statusline-tee.js still wired into statusLine.command?')
+        : ('a Claude Code session is active but ' + statusline.FILE + ' does not exist - ' +
+           'statusline-tee.js is probably not wired into statusLine.command'));
+
   /* Live runs are the activity. The wf_*.json files are the record of runs
      that have already ended, kept for the counts and the debug page. */
   const live = collectLiveRuns();
@@ -874,7 +899,15 @@ function build(nowOverride) {
     generatedAt: now,
     /* Anthropic's own numbers when the endpoint answered, so the widget can
        prefer them and fall back to the measured view when it did not. */
-    official: officialForSnapshot(now),
+    official: withHint(officialForSnapshot(now), wrapperHint),
+    /* Machine-readable version of the same thing, for the debug page. */
+    diagnostics: {
+      statusline: Object.assign({}, slHealth, {
+        current: slCurrent,
+        likelyUnhooked: wrapperSuspect,
+        hint: wrapperHint
+      })
+    },
     plan: (officialGood && officialGood.planTier) ? planLabelFromTier(officialGood.planTier) : cfg.planLabel,
     session: {
       /* Weighted totals are measured, and the bar is drawn against the user's

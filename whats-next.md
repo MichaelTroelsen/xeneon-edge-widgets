@@ -1,204 +1,184 @@
 # Handoff — Xeneon Edge widgets
 
-Written 2026-08-29 ~09:35 local. Replaces the version committed in `0c0b365`,
-which stopped at `b69b22c`.
+Written 2026-08-29 ~16:55 local. Replaces the version written at ~09:35, which
+stopped at `bb2ea7d` and described a tree six commits old.
 
 Repo: `C:\Users\mit\claude\icue` → https://github.com/MichaelTroelsen/xeneon-edge-widgets
-(public, `main`, clean, pushed through `bb2ea7d`, CI green).
+(public, `main`). **`HEAD` is `acfeee4` and `origin/main` is `3214d2b` — the last
+two commits are LOCAL ONLY.** `README.md` and `TODO.md` are modified and
+uncommitted. See Current State before doing anything.
 
 <original_task>
-The session opened with **"read what next"** — read the previous handoff and
-report. Everything else came from the user's follow-ups, in order:
+The session opened with **"read what next"**. Everything after that came from the
+user's follow-ups, in order:
 
-1. Chase the three items the old handoff left pending (429, Stream Deck plugin,
-   token refresh).
-2. **"please check the interwebs for your assumption. please look in github
-   answers"** — verify the 429 diagnosis externally.
-3. **"yes, build the statusline route"**.
-4. **"can we make the activity live? it is currently showing too many sessions,
-   workflows and subtasks that are active."**
-5. **"can you build a small test that add to subtask that do nothing for 60
-   seconds..."**, later **"the widget does not update. i expected to be updated.
-   please add this to the test."**
-6. **"please make sure you can test the workflow also"**.
-7. **"i have added a new session. why is it not showing?"**
-8. **"update docs. commit and push."**
-9. **"what suggested improvements do you have"** → then **"yes, do 1 and 2"**,
-   **"do 3 and 4"**, **"do 5 and 6"** — the six-item list below.
-
-One-offs: add the tdzlaptop question to TODO; reword and force-push `644b42d`.
+1. **"please list the themes and the roms missing. Please make it so when you
+   click on the c64 weather it changes them."**
+2. Seven reference images, one per message, with no instruction attached: the
+   PET, BBC, CPC and Spectrum startup screens, the Amiga Kickstart screen, then
+   photographs of the CPC 464, the ZX Spectrum and a CBM 8032. One asked message
+   was **"picture of BBC Micro machine."** — a request for a photo, not an
+   attachment.
+3. A scoping question was put to the user, who chose **boot-screen-accurate
+   themes with machine art**, and **keep the CPC as a 464**.
+4. **"Everytime you switch theme to a new machine it should boot in 2 sec and
+   then show the weather screen?"** — the shape the rest of the work took.
+5. `/whattask`, then `/runqueue --until-blocked`.
 </original_task>
 
 <work_completed>
 
-## Commits (all pushed, `main` == `origin/main` at `bb2ea7d`)
+## Commits (both LOCAL, not pushed)
 
 | SHA | What |
 |---|---|
-| `fae6cd5` | Reworded `644b42d` — 429 diagnosis (history rewrite, force-pushed) |
-| `3022937` | Reworded `04db35a` — statusline route |
-| `28bd772` | TODO: tdzlaptop + two stale entries |
-| `97942a9` | Activity shows what is running (**shipped broken** — see `97a9229`) |
-| `97a9229` | Read running work from the journal, not the end-of-run file |
-| `63f1e45` | `live-detection.test.js` — fixture-based, no agent runner |
-| `fb3b90e` | A session appears when opened, not when it first replies |
-| `b69b22c` | Docs audit and fixes |
-| `0c0b365` | Previous handoff (superseded by this file) |
-| `7c259e5` | Per-meter provenance + **deleted the local estimate** |
-| `99e4489` | Statusline/credential tests; stopped the tests phoning home |
-| `fe5e558` | Unhooked-wrapper detection + CI |
-| `bb2ea7d` | Docs for the above (dropped from `fe5e558` by an escaping bug) |
+| `1710ee2` | Tap the weather widget to change theme (1.3.2) |
+| `acfeee4` | Every machine boots before it shows the weather (1.4.0) |
 
-## 1. The 429 diagnosis (twice wrong, now verified)
+## 1. Tap to change theme (`1710ee2`, C64 Weather 1.3.2)
 
-Measured on this machine: **four** Stream Deck plugins called
-`/api/oauth/usage`. `kr.co.postgresql.ai-limits` retried with **no backoff** —
-~45 req/s, ~11,700 in six minutes, later ~140/s. Removing its *buttons* did not
-stop it; killing its process made Stream Deck respawn it; only **uninstalling**
-did. All four are now uninstalled.
+Tapping steps through `THEME_ORDER` and wraps. The iCUE combobox is still the
+setting: a tap is an override remembered **alongside the property value it was
+made against**, so when that value changes the settings panel wins and the
+override is dropped. Without that rule the combobox looks broken forever after
+one tap. Persisted under its own `localStorage` key, apart from the reading cache.
 
-But that is not why the endpoint 429s. Verified via `gh search issues`:
-- **anthropics/claude-code#30930** — *open*, `bug`/`area:api`/`area:statusline`.
-  Persistent 429 with `retry-after: 0` for Max users at 30s/60s/120s.
-- **#31637** — 10-minute polling throttled within the hour; 30-minute backoff
-  still failing for hours.
-- **#31055** — 429 after a *single* request, including Claude Code's own
-  `/usage` command.
+`manifest.json` needed **`"interactive": true`** — without it iCUE never forwards
+touches to the page at all. 12px slop / 700ms, same rule as the usage widget.
 
-**Do not re-derive this as "we polled too much".**
+Fixed alongside, same code path: **`renderStatic()` ran once at boot and never
+again**, so a theme picked in the settings panel did not appear until reload.
 
-## 2. The statusline route (the actual fix)
+## 2. The boot sequence and the accurate startup screens (`acfeee4`, 1.4.0)
 
-Claude Code passes `rate_limits` to statusline scripts since **v2.1.80**;
-verified against <https://code.claude.com/docs/en/statusline>, not just a
-comment. `resets_at` is **epoch seconds** here (ISO string from the OAuth API).
+Changing theme now **reboots the machine**: its real startup screen holds the
+whole slot for `BOOT_MS` (2000) and then the weather screen takes over. That
+reordering is what made the rest possible — the startup text no longer shares the
+slot with the readout, so it can be the real thing at its real length.
 
-- **`statusline-tee.js`** — wraps the configured statusline, saves `rate_limits`
-  to `~/.claude/statusline-usage.json` (atomic temp+rename), passes stdin and
-  stdout through. Every failure path still runs the wrapped command.
-- **`statusline.js`** — reads it back in the same shape `official.js` returns,
-  so the widget needed no change. Current ≤10 min, `stale` to 45 min, withheld
-  past 45.
-- **`server.js`** — `officialForSnapshot()` takes whichever path answered most
-  recently.
+- **Startup text is now verbatim**, per machine, checked against the user's
+  reference shots. Four lines of Amstrad/Locomotive copyright for the CPC 464;
+  `BBC Computer 32K / Acorn DFS / BASIC`; the Kickstart 3.1 ROM banner rather
+  than Workbench 1.3; one Sinclair line at the **foot** of the screen, where the
+  real one sat (`order: 3` plus `margin-top: auto` — `order` alone only reorders,
+  it does not drop to the bottom).
+- **The WEATHER-for-BASIC homage is gone.** Beside the real screens it read as a
+  mistake rather than a joke. The widget's own line is `load`, which on all six
+  machines was something the user *typed* — and it carries the version, so the
+  device still states which build it is running.
+- **The font gained 26 lowercase letters and `©`.** Four of the six machines boot
+  in mixed case, so capitals were an inaccuracy, not a style. Case is a property
+  of the machine: C64 and PET fold to their uppercase/graphics set, the rest do
+  not. Descenders reach row 7, which is why `.boot` needed a row gap — "plc" ran
+  into the line below it.
+- **Three palettes were wrong** and are now *sampled* from the reference images
+  rather than guessed: Amiga `#411040` on `#e9a888`, CPC `#000088` (not
+  `#000080`), Spectrum paper `#d0d0d0` (not white).
 
-`~/.claude/settings.json` `statusLine.command` is now:
-`node C:/Users/mit/claude/icue/usage-server/statusline-tee.js npx -y ccstatusline@latest`
+## 3. Tests
 
-Closed a TODO for free: `seven_day.resets_at` = **Thu 21:00 local**, confirming
-the weekly anchor.
-
-## 3. Activity = what is running (two attempts)
-
-**`97942a9` was wrong**: it filtered `wf_*.json` by status, and that file is
-only written when a run **ends**. The lists stayed permanently empty; the user
-spotted it before I did.
-
-**`97a9229` is correct**: the live source is the run's transcript directory,
-which exists from launch —
-`subagents/workflows/wf_<runId>/journal.jsonl`; an agent with `started` and no
-`result` is running. Bounded by `LIVE_RUN_STALE_MS` (15 min) on directory mtime.
-
-Also: sessions appear when **opened** (`fb3b90e`) — a fresh transcript holds only
-`mode`/`permission-mode`/`attachment`/`system`/`last-prompt` and no message at
-all, so requiring a counted message hid it. Queued `whattask.json` tasks are no
-longer shown as subtasks (86 planned tasks were reading as live work).
-
-## 4. Tests
-
-| File | What | Cost |
+| File | What | Notes |
 |---|---|---|
-| `test/live-detection.test.js` | 18 checks — live/finished/stale/partial runs, sessions, nesting | ~2 s |
-| `test/statusline.test.js` | 35 checks — freshness, credentials, redaction, unhooked wrapper | ~3 s |
-| `test/activity-probe.workflow.js` + `activity-probe-check.js` | end-to-end with real agents | ~100 s, ~81k tokens |
+| `C64Weather/test/theme.test.js` | **NEW**, 39 checks | stub DOM + fake timer queue |
+| `C64Weather/test/font.test.js` | extended | now sets mixed case before probing |
 
-All **mutation-checked** — reverting the live-run lookup fails 9, reverting the
-just-opened-session rule fails 3, reverting the estimate deletion is N/A.
+`theme.test.js` runs `widget.js` against a stub DOM. It covers the cycle and its
+wrap, the drag and hold guards, persistence across a reload, the
+settings-outrank-a-tap rule, the boot on load and on change, its exact duration,
+the CPC's four lines and the Spectrum's one, Modern playing no boot at all, and a
+second tap restarting the clock rather than inheriting the old timer.
 
-## 5. The six improvements (all done)
+**Mutation-checked six ways** (fails: uncleared timer 1, redraw-reboots 2,
+boot-with-no-screen 1, case flag dropped 4, always-uppercase 6, one lowercase
+glyph deleted 7).
 
-1. **Per-meter provenance** (`7c259e5`, widget **1.8.0**). Claude Code drops a
-   window from `rate_limits` once its `resets_at` passes; the badge said `LIVE`
-   while that meter silently showed measured tokens. Now the badge reads
-   **`LIVE¹`** (amber, `.is-partial`) and the meter is marked **`· measured`**
-   (`.name.is-measured::after`).
-2. **Deleted the estimate** (`7c259e5`). It served `session.percent 34` /
-   `weekly.percent 52` against real 25/18. Removed: those fields,
-   `budgetWeighted`, `buckets`, `estimated`, `pct()`, `weeklyBudget()`, four
-   `limits.json` keys, the debug page's warnbox and budget rows, and the
-   startup-log percentages. `usedWeighted`/`peakWeighted` stay (measured).
-3. **Credential test** (`99e4489`). Was a README claim with no test.
-4. **Statusline tests** (`99e4489`).
-5. **Unhooked-wrapper detection** (`fe5e558`). Active session + non-current file
-   ⇒ `diagnostics.statusline.likelyUnhooked`, reason appended to
-   `official.error` (so the widget's existing tooltip shows it, no widget
-   change), plus a `Statusline feed` section on `/usagehtml`.
-6. **CI** (`fe5e558`). `.github/workflows/tests.yml` — both hermetic suites,
-   Ubuntu + Windows × Node 20 + 22, plus `node --check`. **Green, 35 s.**
+Two of those tests exist because the mutation check found the gap first:
+- **"a data refresh redraws WITHOUT rebooting"** — removing the `bootedTheme ===
+  name` guard initially passed every test. Without it the weather would vanish
+  behind the startup screen on every refresh cycle, all day.
+- **`font.test.js` was passing vacuously for lowercase.** Its probe ran in the
+  default uppercase mode, so every lowercase probe folded to a capital that
+  already existed. It now calls `setFont('pixel', null, true)` first and asserts
+  `letterCase() === 'mixed'`.
 
-## 6. Two isolation defects found in my own tests
+## 4. The `/runqueue` cycle (this session, after the commits)
 
-- **The fixture tests were polling Anthropic.** `refreshOfficial()` runs
-  unconditionally at startup, so every spawned test server read the real
-  credentials and hit the rate-limited endpoint — from a test described as
-  costing nothing, run ~6 times. Fixed with **`CLAUDE_USAGE_NO_REMOTE`**, placed
-  **before the first `rebuild()`** (a snapshot cached earlier still carried
-  `"not fetched yet"`). `live-detection.test.js` asserts the guard is in force.
-- That assertion immediately caught a second leak: the test was reading the
-  **real** `statusline-usage.json`, so its `official` block was the developer's
-  own usage. Now pointed at a fixture path.
+Two delegated agents ran concurrently; both recorded `done` in `runs.jsonl`.
 
-## 7. Label redaction (a real leak, not a tautology)
-
-Labels are built from prompt text, so a pasted key would render on the display
-and be served over HTTP. `redactSecrets()` in `server.js` replaces `sk-ant-…`,
-long `sk-…`, `Bearer …`, `ghp_…` with `[redacted]`. Narrow on purpose —
-`"fix the sk-ate parser"` survives untouched.
+- **`verify-modern-condition-art`** closed the gap `3214d2b` left: all nine Modern
+  conditions rendered and looked at as images, not counted as paths. **Eight of
+  nine read correctly. `snow` does not** — cloud plus three plain dots, which
+  reads as light rain or hail. Confirmed independently by the orchestrator.
+  Opened `fix-modern-snow-glyph-legibility`.
+- **`sync-docs-after-1-4-0`** rewrote README's banner example, its seven-row theme
+  table and its authenticity paragraph against `widget.js`, and bumped TODO's
+  usage header to 1.9.1. Four of the six theme rows were wrong in substance, not
+  just in version. **These edits are uncommitted.**
 </work_completed>
 
 <work_remaining>
 
-## Immediate
+## Immediate, and in this order
 
-1. **The Edge is still running widget 1.7.0.** Confirmed by screen capture — the
-   header reads `v1.7.0` while the installed folder holds **1.8.0**. iCUE caches
-   the page, so `LIVE¹` and `· measured` are **not yet visible on the device**.
-   Needs a remove-and-re-add in iCUE (which also resets widget properties and
-   mints a new GUID — the folder is currently
-   `%APPDATA%\Corsair\CUE5\html_widgets\1dbc0a02-b2ef-4d46-9e9f-9f74348b3e4e`).
+1. **Push.** `origin/main` is at `3214d2b`; `1710ee2` and `acfeee4` are local
+   only. **CI has therefore never run `theme.test.js`** — the last green run is
+   for `3214d2b`. Both suites pass locally on Windows/Node 22; the matrix
+   (Ubuntu × Node 20/22) is unproven for the new test, and it uses `Proxy`,
+   `Object.defineProperty` and a fake timer queue, so a platform difference is
+   not impossible.
+2. **Review and commit `README.md` and `TODO.md`.** Written by a subagent, spot-
+   checked by the orchestrator (every theme's `boot[0]` verified verbatim against
+   `widget.js`), but not read line by line by a human.
+3. **The device is two versions behind, on both widgets.** Installed folders hold
+   C64 Weather **1.3.0** and Claude Code Usage **1.9.0**; the repo is **1.4.0**
+   and **1.9.1**. Nothing from the last four commits is visible on the Edge.
+   Needs a remove-and-re-add in iCUE, which mints a new GUID and resets widget
+   properties.
 
-## Open TODO items (in `TODO.md`)
+## Open tasks (see `.claude/tasks/whattask.json`, generated at `acfeee4`)
 
-- **Show sessions from `tdzlaptop`.** Structural — the server walks
-  `~/.claude/projects/**` on its own host. The usage bars already cover the
-  laptop (server-side account figures); only the lists are machine-bound. Any
-  design must decide what to show when the peer is unreachable: silence is
-  indistinguishable from idle, the trap the active-only filter avoids.
-- **Confirm touch drag on the device.** `interactive` is documented only for
-  *click*. Fallback: page the lists on a timer.
-- **`tab-buttons` throws in iCUE's settings panel** —
-  `TabButtonsEditorSetting.qml:33: TypeError: Property 'rowCount' … is not a
-  function`, for `tempUnit` and `colorTheme`. iCUE's own QML. Not investigated.
+Five of the eight are `requires-user` — they are waiting on a decision, not on
+work:
+
+- **`boot-screen-machine-art`** — the piece the reference photos were for. Blocked
+  on two answers: does the art sit BESIDE the startup text for the two booting
+  seconds or REPLACE it, and there are no reference photos yet for the BBC Micro
+  or the C64. Drawing those two from memory is the same fiction the ROM task
+  refuses.
+- **`c64-rom-letterforms`** — blocked on a licensing decision (Cloanto, Amstrad,
+  Acorn/RISC OS Open), not a technical one. Two of the six offsets are also
+  unverified: the BBC's font in the MOS ROM and the CPC's character matrix table.
+- **`reload-widgets-in-icue`** and **`verify-touch-drag`** — both need a human at
+  the device. Touch drag matters more than it did: tap-to-change-theme uses the
+  same 12px slop rule as the usage widget's scrolling lists, so if the webview
+  forwards drags as taps, the theme could change during a scroll.
+- **`tdzlaptop-remote-sessions`** — blocked on whether the widget's claim changes
+  from "what this box is doing" to "what my account is doing".
+
+Not yet in the plan, opened by this session's run log:
+
+- **`fix-modern-snow-glyph-legibility`** — the snow glyph needs a snowflake or
+  asterisk mark instead of three dots. A `petscii.js` change; small, and now
+  evidenced by a rendered image rather than a suspicion.
 
 ## Known limitations, documented not fixed
 
+- **The `©` glyph is muddy at boot-line size.** At `--font-boot` each of the 8
+  rows is ~1.8px, so a 1px feature blurs; the ring reads as a blob. Inherent to
+  5×7, not a bug — the letters survive because they are simpler.
 - **Subtask labels are the first line of the agent's prompt.** `opts.label` is
   never written to disk.
-- **A workflow launched from a script outside the session's
-  `workflows/scripts/`** falls back to its short run id (`wf f354826c-6c2`).
-- **~20 s lag each way** — `REFRESH_MS` 10 s + widget poll 10 s (default). A run
-  shorter than that can begin and end unseen. Tightening is cheap (~0.2% of a
-  core at 10 s) but **both** numbers must drop together.
-- The credential test proves the payload does not echo the credentials file with
-  remote polling **disabled**. It does not prove behaviour mid-request.
+- **A workflow launched from a script outside the session's `workflows/scripts/`**
+  falls back to its short run id.
+- **~20 s lag each way** — `REFRESH_MS` 10 s + widget poll 10 s. Tightening is
+  cheap but **both** numbers must drop together.
 
 ## Deliberately not done
 
-- **Changing the User-Agent.** #30930 claims the API buckets by User-Agent; we
-  send `xeneon-edge-widgets/usage-server`. Ruled out as working around a rate
-  limit; flagged to the user, not acted on.
-- **Refreshing the token to reset the rate-limit window** — deliberate evasion,
-  and reported to break Claude Code's own auth.
+- **Changing the User-Agent**, or refreshing the token to reset the rate-limit
+  window. Both are working around a rate limit; the second reportedly breaks
+  Claude Code's own auth. It matters less than it did — the widget's figures come
+  from the statusline path, which uses no token at all.
 </work_remaining>
 
 <attempted_approaches>
@@ -206,42 +186,61 @@ long `sk-…`, `Bearer …`, `ghp_…` with `[redacted]`. Narrow on purpose —
 ## Dead ends — do not repeat
 
 - **Local percentage estimation.** Disproved arithmetically (growth floor 4.28×
-  vs a 4.00× ceiling). Now deleted from the code entirely; the disproof stays in
+  vs a 4.00× ceiling). Deleted from the code; the disproof stays in
   `usage-server/README.md`.
 - **Filtering `wf_*.json` by status to find running work.** The file does not
   exist until the run ends. Shipped in `97942a9`; the lists were empty.
-- **`Start-Sleep -Seconds 60` in a probe agent.** The harness blocks a
-  standalone sleep; the agent backgrounded it and returned "done" in **13.8 s**,
-  reporting success without waiting. Use
+- **`Start-Sleep -Seconds 60` in a probe agent.** The harness blocks a standalone
+  sleep; the agent backgrounded it and returned "done" in 13.8 s. Use
   `node -e "…setTimeout(…,60000)"` and have it print its own elapsed time.
 - **`spawn(cmd, args, {shell:true})`** — concatenates without escaping (Node
   DEP0190); a spaced path is re-split. Build one quoted command string.
 - **Backgrounding the probe checker inside a `run_in_background` Bash call** —
   the wrapper exits and kills the child.
 - **Assuming a guard takes effect where you place it.** `CLAUDE_USAGE_NO_REMOTE`
-  was initially set *after* `rebuild()`, so the cached snapshot still said
-  "not fetched yet" and the assertion failed.
+  was set *after* `rebuild()`, so the cached snapshot still said "not fetched
+  yet".
+- **`order` alone to move a flex child to the bottom.** It reorders within the
+  stack; items still pack from the top. The Spectrum's copyright needed
+  `margin-top: auto` as well.
+- **Trusting a mutation check that passes.** Two mutations passed the suite
+  unchanged and both were real gaps in the tests, not proof the code was safe.
+  A mutation that does not fail anything is a missing test, every time.
 
-## The recurring environment trap (hit four times)
+## The recurring environment trap — SIX sightings, twice this session
 
-**`\n`, `\\E`, `\U` inside a heredoc'd Python string that writes JS or Markdown.**
-The heredoc mangles the escape, producing a literal newline or a Python
-`SyntaxError`. It broke `live-detection.test.js`, `statusline.test.js`,
-`usagehtml.js` and — worst — killed the `usage-server/README.md` edit *after*
-`git add`, so `fe5e558` was committed and pushed **without its documentation**
-(repaired in `bb2ea7d`).
-**Use the Edit tool for any line containing a backslash escape or a Windows
-path, and check `git status` before committing a scripted edit.**
+**A backslash escape (`\n`, `\\E`, `\U`) or a Windows path inside a heredoc'd
+Python or shell string gets mangled.** It has broken `live-detection.test.js`,
+`statusline.test.js`, `usagehtml.js`, the `usage-server/README.md` edit (which
+was committed *without* its documentation as a result), and this session it ate
+both a `theme.test.js` heredoc and a verification regex — the second producing a
+bare `re.PatternError` with no hint of the cause.
+
+**Use the Write/Edit tools for any line containing a backslash escape or a
+Windows path, and check `git status` before committing a scripted edit.**
+
+## Headless-render gotchas, found this session
+
+- **`file:///$PWD/...` fails with `ERR_FILE_NOT_FOUND`.** Git Bash's `pwd`
+  returns a POSIX mount path (`/tmp/claude/...`), not the Windows path, even
+  though the cwd is a real Windows directory. Hardcode the Windows absolute path.
+- **A running Chrome on the default profile makes bare `--headless` misbehave.**
+  Add `--user-data-dir=<scratch>/chromeprofile --no-sandbox` for an isolated
+  instance.
+- Nine renders that all came back **identical in size** were nine copies of one
+  failed page. Compare file sizes before trusting a batch.
 
 ## Corrections made mid-session
 
-- Blamed the 429 on the wrong plugin, then on plugins generally; both wrong.
-- Read a plugin log at 21:11 without noticing the machine had rebooted at
-  21:07:16.
-- A watcher printed "RECOVERED" — a false positive from my own fake test file,
-  and it was reading snake_case fields (`five_hour.utilization`) that do not
-  exist in the payload (`fiveHour.percent`).
-- Described the fixture tests as costing nothing while they polled Anthropic.
+- The user's own references **contradict each other**, twice: the PET startup
+  shot is an 8K BASIC 2.0 machine while the photographed machine is a CBM 8032
+  (BASIC 4.0, 31743 bytes); the CPC startup shot is a 6128 while the photographed
+  machine is a 464. Resolved toward the machines photographed, and recorded in
+  the theme table so the next person does not "fix" it back.
+- The plan marked both delegated tasks `lane: serial`, but their only shared
+  paths were `r:` on both sides. The lanes had been computed against
+  `requires-user` tasks that can never be scheduled. The arithmetic was followed
+  and they ran concurrently.
 </attempted_approaches>
 
 <critical_context>
@@ -254,8 +253,10 @@ path, and check `git status` before committing a scripted edit.**
   **840×344** slots. Capture with `System.Drawing` `CopyFromScreen`.
 - Node `C:\Program Files\nodejs\node.exe`; Chrome at
   `C:\Program Files\Google\Chrome\Application\chrome.exe`.
-- Claude Code **2.1.251**; `gh` authenticated as `MichaelTroelsen`.
+- `gh` authenticated as `MichaelTroelsen`.
 - Server runs under scheduled task **`ClaudeUsageFeed`** via `start-hidden.vbs`.
+- The **tokensave MCP server failed to connect** this session; all exploration
+  was plain `grep`/`Read`.
 
 ## Environment overrides (all unset in normal use)
 
@@ -270,89 +271,93 @@ path, and check `git status` before committing a scripted edit.**
 
 | Constant | Value | File |
 |---|---|---|
-| `REFRESH_MS` | 10 s | server.js |
+| `BOOT_MS` | 2000 | C64Weather/scripts/widget.js |
+| `TAP_SLOP_PX` / `TAP_MAX_MS` | 12 px / 700 ms | both widgets |
+| `REFRESH_MS` | 10 s | usage-server/server.js |
 | `SESSION_ACTIVE_MS` | 15 min | server.js |
 | `LIVE_RUN_STALE_MS` | 15 min | server.js |
 | `OFFICIAL_INTERVAL_MS` | 12 min | server.js |
 | `OFFICIAL_STALE_MS` | 45 min | server.js |
 | `FRESH_MS` / `MAX_AGE_MS` | 10 min / 45 min | statusline.js |
-| `EXPIRY_MARGIN_MS` | 30 min | official.js |
-| `HIGH_WATER` / `CRITICAL_WATER` | 80 / 95 | widget.js |
+| `HIGH_WATER` / `CRITICAL_WATER` | 80 / 95 | ClaudeUsage/scripts/widget.js |
 
 ## Non-obvious behaviours
 
+- **`"interactive": true` in `manifest.json` is required** or iCUE forwards no
+  touches at all. It is not implied by having a click handler.
+- A theme is live when its `theme-<name>` class is on `.widget-root`; that class
+  is the only thing the stylesheet reads, which is what makes it the right thing
+  to assert on.
 - `wf_*.json` is written **only at completion**; the transcript directory exists
   from launch.
 - A just-opened session's transcript contains **no message**.
 - Claude Code **drops a window** from `rate_limits` once its `resets_at` passes,
-  restoring it on the session's next API response — this is what makes the
-  `LIVE¹` case real rather than theoretical.
+  which is what makes the `LIVE¹` partial-provenance case real.
 - `resets_at` is epoch **seconds** in the statusline payload, an **ISO string**
   from `/api/oauth/usage`.
+- **The 429 on `/api/oauth/usage` is not our fault** — verified against
+  anthropics/claude-code#30930, #31637, #31055. Do not re-derive it as "we polled
+  too much". It is cosmetic now: the figures come from the statusline path.
 - `.icuewidget` packages are **gitignored** — do not try to commit them.
-- Serving `/usage` never triggers an upstream fetch; polling the local feed is
-  free. `?at=` rebuilds on demand, which is how the tests avoid waiting 10 s.
-- **iCUE caches the page**; the header version is the only reliable indicator of
-  what is running. Re-adding mints a new GUID and resets properties. **Do not
+- **iCUE caches the page**; the version on screen is the only reliable indicator
+  of what is running. Re-adding mints a new GUID and resets properties. **Do not
   restart iCUE** — it orphaned the dashboard layout once.
+- **`tab-buttons` is unusable and it is iCUE's bug**, not ours:
+  `TabButtonsEditorSetting.qml:33` calls `rowCount()` on a QVariantList, which
+  crosses into QML as a plain array. It throws for every possible `data-values`
+  payload, Corsair's own bundled widgets included. Both settings are `combobox`
+  now (`c1f7644`); do not switch back.
 
 ## Verification conventions
 
 - Layout: exactly-sized `<iframe>` in a larger window (bare `--window-size`
-  includes window chrome: `840,344` lays out at 824×249).
-- To reach the Activity view headlessly, copy the widget to scratch and append a
-  script dispatching `pointerdown`+`pointerup`; a `file://` iframe is
-  cross-origin so the parent cannot drive it.
-- To test a payload variant, append a script overriding `window.fetch` with a
-  stub — this is how `LIVE¹` was verified.
-- **Mutation-check every new test** by reverting the fix.
+  includes window chrome).
+- To force a theme headlessly, inject `<script>window.theme='cpc';</script>`
+  **before** the `petscii.js` tag — `getIcueProperty` reads `window[name]`.
+- To reach a specific view or state, append a script that dispatches real
+  `PointerEvent`s, or overrides `window.fetch` with a stub.
+- Budget past the 2-second boot: `--virtual-time-budget=6000`.
+- **Mutation-check every new test** by reverting the fix — and treat a mutation
+  that passes as a missing test, not as reassurance.
 </critical_context>
 
 <current_state>
 
-## Complete and pushed
+## Not clean, not pushed
 
-- `main` == `origin/main` at **`bb2ea7d`**; working tree clean.
-- **CI green** across all four matrix jobs (Ubuntu/Windows × Node 20/22), 35 s.
-- **C64 Weather 1.2.0** — unchanged all session, live on the Edge.
-- **Claude Code Usage 1.9.0** — in the repo (three views now: usage, activity,
-  and a token breakdown behind the two bars, cycling on a three-dot
-  indicator). The installed folder and device version were last checked at
-  1.8.0 vs the device's 1.7.0 (see Work Remaining) — not re-verified since.
-- `usage-server` — running under `ClaudeUsageFeed`.
+- `HEAD` **`acfeee4`**, `origin/main` **`3214d2b`** — two commits ahead, unpushed.
+- Working tree: **`README.md` and `TODO.md` modified**, uncommitted, written by
+  the `/runqueue` doc agent.
+- **CI's last green run is `3214d2b`.** It has never seen `theme.test.js`.
 
-## Live state, just measured
+## Versions
 
-- `official.ok true`, `source: Claude Code statusline`, **29% / 19%**.
-- `diagnostics.statusline`: `current true`, `likelyUnhooked false`, age 0.3 min.
-- `counts`: `sessions 1, workflows 0, subtasks 0`, `sessionsSeen 20`,
-  `workflowsSeen 18`, `subtasksSeen 30`, `queued 86`, `messages 11127`.
-- `session.percent` is **absent** — the estimate is gone.
+| | Repo | Installed | Device |
+|---|---|---|---|
+| C64 Weather | **1.4.0** | 1.3.0 | not re-checked; was 1.2.0-era |
+| Claude Code Usage | **1.9.1** | 1.9.0 | last seen 1.7.0 |
 
-## Tests
+## Tests — all passing locally
 
 ```bash
+node C64Weather/test/font.test.js        # extended, mixed-case probe
+node C64Weather/test/theme.test.js       # 39 checks, NEW
 node usage-server/test/live-detection.test.js   # 18 checks
 node usage-server/test/statusline.test.js       # 35 checks
 ```
-Both **all passed** at the time of writing, and in CI.
 
-## The token refresh question — resolved, with a caveat
+`icuewidget validate C64Weather` → valid, 1.4.0.
 
-The old handoff asked whether the ~03:24 refresh would win the rotation race.
-`.credentials.json` was **rewritten 03:29:27** with a new expiry of
-**11:29:27**, and `.credentials.json.before-usage-server` (this server's
-one-time backup, written 28 Aug 19:54) exists — so this server has written the
-file back at least once, and the 03:29 write falls where its 30-minutes-ahead
-refresh plus a 12-minute poll cadence would land. **Strong but not conclusive**:
-`official` now comes from the statusline path, so `lastRefresh` is not visible
-in `/usage` to confirm it directly.
+## Task queue
 
-It matters much less either way: the widget's figures need no token.
+`.claude/tasks/whattask.json` was generated at `acfeee4`: **8 tasks, 9 closed**.
+`/runqueue --until-blocked` drained both runnable delegated tasks and this
+handoff; **the remaining five are all `requires-user`**, so the queue is blocked
+on decisions rather than on work. `runs.jsonl` has 11 lines.
 
 ## Open questions
 
-- Does `/api/oauth/usage` ever stop 429ing for this account? (Cosmetic now.)
-- Does the iCUE webview forward touch **drags**?
-- Should the 10 s/10 s intervals be tightened? Cheap, but not requested.
+- Does the iCUE webview forward touch **drags**? Now load-bearing for two widgets.
+- Should the 10 s / 10 s intervals be tightened? Cheap, still not requested.
+- Does `/api/oauth/usage` ever stop 429ing for this account? Cosmetic.
 </current_state>

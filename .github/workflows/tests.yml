@@ -41,3 +41,5 @@ jobs:
         run: node usage-server/test/live-detection.test.js
       - name: statusline and credentials
         run: node usage-server/test/statusline.test.js
+      - name: c64 font and art
+        run: node C64Weather/test/font.test.js

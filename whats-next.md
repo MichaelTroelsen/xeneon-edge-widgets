@@ -1,315 +1,247 @@
 # Handoff — Xeneon Edge widgets
 
-Written 2026-08-28 ~22:40 local (20:40 UTC). **Supersedes the previous
-`whats-next.md`**, whose two headline claims are now both wrong: the 429 was not
-caused by a neighbouring plugin alone, and the activity lists are no longer a
-seven-day view.
+Written 2026-08-29 ~09:35 local. Replaces the version committed in `0c0b365`,
+which stopped at `b69b22c`.
 
 Repo: `C:\Users\mit\claude\icue` → https://github.com/MichaelTroelsen/xeneon-edge-widgets
-(public, `main`, clean apart from this file, pushed through `b69b22c`).
+(public, `main`, clean, pushed through `bb2ea7d`, CI green).
 
 <original_task>
-This session opened with **"read what next"** — i.e. read the previous handoff
-and report. Everything after that came from the user's follow-ups, in order:
+The session opened with **"read what next"** — read the previous handoff and
+report. Everything else came from the user's follow-ups, in order:
 
-1. Investigate the three items the old handoff left pending (429, Stream Deck
-   plugin, token refresh).
+1. Chase the three items the old handoff left pending (429, Stream Deck plugin,
+   token refresh).
 2. **"please check the interwebs for your assumption. please look in github
-   answers"** — verify the 429 diagnosis against external sources.
-3. **"yes, build the statusline route"** — implement the no-API-request path to
-   the usage percentages.
+   answers"** — verify the 429 diagnosis externally.
+3. **"yes, build the statusline route"**.
 4. **"can we make the activity live? it is currently showing too many sessions,
    workflows and subtasks that are active."**
 5. **"can you build a small test that add to subtask that do nothing for 60
-   seconds and then return. then create a test the create a workflow of 3 test
-   that wait 60 seconds and then return?"** — later extended with *"the widget
-   does not update. i expected to be updated. please add this to the test."*
-6. **"please make sure you can test the workflow also"** — make the detection
-   testable without an agent runner.
+   seconds..."**, later **"the widget does not update. i expected to be updated.
+   please add this to the test."**
+6. **"please make sure you can test the workflow also"**.
 7. **"i have added a new session. why is it not showing?"**
 8. **"update docs. commit and push."**
+9. **"what suggested improvements do you have"** → then **"yes, do 1 and 2"**,
+   **"do 3 and 4"**, **"do 5 and 6"** — the six-item list below.
 
-Also, as one-off requests along the way: put the tdzlaptop question on the TODO
-list; fix and force-push the commit message on `644b42d`.
+One-offs: add the tdzlaptop question to TODO; reword and force-push `644b42d`.
 </original_task>
 
 <work_completed>
 
-## Commits (all pushed; `main` == `origin/main` at `b69b22c`)
+## Commits (all pushed, `main` == `origin/main` at `bb2ea7d`)
 
 | SHA | What |
 |---|---|
-| `fae6cd5` | Reworded `644b42d` — the 429 diagnosis (history rewrite, force-pushed) |
-| `3022937` | Reworded `04db35a` — the statusline route |
-| `28bd772` | TODO: tdzlaptop item + two stale entries corrected |
-| `97942a9` | Activity shows what is running, not what has run |
+| `fae6cd5` | Reworded `644b42d` — 429 diagnosis (history rewrite, force-pushed) |
+| `3022937` | Reworded `04db35a` — statusline route |
+| `28bd772` | TODO: tdzlaptop + two stale entries |
+| `97942a9` | Activity shows what is running (**shipped broken** — see `97a9229`) |
 | `97a9229` | Read running work from the journal, not the end-of-run file |
 | `63f1e45` | `live-detection.test.js` — fixture-based, no agent runner |
 | `fb3b90e` | A session appears when opened, not when it first replies |
 | `b69b22c` | Docs audit and fixes |
+| `0c0b365` | Previous handoff (superseded by this file) |
+| `7c259e5` | Per-meter provenance + **deleted the local estimate** |
+| `99e4489` | Statusline/credential tests; stopped the tests phoning home |
+| `fe5e558` | Unhooked-wrapper detection + CI |
+| `bb2ea7d` | Docs for the above (dropped from `fe5e558` by an escaping bug) |
 
-## 1. The 429 diagnosis was wrong twice, and the second correction is the durable one
+## 1. The 429 diagnosis (twice wrong, now verified)
 
-**First (wrong) story**, written into `644b42d`: a runaway Stream Deck plugin
-caused the throttling, and stopping it would clear the window.
+Measured on this machine: **four** Stream Deck plugins called
+`/api/oauth/usage`. `kr.co.postgresql.ai-limits` retried with **no backoff** —
+~45 req/s, ~11,700 in six minutes, later ~140/s. Removing its *buttons* did not
+stop it; killing its process made Stream Deck respawn it; only **uninstalling**
+did. All four are now uninstalled.
 
-What was actually measured on this machine, and is still true:
-- **Four** Stream Deck plugins called `https://api.anthropic.com/api/oauth/usage`
-  — `com.singerous.ai-limits`, `kr.co.postgresql.ai-limits`, `com.len.limits`,
-  `com.lloyds.headroom`.
-- `kr.co.postgresql.ai-limits` retried with **no backoff** after each failure:
-  ~45 req/s, ~11,700 in six minutes after a reboot, later ~140/s (counted from
-  its own log by sampling line counts over fixed intervals).
-- Removing its **buttons** did not stop it. Killing its node process made Stream
-  Deck **respawn** it and restart the loop from zero. Only **uninstalling** did —
-  the folder leaving `%APPDATA%\Elgato\StreamDeck\Plugins\`.
-- A resident plugin process proves nothing either way; its log does. For a
-  plugin with no log (`com.lloyds.headroom`), sample outbound connections by PID
-  (`Get-NetTCPConnection -OwningProcess <pid>`).
-
-**Second (verified) story**, now in `fae6cd5` and the README: the endpoint
-throttles clients far politer than ours regardless. Sources, found via
-`gh search issues`:
-- **anthropics/claude-code#30930** — *open*, labelled `bug`/`area:api`/
-  `area:statusline`. Exactly our symptom: persistent 429 with `retry-after: 0`
-  for Max users on a valid token, at 30s/60s/120s.
-- **#31637** (closed as stale, not fixed) — backoff ladder 30→60→120→240→300s
-  "stuck at 300 forever"; another reporter at **10-minute** polling throttled
-  within the hour, 30-minute backoff still failing for hours.
+But that is not why the endpoint 429s. Verified via `gh search issues`:
+- **anthropics/claude-code#30930** — *open*, `bug`/`area:api`/`area:statusline`.
+  Persistent 429 with `retry-after: 0` for Max users at 30s/60s/120s.
+- **#31637** — 10-minute polling throttled within the hour; 30-minute backoff
+  still failing for hours.
 - **#31055** — 429 after a *single* request, including Claude Code's own
   `/usage` command.
 
-**Do not** re-derive this as "we polled too much". Our cadence was never the
-main variable.
+**Do not re-derive this as "we polled too much".**
 
-## 2. The statusline route — the actual fix (widget 1.7.0)
+## 2. The statusline route (the actual fix)
 
-Claude Code hands its statusline script a `rate_limits` object on stdin since
-**v2.1.80**. Verified against the official docs
-(<https://code.claude.com/docs/en/statusline>), not just a GitHub comment:
+Claude Code passes `rate_limits` to statusline scripts since **v2.1.80**;
+verified against <https://code.claude.com/docs/en/statusline>, not just a
+comment. `resets_at` is **epoch seconds** here (ISO string from the OAuth API).
 
-```
-rate_limits.five_hour.used_percentage   0–100
-rate_limits.five_hour.resets_at         Unix epoch SECONDS
-rate_limits.seven_day.{used_percentage,resets_at}
-```
+- **`statusline-tee.js`** — wraps the configured statusline, saves `rate_limits`
+  to `~/.claude/statusline-usage.json` (atomic temp+rename), passes stdin and
+  stdout through. Every failure path still runs the wrapped command.
+- **`statusline.js`** — reads it back in the same shape `official.js` returns,
+  so the widget needed no change. Current ≤10 min, `stale` to 45 min, withheld
+  past 45.
+- **`server.js`** — `officialForSnapshot()` takes whichever path answered most
+  recently.
 
-Docs caveat, verbatim: *"appears only for Claude.ai subscribers (Pro/Max) after
-the first API response in the session. Each window may be independently absent,
-and Claude Code drops a window once its `resets_at` time passes."*
+`~/.claude/settings.json` `statusLine.command` is now:
+`node C:/Users/mit/claude/icue/usage-server/statusline-tee.js npx -y ccstatusline@latest`
 
-Built:
-- **`usage-server/statusline-tee.js`** — wraps the configured statusline. Saves
-  `rate_limits` to `~/.claude/statusline-usage.json` (atomic: temp + rename,
-  pid in the temp name), then runs the wrapped command with the same stdin and
-  passes stdout/exit code through. Every failure path still runs the wrapped
-  command — a missing usage figure is a small problem, a broken status bar in
-  every session is not.
-- **`usage-server/statusline.js`** — reads it back in the **same shape
-  `official.js` returns on success**, so the widget needed no change at all
-  (its badge/tooltip already key off `official.source`). Current for 10 min,
-  `stale` to 45 min, dropped entirely past 45.
-- **`server.js`** — `officialForSnapshot()` now takes whichever of the two paths
-  answered **most recently**. They fail in opposite conditions: the endpoint
-  answers with no session running but gets throttled; the statusline can't be
-  throttled but only updates while a session renders one.
+Closed a TODO for free: `seven_day.resets_at` = **Thu 21:00 local**, confirming
+the weekly anchor.
 
-`~/.claude/settings.json` `statusLine.command` changed (nothing else in that
-file touched; it parses; hooks and plugins intact):
+## 3. Activity = what is running (two attempts)
 
-```
-node C:/Users/mit/claude/icue/usage-server/statusline-tee.js npx -y ccstatusline@latest
-```
+**`97942a9` was wrong**: it filtered `wf_*.json` by status, and that file is
+only written when a run **ends**. The lists stayed permanently empty; the user
+spotted it before I did.
 
-**Closed a TODO for free:** the statusline's `seven_day.resets_at` came back as
-**Thu 21:00 local**, confirming the weekly anchor `limits.json` had guessed.
+**`97a9229` is correct**: the live source is the run's transcript directory,
+which exists from launch —
+`subagents/workflows/wf_<runId>/journal.jsonl`; an agent with `started` and no
+`result` is running. Bounded by `LIVE_RUN_STALE_MS` (15 min) on directory mtime.
 
-## 3. Activity = what is running (the part that took two attempts)
-
-**Attempt 1 (`97942a9`) was wrong.** It filtered `wf_*.json` by non-terminal
-status. That file is written when a run **ends**, so it can never describe a run
-in flight — the lists stayed permanently empty. The user spotted it before I did
-("the widget does not update").
-
-**Attempt 2 (`97a9229`) is correct.** The live source is the run's transcript
-directory, which exists from launch:
-
-```
-~/.claude/projects/<project>/<session>/subagents/workflows/wf_<runId>/
-  journal.jsonl          {"type":"started",…} per agent; {"type":"result",…} when it ends
-  agent-<id>.jsonl       the agent's messages; the first is its prompt
-  agent-<id>.meta.json   {"agentType","spawnDepth","model"}
-```
-
-An agent with `started` and no `result` is running; a run with any such agent is
-running. Bounded by `LIVE_RUN_STALE_MS = 15 min` on the directory mtime so a
-killed run stops advertising itself. `wf_*.json` remains the record of finished
-runs, for `counts.*Seen` and `/usagehtml`.
-
-Also in `97942a9`/`fb3b90e`:
-- Sessions: active on the existing 15-min rule, **or** a transcript written that
-  recently even with no message in it (`fb3b90e` — see §5).
-- Queued `whattask.json` tasks are no longer substituted into the subtask list;
-  86 planned tasks were reading as live work. Count still reported, so the empty
-  list says `Nothing running · 86 queued`.
-- Widget: headings `N active` / `none active`; empty row `Nothing running`.
-  `/usagehtml` says `N active of M seen`.
+Also: sessions appear when **opened** (`fb3b90e`) — a fresh transcript holds only
+`mode`/`permission-mode`/`attachment`/`system`/`last-prompt` and no message at
+all, so requiring a counted message hid it. Queued `whattask.json` tasks are no
+longer shown as subtasks (86 planned tasks were reading as live work).
 
 ## 4. Tests
 
-- **`usage-server/test/live-detection.test.js`** — spawns the real server against
-  a fixture tree via the new **`CLAUDE_USAGE_PROJECTS_DIR`** env override (unset
-  in normal use), on `PORT=41799`. **17 checks, ~2s, no tokens.** Fixtures: a run
-  in flight, a finished run *with* its `wf_*.json`, a killed run aged past the
-  bound, a partly finished run, an errored agent, a just-opened session, an old
-  idle session, a nested subagent transcript.
-- **`usage-server/test/activity-probe.workflow.js`** — Workflow script,
-  `args: {agents, seconds}`. N agents that genuinely block for S seconds.
-- **`usage-server/test/activity-probe-check.js`** — polls the feed and exits
-  non-zero if the lists never reported the run.
+| File | What | Cost |
+|---|---|---|
+| `test/live-detection.test.js` | 18 checks — live/finished/stale/partial runs, sessions, nesting | ~2 s |
+| `test/statusline.test.js` | 35 checks — freshness, credentials, redaction, unhooked wrapper | ~3 s |
+| `test/activity-probe.workflow.js` + `activity-probe-check.js` | end-to-end with real agents | ~100 s, ~81k tokens |
 
-**Both mutation-checked** (this matters — a test that only passes on correct
-code proves nothing): reverting the live-run lookup fails 9 checks; reverting
-the just-opened-session rule fails 3; restored code passes both times.
+All **mutation-checked** — reverting the live-run lookup fails 9, reverting the
+just-opened-session rule fails 3, reverting the estimate deletion is N/A.
 
-## 5. The just-opened session (`fb3b90e`)
+## 5. The six improvements (all done)
 
-User asked why a new session wasn't showing. Its transcript had **6 records and
-no message at all** — `last-prompt`, `mode`, `permission-mode`, two `attachment`,
-one `system` (a Remote Control notice). The session list required ≥1 counted
-message, so a session showed only after its first exchange finished. Now a
-transcript written inside the 15-min window is enough on its own, with `lastAt`
-falling back to file mtime. Such a session shows its short id and `0` messages
-until its first exchange gives it a real label.
+1. **Per-meter provenance** (`7c259e5`, widget **1.8.0**). Claude Code drops a
+   window from `rate_limits` once its `resets_at` passes; the badge said `LIVE`
+   while that meter silently showed measured tokens. Now the badge reads
+   **`LIVE¹`** (amber, `.is-partial`) and the meter is marked **`· measured`**
+   (`.name.is-measured::after`).
+2. **Deleted the estimate** (`7c259e5`). It served `session.percent 34` /
+   `weekly.percent 52` against real 25/18. Removed: those fields,
+   `budgetWeighted`, `buckets`, `estimated`, `pct()`, `weeklyBudget()`, four
+   `limits.json` keys, the debug page's warnbox and budget rows, and the
+   startup-log percentages. `usedWeighted`/`peakWeighted` stay (measured).
+3. **Credential test** (`99e4489`). Was a README claim with no test.
+4. **Statusline tests** (`99e4489`).
+5. **Unhooked-wrapper detection** (`fe5e558`). Active session + non-current file
+   ⇒ `diagnostics.statusline.likelyUnhooked`, reason appended to
+   `official.error` (so the widget's existing tooltip shows it, no widget
+   change), plus a `Statusline feed` section on `/usagehtml`.
+6. **CI** (`fe5e558`). `.github/workflows/tests.yml` — both hermetic suites,
+   Ubuntu + Windows × Node 20 + 22, plus `node --check`. **Green, 35 s.**
 
-## 6. Docs audit (`b69b22c`)
+## 6. Two isolation defects found in my own tests
 
-Read `README.md`, `TODO.md`, `usage-server/README.md` in full; verified against
-code and fresh measurements. Corrected:
+- **The fixture tests were polling Anthropic.** `refreshOfficial()` runs
+  unconditionally at startup, so every spawned test server read the real
+  credentials and hit the rate-limited endpoint — from a test described as
+  costing nothing, run ~6 times. Fixed with **`CLAUDE_USAGE_NO_REMOTE`**, placed
+  **before the first `rebuild()`** (a snapshot cached earlier still carried
+  `"not fetched yet"`). `live-detection.test.js` asserts the guard is in force.
+- That assertion immediately caught a second leak: the test was reading the
+  **real** `statusline-usage.json`, so its `official` block was the developer's
+  own usage. Now pointed at a fixture path.
 
-| Claim | Reality |
-|---|---|
-| `LIVE·` cache "up to 30 minutes" (×2) | `OFFICIAL_STALE_MS = 45 min` |
-| "fails 9 of its 12 checks" | 17 checks; 9 from one rule, 3 from the other |
-| "cold build ~480 ms" | measured 440 ms cold / 40 ms incremental / 0.8 ms cached, over 10,685 messages |
-| percentages come from the OAuth endpoint | two paths, statusline preferred |
-| `claude auth login` shown as required | optional — only the fallback uses it |
-| lists show "recent" sessions/workflows/subtasks | only what is running |
-| heading "carries the total (`SESSIONS · 20`)" | `SESSIONS · 1 ACTIVE` / `NONE ACTIVE` |
+## 7. Label redaction (a real leak, not a tautology)
 
-**One finding was self-inflicted**: inserting the tests block into
-`usage-server/README.md` earlier the same day orphaned a paragraph about session
-labelling, leaving it after the probe description where it read as describing the
-probe. Same failure the previous audit recorded — recently edited text is not
-thereby correct.
-
-Verified clean: bar thresholds 80/95, all six widget settings defaults against
-the `x-icue-property` tags, C64 version string, manifest/TODO versions (1.7.0),
-and all 9 file paths the docs name.
-
-## 7. History rewrite
-
-`644b42d` and `04db35a` were reworded to `fae6cd5` and `3022937` (content
-byte-identical — verified with `git diff backup-before-reword HEAD`), then
-**force-pushed with `--force-with-lease`** at the user's explicit instruction.
-The `backup-before-reword` branch was created and later deleted on request.
+Labels are built from prompt text, so a pasted key would render on the display
+and be served over HTTP. `redactSecrets()` in `server.js` replaces `sk-ant-…`,
+long `sk-…`, `Bearer …`, `ghp_…` with `[redacted]`. Narrow on purpose —
+`"fix the sk-ate parser"` survives untouched.
 </work_completed>
 
 <work_remaining>
 
-## Verify on the next opportunity
+## Immediate
 
-1. **The ~03:24 token refresh.** `~/.claude/.credentials.json` expires
-   **2026-08-29 03:54:40 local**; the server refreshes 30 min ahead
-   (`EXPIRY_MARGIN_MS`). Check `official.lastRefresh.ok` and that `expiresAt`
-   moved forward. This is now a **fair** test — every other client that rotated
-   the token without persisting it has been uninstalled. It also **matters much
-   less**: the widget's figures come from the statusline path, which uses no
-   token.
-
-2. **Whether `/api/oauth/usage` ever recovers.** It has been 429 since ~18:05
-   UTC. Now cosmetic: `official.source` reads `Claude Code statusline`, and the
-   endpoint is the backstop. Do **not** poll it manually.
+1. **The Edge is still running widget 1.7.0.** Confirmed by screen capture — the
+   header reads `v1.7.0` while the installed folder holds **1.8.0**. iCUE caches
+   the page, so `LIVE¹` and `· measured` are **not yet visible on the device**.
+   Needs a remove-and-re-add in iCUE (which also resets widget properties and
+   mints a new GUID — the folder is currently
+   `%APPDATA%\Corsair\CUE5\html_widgets\1dbc0a02-b2ef-4d46-9e9f-9f74348b3e4e`).
 
 ## Open TODO items (in `TODO.md`)
 
-- **Show sessions from `tdzlaptop`.** Structural: the server walks
-  `~/.claude/projects/**` on its own host. Verified 2026-08-28 — all 13 project
-  dirs are local, `ListAgents` found no reachable remote session despite
-  `remoteControlAtStartup: true`. **The usage bars already cover the laptop**
-  (server-side account figures); only the lists are machine-bound. Any design
-  must decide what to show when the peer is unreachable — silence is
-  indistinguishable from idle, the exact trap the active-only filter avoids.
-- **Confirm touch drag on the device.** Still unverified; `interactive` is
-  documented only for *click*. Fallback: page the lists on a timer.
-- **Dead budget config in `limits.json`** — `sessionBudgetWeightedTokens`,
-  `weeklyBudgetWeightedTokens`, `weeklyBoost`, `weeklyBuckets` drive only the
-  discredited percentage. Delete or mark diagnostic-only.
+- **Show sessions from `tdzlaptop`.** Structural — the server walks
+  `~/.claude/projects/**` on its own host. The usage bars already cover the
+  laptop (server-side account figures); only the lists are machine-bound. Any
+  design must decide what to show when the peer is unreachable: silence is
+  indistinguishable from idle, the trap the active-only filter avoids.
+- **Confirm touch drag on the device.** `interactive` is documented only for
+  *click*. Fallback: page the lists on a timer.
 - **`tab-buttons` throws in iCUE's settings panel** —
   `TabButtonsEditorSetting.qml:33: TypeError: Property 'rowCount' … is not a
   function`, for `tempUnit` and `colorTheme`. iCUE's own QML. Not investigated.
 
 ## Known limitations, documented not fixed
 
-- **Subtask rows are labelled by the first line of the agent's prompt.** A
-  workflow's `opts.label` names the row in `/workflows` but is never written to
-  disk, so it cannot name anything in the widget.
+- **Subtask labels are the first line of the agent's prompt.** `opts.label` is
+  never written to disk.
 - **A workflow launched from a script outside the session's
-  `workflows/scripts/`** (e.g. this repo's `test/`) falls back to its short run
-  id — `wf f354826c-6c2`.
-- **~40s lag in each direction**: server re-indexes every 20s
-  (`REFRESH_MS`), widget polls every 20s (`refreshSeconds`, 5–120). A run
-  shorter than ~40s can begin and end unseen. Measured costs make tightening
-  cheap (~0.2% of a core at 20s); **both** numbers must drop together.
+  `workflows/scripts/`** falls back to its short run id (`wf f354826c-6c2`).
+- **~40 s lag each way** — `REFRESH_MS` 20 s + widget poll 20 s. A run shorter
+  than that can begin and end unseen. Tightening is cheap (~0.2% of a core at
+  20 s) but **both** numbers must drop together.
+- The credential test proves the payload does not echo the credentials file with
+  remote polling **disabled**. It does not prove behaviour mid-request.
 
-## Possible, deliberately not done
+## Deliberately not done
 
-- **Changing the User-Agent.** A commenter on #30930 claims the API buckets by
-  User-Agent (`claude-code/<version>` generous, `curl/x` strict); we send
-  `xeneon-edge-widgets/usage-server`. An earlier session ruled this out as
-  working around a rate limit. Flagged to the user, **not acted on** — it still
-  means presenting as a client we are not, and another commenter reports it only
-  partly helps.
-- **Refreshing the token to reset the rate-limit window** (the widely shared
-  #30930 workaround). Deliberate limit evasion, and a commenter reports it broke
-  Claude Code's own auth badly enough to force re-login every few minutes.
+- **Changing the User-Agent.** #30930 claims the API buckets by User-Agent; we
+  send `xeneon-edge-widgets/usage-server`. Ruled out as working around a rate
+  limit; flagged to the user, not acted on.
+- **Refreshing the token to reset the rate-limit window** — deliberate evasion,
+  and reported to break Claude Code's own auth.
 </work_remaining>
 
 <attempted_approaches>
 
 ## Dead ends — do not repeat
 
-- **Local percentage estimation.** Disproved arithmetically by an earlier
-  session (growth floor 4.28× vs a 4.00× ceiling). No non-negative weighting
-  exists.
+- **Local percentage estimation.** Disproved arithmetically (growth floor 4.28×
+  vs a 4.00× ceiling). Now deleted from the code entirely; the disproof stays in
+  `usage-server/README.md`.
 - **Filtering `wf_*.json` by status to find running work.** The file does not
-  exist until the run ends. This shipped in `97942a9` and made the lists
-  permanently empty.
-- **`Start-Sleep -Seconds 60` / bare `sleep` in a probe agent.** The harness
-  blocks a standalone sleep; the agent then backgrounded it and returned "done"
-  in **13.8s**, reporting success without waiting. Fixed with a node one-liner
-  (`node -e "…setTimeout(…,60000)"`) that also prints its own elapsed time, so a
-  shortcut shows up in the result instead of passing silently.
+  exist until the run ends. Shipped in `97942a9`; the lists were empty.
+- **`Start-Sleep -Seconds 60` in a probe agent.** The harness blocks a
+  standalone sleep; the agent backgrounded it and returned "done" in **13.8 s**,
+  reporting success without waiting. Use
+  `node -e "…setTimeout(…,60000)"` and have it print its own elapsed time.
 - **`spawn(cmd, args, {shell:true})`** — concatenates without escaping (Node
-  DEP0190); an inner command with a spaced path is re-split wrongly. Build one
-  properly quoted command string instead.
-- **Backgrounding the probe checker inside a `run_in_background` Bash call.**
-  The wrapper exited and killed the child. Run it in the foreground.
-- **`\n` inside a heredoc'd python string** that writes JS — came out as a real
-  newline and broke the file. Use the Edit tool for those lines.
+  DEP0190); a spaced path is re-split. Build one quoted command string.
+- **Backgrounding the probe checker inside a `run_in_background` Bash call** —
+  the wrapper exits and kills the child.
+- **Assuming a guard takes effect where you place it.** `CLAUDE_USAGE_NO_REMOTE`
+  was initially set *after* `rebuild()`, so the cached snapshot still said
+  "not fetched yet" and the assertion failed.
 
-## Corrections made mid-session (all real, all mine)
+## The recurring environment trap (hit four times)
 
-- Told the user the Stream Deck plugin's 2-minute polling was likely holding the
-  429 open. Wrong by three orders of magnitude — a different plugin at ~45–140/s.
-- Read the plugin log at 21:11 and called it "still polling", not noticing the
-  machine had rebooted at 21:07:16 — the lines were from a fresh Stream Deck.
-- Told the user the 429 would drain once the plugin stopped. Not supported;
-  #30930 is open and unfixed.
-- A watcher printed **"RECOVERED"** — a false positive from my own fake test
-  file arriving through the new statusline path, and it was reading snake_case
-  field names (`five_hour.utilization`) that do not exist in this payload
-  (`fiveHour.percent`), so it could never have printed real values.
+**`\n`, `\\E`, `\U` inside a heredoc'd Python string that writes JS or Markdown.**
+The heredoc mangles the escape, producing a literal newline or a Python
+`SyntaxError`. It broke `live-detection.test.js`, `statusline.test.js`,
+`usagehtml.js` and — worst — killed the `usage-server/README.md` edit *after*
+`git add`, so `fe5e558` was committed and pushed **without its documentation**
+(repaired in `bb2ea7d`).
+**Use the Edit tool for any line containing a backslash escape or a Windows
+path, and check `git status` before committing a scripted edit.**
+
+## Corrections made mid-session
+
+- Blamed the 429 on the wrong plugin, then on plugins generally; both wrong.
+- Read a plugin log at 21:11 without noticing the machine had rebooted at
+  21:07:16.
+- A watcher printed "RECOVERED" — a false positive from my own fake test file,
+  and it was reading snake_case fields (`five_hour.utilization`) that do not
+  exist in the payload (`fiveHour.percent`).
+- Described the fixture tests as costing nothing while they polled Anthropic.
 </attempted_approaches>
 
 <critical_context>
@@ -318,111 +250,107 @@ The `backup-before-reword` branch was created and later deleted on request.
 
 - `icuewidget` CLI at `C:\Program Files\Corsair\iCUE Widget CLI\` (v0.4.45;
   0.4.47 available). `validate` then `package`.
-- Xeneon Edge is `\\.\DISPLAY2`, **2560×720 at X=-1881, Y=1440** — capture with
-  `System.Drawing` `CopyFromScreen`. Both widgets sit in **840×344** slots.
-- Node at `C:\Program Files\nodejs\node.exe`; Chrome at
+- Xeneon Edge is `\\.\DISPLAY2`, **2560×720 at X=-1881, Y=1440**; widgets sit in
+  **840×344** slots. Capture with `System.Drawing` `CopyFromScreen`.
+- Node `C:\Program Files\nodejs\node.exe`; Chrome at
   `C:\Program Files\Google\Chrome\Application\chrome.exe`.
-- Claude Code **2.1.251**. `gh` authenticated as `MichaelTroelsen`.
-- Server runs under scheduled task **`ClaudeUsageFeed`** via
-  `usage-server/start-hidden.vbs`.
+- Claude Code **2.1.251**; `gh` authenticated as `MichaelTroelsen`.
+- Server runs under scheduled task **`ClaudeUsageFeed`** via `start-hidden.vbs`.
 
-## iCUE behaviours (unchanged, still expensive to relearn)
+## Environment overrides (all unset in normal use)
 
-- **iCUE caches the loaded page.** File edits do nothing until the widget is
-  removed and re-added. The header version tells you which build is live.
-- **Re-importing mints a new GUID folder**; removing from the dashboard deletes
-  the folder. Remove-then-re-add is the clean reload.
-- **Widget properties reset on re-add.**
-- **Do not restart iCUE** — it re-registered widgets under new GUIDs once and
-  orphaned the dashboard layout.
-- `<head>` must be XML well-formed; `icueEvents` must be a bare assignment in an
-  inline script in `index.html`.
+| Variable | Purpose |
+|---|---|
+| `CLAUDE_USAGE_PROJECTS_DIR` | fixture projects tree |
+| `CLAUDE_USAGE_STATUSLINE_FILE` | fixture statusline reading |
+| `CLAUDE_USAGE_CREDENTIALS_FILE` | fixture credentials |
+| `CLAUDE_USAGE_NO_REMOTE` | **stops the server polling Anthropic** |
+
+## Key constants
+
+| Constant | Value | File |
+|---|---|---|
+| `REFRESH_MS` | 20 s | server.js |
+| `SESSION_ACTIVE_MS` | 15 min | server.js |
+| `LIVE_RUN_STALE_MS` | 15 min | server.js |
+| `OFFICIAL_INTERVAL_MS` | 12 min | server.js |
+| `OFFICIAL_STALE_MS` | 45 min | server.js |
+| `FRESH_MS` / `MAX_AGE_MS` | 10 min / 45 min | statusline.js |
+| `EXPIRY_MARGIN_MS` | 30 min | official.js |
+| `HIGH_WATER` / `CRITICAL_WATER` | 80 / 95 | widget.js |
+
+## Non-obvious behaviours
+
+- `wf_*.json` is written **only at completion**; the transcript directory exists
+  from launch.
+- A just-opened session's transcript contains **no message**.
+- Claude Code **drops a window** from `rate_limits` once its `resets_at` passes,
+  restoring it on the session's next API response — this is what makes the
+  `LIVE¹` case real rather than theoretical.
+- `resets_at` is epoch **seconds** in the statusline payload, an **ISO string**
+  from `/api/oauth/usage`.
+- `.icuewidget` packages are **gitignored** — do not try to commit them.
+- Serving `/usage` never triggers an upstream fetch; polling the local feed is
+  free. `?at=` rebuilds on demand, which is how the tests avoid waiting 20 s.
+- **iCUE caches the page**; the header version is the only reliable indicator of
+  what is running. Re-adding mints a new GUID and resets properties. **Do not
+  restart iCUE** — it orphaned the dashboard layout once.
 
 ## Verification conventions
 
-- Layout: an exactly-sized `<iframe>` in a larger window. Bare `--window-size`
-  includes window chrome (`840,344` lays out at 824×249).
-- To reach the **Activity** view in a headless harness, copy the widget to
-  scratch and append a script that dispatches `pointerdown`+`pointerup` — a
-  `file://` iframe is cross-origin, so the parent cannot drive it.
-- On-device: screen capture of `\\.\DISPLAY2`.
-- **Mutation-check any new test** by reverting the fix and confirming it fails.
-
-## Non-obvious behaviours discovered this session
-
-- `wf_*.json` is written **only at completion**.
-- The Workflow transcript dir exists **from launch**; `journal.jsonl` gets
-  `started` immediately and `result` at the end.
-- A just-opened Claude Code session's transcript contains **no message** — only
-  `mode`, `permission-mode`, `attachment`, `system`, `last-prompt` records.
-- `resets_at` is **epoch seconds** in the statusline payload but an **ISO
-  string** from `/api/oauth/usage`; both are converted to ms internally.
-- `.icuewidget` packages are **gitignored** — do not try to commit them.
-- Serving `/usage` never triggers an upstream fetch; only the timer and the
-  credentials-file watcher do. Polling the local feed is free.
-
-## Key constants (`usage-server/server.js`)
-
-| Constant | Value |
-|---|---|
-| `REFRESH_MS` | 20 s |
-| `SESSION_ACTIVE_MS` | 15 min |
-| `LIVE_RUN_STALE_MS` | 15 min |
-| `WORKFLOW_ACTIVE_MS` | 60 min |
-| `OFFICIAL_INTERVAL_MS` | 12 min |
-| `OFFICIAL_STALE_MS` | 45 min |
-| `EXPIRY_MARGIN_MS` (`official.js`) | 30 min |
-| `CLAUDE_USAGE_PROJECTS_DIR` | env override, unset normally |
+- Layout: exactly-sized `<iframe>` in a larger window (bare `--window-size`
+  includes window chrome: `840,344` lays out at 824×249).
+- To reach the Activity view headlessly, copy the widget to scratch and append a
+  script dispatching `pointerdown`+`pointerup`; a `file://` iframe is
+  cross-origin so the parent cannot drive it.
+- To test a payload variant, append a script overriding `window.fetch` with a
+  stub — this is how `LIVE¹` was verified.
+- **Mutation-check every new test** by reverting the fix.
 </critical_context>
 
 <current_state>
 
 ## Complete and pushed
 
-- `main` == `origin/main` at **`b69b22c`**. Only `whats-next.md` is untracked.
-- **C64 Weather 1.2.0** — unchanged this session, live on the Edge, no known
-  defects.
-- **Claude Code Usage 1.7.0** — live on the Edge (the user re-added it, so the
-  device is running 1.7.0), showing the Activity view.
-- **usage-server** — running under `ClaudeUsageFeed`, serving `/usage`,
-  `/health`, `/usagehtml`, `/usage?at=`.
-- Docs current as of `b69b22c`. `DOC-AUDIT.md` is on disk and **gitignored**;
-  it was **not** regenerated this session (the audit was run inline).
+- `main` == `origin/main` at **`bb2ea7d`**; working tree clean.
+- **CI green** across all four matrix jobs (Ubuntu/Windows × Node 20/22), 35 s.
+- **C64 Weather 1.2.0** — unchanged all session, live on the Edge.
+- **Claude Code Usage 1.8.0** — in the repo and in the installed folder;
+  **the device is still showing 1.7.0** (see Work Remaining).
+- `usage-server` — running under `ClaudeUsageFeed`.
 
-## Verified working, on the device
+## Live state, just measured
 
-- `official.ok = true`, `official.source = "Claude Code statusline"` — badge
-  `LIVE`, **zero API requests**.
-- Last reading: five-hour **13%**, seven-day **16%**, plan `Max (5x)`.
-- Activity end-to-end, captured on `\\.\DISPLAY2` during a probe run:
-  `SESSIONS · 1 ACTIVE`, `WORKFLOWS · 1 ACTIVE` (`wf 3f711fbc-1da`),
-  `SUBTASKS · 3 ACTIVE` (probe-wait-1/2/3), returning to `NONE ACTIVE` after.
-- Feed right now: `sessions: 2, workflows: 0, subtasks: 0`, with
-  `sessionsSeen: 20, workflowsSeen: 23, subtasksSeen: 36, queued: 86`.
+- `official.ok true`, `source: Claude Code statusline`, **29% / 19%**.
+- `diagnostics.statusline`: `current true`, `likelyUnhooked false`, age 0.3 min.
+- `counts`: `sessions 1, workflows 0, subtasks 0`, `sessionsSeen 20`,
+  `workflowsSeen 18`, `subtasksSeen 30`, `queued 86`, `messages 11127`.
+- `session.percent` is **absent** — the estimate is gone.
 
-## Test status
+## Tests
 
 ```bash
-node usage-server/test/live-detection.test.js     # 17/17, ~2s, no tokens
+node usage-server/test/live-detection.test.js   # 18 checks
+node usage-server/test/statusline.test.js       # 35 checks
 ```
-Last run: **all passed**. The end-to-end probe last ran `PASS` (3 agents ×
-60s: 0 → 1 workflow / 3 subtasks → 0).
+Both **all passed** at the time of writing, and in CI.
 
-## Environment left in this state
+## The token refresh question — resolved, with a caveat
 
-- `~/.claude/settings.json` `statusLine.command` points at `statusline-tee.js`
-  wrapping `npx -y ccstatusline@latest`.
-- `~/.claude/statusline-usage.json` exists (256 bytes, written 22:38) and is
-  being refreshed by this session's statusline renders.
-- **All four Claude usage Stream Deck plugins are uninstalled.** Nine unrelated
-  plugins remain.
-- Credentials expire **2026-08-29 03:54:40 local**.
+The old handoff asked whether the ~03:24 refresh would win the rotation race.
+`.credentials.json` was **rewritten 03:29:27** with a new expiry of
+**11:29:27**, and `.credentials.json.before-usage-server` (this server's
+one-time backup, written 28 Aug 19:54) exists — so this server has written the
+file back at least once, and the 03:29 write falls where its 30-minutes-ahead
+refresh plus a 12-minute poll cadence would land. **Strong but not conclusive**:
+`official` now comes from the statusline path, so `lastRefresh` is not visible
+in `/usage` to confirm it directly.
+
+It matters much less either way: the widget's figures need no token.
 
 ## Open questions
 
-- Does the ~03:24 refresh win the rotation race? (Now low-stakes.)
-- Does `/api/oauth/usage` ever stop 429ing for this account?
+- Does `/api/oauth/usage` ever stop 429ing for this account? (Cosmetic now.)
 - Does the iCUE webview forward touch **drags**?
-- Should the 20s/20s intervals be tightened? Measured cost says it is cheap;
-  the user has not asked for it.
+- Should the 20 s/20 s intervals be tightened? Cheap, but not requested.
 </current_state>

@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.7.0';
+  var WIDGET_VERSION = '1.8.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -193,18 +193,41 @@
        display over to a different metric for a few minutes. */
     var official = data.official || {};
     var live = (official.ok || official.stale) ? official : null;
+    /* Computed before the badge, which reports it: a live reading can cover
+       only one of the two windows. */
+    var liveWindows = live ? (live.fiveHour ? 1 : 0) + (live.sevenDay ? 1 : 0) : 0;
+    var partial = !!live && liveWindows < 2;
 
     /* Always say which mode is on screen. Falling back silently makes measured
        token counts look like they came from Anthropic. */
-    els.live.textContent = live ? (official.stale ? 'LIVE·' : 'LIVE') : 'LOCAL';
-    els.live.className = live ? (official.stale ? 'live is-stale' : 'live') : 'live is-local';
+    els.live.textContent = live ? (official.stale ? 'LIVE·' : (partial ? 'LIVE¹' : 'LIVE')) : 'LOCAL';
+    els.live.className = live
+      ? (official.stale ? 'live is-stale' : (partial ? 'live is-partial' : 'live'))
+      : 'live is-local';
     els.live.title = live
       ? (official.stale
           ? ('Anthropic figures from ' + formatStamp(official.staleSince).replace('Updated ', '') +
              ', not refreshed since: ' + (official.error || 'unknown'))
-          : ('Utilisation read from Anthropic via ' + (official.source || 'OAuth')))
+          : (partial
+              ? ('Only one of the two windows has an Anthropic figure right now (via ' +
+                 (official.source || 'OAuth') + '); the other meter shows measured tokens')
+              : ('Utilisation read from Anthropic via ' + (official.source || 'OAuth'))))
       : ('Anthropic figures unavailable: ' + (official.error || 'unknown') +
          ' — showing locally measured tokens');
+
+    /* A live reading can be missing one window: Claude Code drops a window from
+       rate_limits once its resets_at passes, and does not restore it until the
+       session's next API response. The badge then says LIVE while that meter
+       quietly shows measured tokens instead - two different metrics side by
+       side with nothing to tell them apart. So each meter says for itself which
+       one it is showing, and the badge reports partial cover rather than
+       claiming the whole panel is Anthropic's. */
+    function markMeter(nameEl, isLive) {
+      nameEl.classList.toggle('is-measured', !!live && !isLive);
+      nameEl.title = (live && !isLive)
+        ? 'Anthropic has no figure for this window right now - showing measured tokens'
+        : '';
+    }
 
     var s = data.session || {};
     var st = s.tokens || {};
@@ -216,6 +239,7 @@
       els.sessionValue.textContent = compact(st.total) + ' tok';
       els.sessionSub.textContent = s.active ? formatCountdown(s.resetsAt) : 'No active session';
     }
+    markMeter(els.sessionName, !!(live && live.fiveHour));
     /* With live data the bar is the real utilisation. Without it, the bar is
        this block against your own busiest recent block — never a plan limit,
        which is why the note spells out which one you are looking at. */
@@ -241,6 +265,7 @@
          a block can be measured against your busiest recent one. */
       els.weeklyTrack.style.display = 'none';
     }
+    markMeter(els.weeklyName, !!(live && live.sevenDay));
     els.weeklyNote.textContent = num(wt.messages) + ' msgs · ' + compact(wt.output) + ' out';
 
     var describeWorkflow = function (wf) {
@@ -378,6 +403,8 @@
     els.dSessions = document.getElementById('d-sessions');
     els.dWorkflows = document.getElementById('d-workflows');
     els.dSubtasks = document.getElementById('d-subtasks');
+    els.sessionName = document.querySelector('#m-session .name');
+    els.weeklyName = document.querySelector('#m-weekly .name');
     els.plan = document.getElementById('plan');
     els.mSession = document.getElementById('m-session');
     els.sessionFill = document.getElementById('session-fill');

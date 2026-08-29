@@ -23,7 +23,7 @@ See [Anthropic's own figures](#anthropics-own-figures) and
 
 ## Where each number comes from
 
-| Shown | Source | Exact or estimated |
+| Shown | Source | Exactness |
 |---|---|---|
 | 5-hour reset time | `five_hour.resets_at` when authenticated | **exact** |
 | ↳ fallback without auth | first local message of the block, floored to the hour, + 5h | **approximate — can be ~30 min out** |
@@ -31,7 +31,6 @@ See [Anthropic's own figures](#anthropics-own-figures) and
 | Token counts per window | summed straight from the `usage` block of every assistant message | **exact** |
 | 5-hour / weekly **percentage** | Claude Code's statusline `rate_limits`, or Anthropic's `/api/oauth/usage` — see [below](#anthropics-own-figures) | **exact — the same numbers as Claude Code's own panel** |
 | Plan label, e.g. `Max (5x)` | `/api/oauth/profile` → `rate_limit_tier` | exact when authenticated |
-| *(legacy)* locally estimated percentage | weighted totals ÷ budgets in `limits.json` | **unreliable, no longer shown — see below** |
 | Session list | transcripts directly under `~/.claude/projects/<project>/`, as opposed to the nested ones belonging to subagents and workflows | exact |
 | Workflow list | running: `~/.claude/projects/*/*/subagents/workflows/wf_*/journal.jsonl` | exact |
 | Subtask list | running: the agents in that journal with a `started` line and no `result` | exact |
@@ -207,6 +206,7 @@ You can tell which mode you are in from the widget's header badge:
 |---|---|
 | `LIVE` (green) | percentages are Anthropic's own, freshly fetched |
 | `LIVE·` (amber) | Anthropic's numbers, but the last poll failed — showing the most recent good reading, up to 45 minutes old. Hover for when and why |
+| `LIVE¹` (amber) | Anthropic answered for only one of the two windows — Claude Code drops a window from `rate_limits` once its `resets_at` passes and restores it on the session's next API response. The meter without a figure is marked `· measured` |
 | `LOCAL` (grey) | no usable reading; measured token counts shown instead. Hover for the reason |
 
 Skipping this entirely is a valid choice. Everything except the two percentages
@@ -319,10 +319,13 @@ Two plausible shortcuts, both tested and both dead ends:
   wrong thing: an API key bills pay-per-token against your organisation's API
   account, while these percentages are your **subscription** limits.
 
-### Why the local estimate was abandoned
+### Why there is no local percentage
 
-It is still in the JSON, and the debug page still shows it, but **the widget
-stopped displaying it in 1.3.0** and you should not rely on it.
+The widget stopped showing one in 1.3.0, and **1.8.0 removed it from the JSON,
+the debug page and `limits.json` entirely** — along with the budgets, the
+promotional-boost block and the per-model buckets that fed it. Nothing divides
+measured tokens by a guessed limit any more. Kept here because the disproof is
+worth not re-deriving.
 
 Calibrated at 16:17 on 2026-08-28 it matched Claude's own panel exactly, 6% vs
 6%. Eighty minutes later it read 47% against the panel's 27%. The token mix had
@@ -351,64 +354,13 @@ charged far below their token count, a per-request component that does not scale
 with tokens, a non-linear curve, and reporting lag in the panel are all
 consistent with the data; two readings cannot distinguish them.
 
-Everything else the server reports is measured, so the widget now shows token
-counts, message counts and the reset times, with the bar scaled against your own
-busiest recent block rather than against a limit nobody publishes.
+Everything the server reports is now measured: token counts, message counts and
+reset times, with the session bar scaled against your own busiest recent block
+rather than against a limit nobody publishes. `session.usedWeighted` and
+`peakWeighted` remain, because that ratio is a real measurement of your own
+history; `percent`, `budgetWeighted`, `estimated` and `buckets` are gone.
 
-### How the estimate was meant to work
-
-Anthropic does not publish the plan limits, and there is no local record of your
-consumption against them. `quotaLimits` only appears in a transcript once you
-have *already* been rate-limited, and there is no `claude usage` subcommand.
-So the server measures what you actually spent — every assistant message carries
-a full `usage` block — and divides by a budget you set.
-
-Weighted tokens are `output×5 + input×1 + cache_creation×1.25 + cache_read×0.1`,
-then multiplied per model. Both tables live in `limits.json`.
-
-## Calibrating
-
-The shipped budgets were calibrated on 2026-08-28 against Claude Code's own
-usage panel. To redo it when the numbers drift:
-
-1. Open `/usage` in Claude Code. Note both percentages **and the session reset
-   countdown** — that countdown is what pins the reading to a moment in time.
-2. Work out the moment: `session reset time − countdown`. With a 21:00 reset and
-   "Resets in 4 hr 43 min", the panel was showing 16:17.
-3. Ask this server what it would have said then, and take the raw totals rather
-   than the rounded percentages:
-   ```bash
-   curl "http://127.0.0.1:41777/usage?at=2026-08-28T16:17:00"
-   ```
-   Read `session.usedWeighted` and `weekly.usedWeighted`.
-4. Divide by the panel's fractions:
-   ```
-   sessionBudgetWeightedTokens = session.usedWeighted / 0.06
-   weeklyBudgetWeightedTokens  = weekly.usedWeighted  / 0.10
-   ```
-5. Put the results in `limits.json` and re-query the same `?at=` — it should now
-   reproduce the panel's percentages exactly. That round-trip is the check that
-   the calibration actually landed.
-
-`limits.json` is re-read on every refresh, so no restart is needed.
-
-### Temporary limit boosts
-
-Anthropic runs promotions ("your weekly limit is 50% higher through August
-31"). Calibrating against a boosted week and then forgetting makes every later
-week read high, so declare the boost with an expiry instead of folding it into
-the budget:
-
-```json
-"weeklyBudgetWeightedTokens": 178000000,
-"weeklyBoost": { "multiplier": 1.5, "until": "2026-09-01T00:00:00" }
-```
-
-`weeklyBudgetWeightedTokens` is then the **standard** limit, and the multiplier
-applies only while the promotion is live. Step 4 above gives you the boosted
-figure, so divide it by the multiplier to get the standard one.
-
-### The weekly anchor
+## The weekly anchor
 
 The default is Thursday 21:00 local. This is now **confirmed** rather than
 copied from the panel: the statusline's `seven_day.resets_at`, which is
@@ -422,8 +374,8 @@ timestamps. If yours resets on another day set `weekday` (0 = Sunday) and
 - `GET /usage` — the full snapshot
 - `GET /usage?at=<epoch-ms | ISO timestamp>` — the snapshot as it would have
   been at that moment, rebuilt on demand and never cached. Windows are capped at
-  the given time, so it does not count usage from after it. This is what makes
-  calibration against a timestamped screenshot possible.
+  the given time, so it does not count usage from after it. Useful for comparing
+  a past moment against a timestamped screenshot.
 - `GET /health` — liveness plus the last build time
 - `GET /usagehtml` — **a human-readable debug page**: both windows with their
   full token breakdown and per-model split, every session, workflow and subtask

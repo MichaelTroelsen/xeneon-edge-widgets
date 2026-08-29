@@ -182,10 +182,12 @@ function render(snapshot, cfg) {
       'and this recovers on its own once it does.</div>';
   }
 
-  html += '<div class="warnbox"><b>The local percentages below are not reliable.</b> They divide ' +
-    'measured tokens by a budget calibrated at one moment. Checked against Claude\'s own panel, no ' +
-    'weighting of these token counts reproduces it — measured growth between two windows was ' +
-    '4.3×–9.2× per class while the panel charged 3.5×. Everything else on this page is measured.</div>';
+  html += '<div class="warnbox">Every figure below is <b>measured</b>: token counts ' +
+    'summed from the transcripts, and a bar drawn against your own busiest recent block. ' +
+    'There is no local percentage any more - dividing these by a guessed plan limit gave a ' +
+    'number wrong by 20 points, and no weighting of them reproduces the real accounting ' +
+    '(growth of 4.3x-9.2x per class between two windows while the panel charged 3.5x). ' +
+    'The real percentages are in the Anthropic figures above.</div>';
 
   /* --- windows --- */
   html += '<h2>Windows</h2><div class="cards">';
@@ -197,8 +199,7 @@ function render(snapshot, cfg) {
     bar(session.usedWeighted, session.peakWeighted || session.usedWeighted) +
     '<div class="barnote">bar is against your busiest complete block in the last 8 days — not a limit</div>' +
     tokenTable(session.tokens) +
-    '<div class="muted" style="margin-top:8px">weighted ' + num(session.usedWeighted) +
-    ' · estimated ' + (session.percent == null ? '—' : session.percent + '%') + '</div>' +
+    '<div class="muted" style="margin-top:8px">weighted ' + num(session.usedWeighted) + '</div>' +
     modelTable(session.tokens) +
     '</div>';
 
@@ -207,8 +208,7 @@ function render(snapshot, cfg) {
     '<div class="big">' + compact((weekly.tokens || {}).total) + ' tokens</div>' +
     '<div class="muted">resets ' + until(weekly.resetsAt) + '</div>' +
     tokenTable(weekly.tokens) +
-    '<div class="muted" style="margin-top:8px">weighted ' + num(weekly.usedWeighted) +
-    ' · estimated ' + (weekly.percent == null ? '—' : weekly.percent + '%') + '</div>' +
+    '<div class="muted" style="margin-top:8px">weighted ' + num(weekly.usedWeighted) + '</div>' +
     modelTable(weekly.tokens) +
     '</div>';
 
@@ -258,9 +258,6 @@ function render(snapshot, cfg) {
     '<tr><th>plan label</th><td>' + esc(cfg.planLabel) + '</td></tr>' +
     '<tr><th>weights</th><td>output ×' + w.output + ' · input ×' + w.input +
       ' · cache creation ×' + w.cacheCreation + ' · cache read ×' + w.cacheRead + '</td></tr>' +
-    '<tr><th>session budget</th><td class="n">' + num(cfg.sessionBudgetWeightedTokens) + '</td></tr>' +
-    '<tr><th>weekly budget</th><td class="n">' + num(cfg.weeklyBudgetWeightedTokens) +
-      (cfg.weeklyBoost ? ' (×' + cfg.weeklyBoost.multiplier + ' until ' + esc(cfg.weeklyBoost.until) + ')' : '') + '</td></tr>' +
     '<tr><th>weekly anchor</th><td>weekday ' + (cfg.weeklyAnchor || {}).weekday +
       ' at ' + (cfg.weeklyAnchor || {}).hour + ':00 local</td></tr>' +
     '</tbody></table>';

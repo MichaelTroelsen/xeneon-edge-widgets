@@ -215,13 +215,10 @@ function loadConfig() {
       console.error('Could not read limits.json, using built-in defaults:', err.message);
       config = {
         planLabel: 'Unknown plan',
-        sessionBudgetWeightedTokens: 90000000,
-        weeklyBudgetWeightedTokens: 900000000,
         weeklyAnchor: { weekday: 4, hour: 21 },
         tokenWeights: { output: 5, input: 1, cacheCreation: 1.25, cacheRead: 0.1 },
         modelWeights: {},
         defaultModelWeight: 1,
-        weeklyBuckets: [],
         port: 41777
       };
     }
@@ -538,23 +535,6 @@ function planLabelFromTier(tier) {
   return m[2] ? name + ' (' + m[2] + 'x)' : name;
 }
 
-function pct(used, budget) {
-  if (!budget || budget <= 0) return 0;
-  return Math.min(100, Math.round((used / budget) * 100));
-}
-
-/* Anthropic runs temporary weekly boosts ("your weekly limit is 50% higher
-   through August 31"). Calibrating against a boosted week and then leaving it
-   would make every later week read high, so the boost is declared with an
-   expiry and applied only while it is live. */
-function weeklyBudget(cfg, base, now) {
-  const boost = cfg.weeklyBoost;
-  if (!boost || !boost.multiplier || !boost.until) return base;
-  const until = Date.parse(boost.until);
-  if (!Number.isFinite(until) || now >= until) return base;
-  return base * boost.multiplier;
-}
-
 /* --------------------------------------------- workflows and their subtasks */
 
 function projectLabel(dirName) {
@@ -852,15 +832,6 @@ function build(nowOverride) {
   const weeklyEnd = Math.min(week.end, now);
   const weeklyUsed = sumWeighted(records, week.start, weeklyEnd, null);
 
-  const buckets = (cfg.weeklyBuckets || []).map(bucket => {
-    const used = sumWeighted(records, week.start, weeklyEnd, bucket.models);
-    return {
-      label: bucket.label,
-      percent: pct(used, weeklyBudget(cfg, bucket.budgetWeightedTokens, now)),
-      resetsAt: week.end
-    };
-  });
-
   const { workflows, subtasks } = collectWorkflows();
   const queued = collectQueuedTasks();
   /* Live runs are the activity. The wf_*.json files are the record of runs
@@ -884,16 +855,16 @@ function build(nowOverride) {
 
   return {
     generatedAt: now,
-    estimated: true,
     /* Anthropic's own numbers when the endpoint answered, so the widget can
        prefer them and fall back to the measured view when it did not. */
     official: officialForSnapshot(now),
     plan: (officialGood && officialGood.planTier) ? planLabelFromTier(officialGood.planTier) : cfg.planLabel,
     session: {
-      percent: pct(sessionUsed, cfg.sessionBudgetWeightedTokens),
-      /* Raw totals so calibration is not limited by a rounded percentage. */
+      /* Weighted totals are measured, and the bar is drawn against the user's
+         own busiest recent block. There is deliberately no percentage here:
+         dividing these by a guessed plan limit produced a number that was
+         wrong by 20 points and looked authoritative. */
       usedWeighted: Math.round(sessionUsed),
-      budgetWeighted: cfg.sessionBudgetWeightedTokens,
       /* Exact, unlike percent: measured counts and a reference drawn from the
          user's own history rather than an unpublished limit. */
       tokens: sessionTokens,
@@ -904,13 +875,10 @@ function build(nowOverride) {
       active: !!block
     },
     weekly: {
-      percent: pct(weeklyUsed, weeklyBudget(cfg, cfg.weeklyBudgetWeightedTokens, now)),
       usedWeighted: Math.round(weeklyUsed),
-      budgetWeighted: weeklyBudget(cfg, cfg.weeklyBudgetWeightedTokens, now),
       tokens: weeklyTokens,
       startsAt: week.start,
       resetsAt: week.end,
-      buckets
     },
     /* Only what is running. Queued tasks are deliberately not folded in here:
        waiting to start is not the same as running, and the previous fallback
@@ -939,7 +907,9 @@ function rebuild() {
   try {
     snapshot = build();
     if (process.env.CLAUDE_USAGE_VERBOSE) {
-      console.log(`rebuilt in ${Date.now() - started}ms  session=${snapshot.session.percent}%  weekly=${snapshot.weekly.percent}%`);
+      console.log(`rebuilt in ${Date.now() - started}ms  ` +
+        `sessions=${snapshot.counts.sessions} workflows=${snapshot.counts.workflows} ` +
+        `subtasks=${snapshot.counts.subtasks}`);
     }
   } catch (err) {
     console.error('rebuild failed:', err.message);
@@ -1002,7 +972,7 @@ watchCredentials();
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude usage feed on http://127.0.0.1:${PORT}/usage`);
   if (snapshot) {
-    console.log(`  session ${snapshot.session.percent}%  weekly ${snapshot.weekly.percent}%  ` +
+    console.log(`  sessions ${snapshot.counts.sessions}  ` +
       `workflows ${snapshot.counts.workflows}  subtasks ${snapshot.counts.subtasks}  ` +
       `(from ${snapshot.counts.messages} messages)`);
   }

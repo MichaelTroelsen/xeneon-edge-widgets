@@ -140,6 +140,13 @@ body {
   border-color: var(--line);
 }
 
+/* Anthropic answered, but only for one of the two windows. Amber rather than
+   green because part of what is on screen is a different metric. */
+.head .live.is-partial {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
 .head .version {
   font-size: var(--font-badge);
   color: var(--muted);
@@ -221,6 +228,14 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* This meter fell back to measured tokens while the other one is showing
+   Anthropic's figure. Without a mark the two read as the same kind of number. */
+.meter .name.is-measured::after {
+  content: " · measured";
+  color: var(--warn);
+  font-weight: 400;
 }
 
 .meter .value {

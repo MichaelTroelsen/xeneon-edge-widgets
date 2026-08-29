@@ -93,9 +93,17 @@ Both windows get a bar, coloured by how close you are: blue, **amber from 80%**,
 recent 5-hour block and the weekly bar is hidden — a week has no honest local
 reference to scale against.
 
-Nothing is estimated. A local estimate was tried and abandoned: no weighting of
-local token counts reproduces Anthropic's accounting, and the arithmetic proving
-that is in [usage-server/README.md](usage-server/README.md).
+**Each meter says which kind of number it is showing.** Anthropic can answer for
+one window and not the other — Claude Code drops a window from `rate_limits`
+once its reset passes, and restores it on the session's next API response. When
+that happens the badge reads `LIVE¹` in amber and the meter without a figure is
+marked `· measured`, so a percentage and a token count are never presented as
+the same kind of number.
+
+Nothing is estimated. A local estimate was tried and abandoned — no weighting of
+local token counts reproduces Anthropic's accounting — and 1.8.0 removed the last
+of it from the JSON, the debug page and the config. The arithmetic that killed it
+is in [usage-server/README.md](usage-server/README.md).
 
 For a full human-readable view — token breakdown per class, per-model split, and
 the activity tables with their totals (`3 active of 24 seen`) — open

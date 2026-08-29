@@ -1,20 +1,10 @@
 {
   "planLabel": "Max (5x)",
 
-  "_comment_budgets": "Weighted-token budgets. Calibrated 2026-08-28 against Claude Code's own usage panel: at 16:17 local the panel read 6% session and 10% weekly, while this server measured 3,248,051 and 26,640,536 weighted tokens in those windows. Re-run the procedure in README.md if the numbers drift.",
-  "sessionBudgetWeightedTokens": 54000000,
-  "weeklyBudgetWeightedTokens": 178000000,
-
-  "_comment_boost": "Anthropic was running a temporary +50% weekly limit through August 31 2026. The 10% reading above was against that boosted limit, so the budget above is the STANDARD one and the boost is applied separately until it expires. Delete this block once the promotion is gone, or update it for the next one.",
-  "weeklyBoost": {
-    "multiplier": 1.5,
-    "until": "2026-09-01T00:00:00"
-  },
-
   "_comment_anchor": "Weekly window anchor in local time. weekday: 0=Sun .. 4=Thu .. 6=Sat. Matches the 'Resets Thu 9:00 PM' shown in Claude Code's usage panel.",
   "weeklyAnchor": { "weekday": 4, "hour": 21 },
 
-  "_comment_weights": "Per-token weights, mirroring the usual relative cost of each token class.",
+  "_comment_weights": "Per-token weights, used to scale the session bar against your own busiest recent block. They are NOT a model of Anthropic's accounting - that was tried and disproved; see README.md.",
   "tokenWeights": {
     "output": 5,
     "input": 1,
@@ -30,11 +20,6 @@
     "claude-haiku-4-5": 0.05
   },
   "defaultModelWeight": 1,
-
-  "_comment_buckets": "Extra weekly bars broken out by model, like the 'Fable' row in the usage panel. NOT calibrated - scaled to keep its old ratio to the weekly budget, because there was no Fable usage to compare against.",
-  "weeklyBuckets": [
-    { "label": "Fable", "models": ["claude-fable-5"], "budgetWeightedTokens": 89000000 }
-  ],
 
   "port": 41777
 }

@@ -32,7 +32,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 - [ ] Nothing outstanding.
 
-## Claude Code Usage — 1.7.0
+## Claude Code Usage — 1.8.0
 
 ### Done
 
@@ -127,11 +127,19 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       uses no token at all, so a stale credential no longer costs the live view.
       The refresh-token rotation race is still real and still worth watching
       (see the Authentication section of `usage-server/README.md`).
-- [ ] **Decide what to do with the dead budget config.** `limits.json` still
-      carries `sessionBudgetWeightedTokens`, `weeklyBudgetWeightedTokens`,
-      `weeklyBoost` and `weeklyBuckets`, and the server still computes a
-      percentage from them for the JSON and the debug page. Either delete them
-      or keep them clearly marked as diagnostic-only.
+- [x] **Removed the dead budget config** (1.8.0). `sessionBudgetWeightedTokens`,
+      `weeklyBudgetWeightedTokens`, `weeklyBoost` and `weeklyBuckets` are gone
+      from `limits.json`, and `pct()`/`weeklyBudget()` with them. `/usage` no
+      longer carries `session.percent`, `weekly.percent`, `budgetWeighted`,
+      `buckets` or `estimated`; the debug page and the startup log stopped
+      printing them. It was reading 34%/52% against the real 25%/18% — wrong by
+      enough to mislead anyone who read the JSON. `usedWeighted` and
+      `peakWeighted` stay: that ratio is a real measurement.
+- [x] **Each meter states its own provenance** (1.8.0). Anthropic can answer for
+      one window and not the other, and the badge said `LIVE` while a meter
+      quietly showed measured tokens — the exact silent fallback this project
+      had already removed once. Now the badge reads `LIVE¹` and the meter is
+      marked `· measured`.
 - [ ] **If the real formula is ever wanted**, it needs several panel readings at
       known times across one block, then candidate models tested against them —
       cache reads free, per-request cost, non-linear curve, reporting lag. Two

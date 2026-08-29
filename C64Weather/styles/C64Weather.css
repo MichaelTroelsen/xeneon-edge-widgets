@@ -437,6 +437,14 @@ body {
   font-weight: 300;
 }
 
+/* The stroked art is drawn on a 24x24 grid and centred, unlike the 16x16
+   bitmaps which are left-aligned in their cell, and it needs a little more room
+   to read at this size. */
+.theme-modern .sprite-cell .sprite.stroke {
+  height: 1.35em;
+  width: 1.35em;
+}
+
 /* One accent colour for the condition art, overriding the per-condition
    palette the pixel themes use - Modern is a two-colour design. */
 .theme-modern .sprite,

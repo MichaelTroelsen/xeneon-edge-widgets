@@ -384,7 +384,38 @@
     return svg(w, art.length, rects, extraClass);
   }
 
+  /* Stroked condition art for the Modern theme.
+     The pixel sprites are the point of every retro theme, and a smooth icon
+     beside a 16x16 cloud would look like a mistake in them. Modern is the one
+     theme with no machine to be faithful to - it renders system text, so it
+     gets drawn art on the same 24x24 grid rather than a scaled-up bitmap.
+     Stroke-only, currentColor, round joins: it inherits the theme colour the
+     same way the bitmaps do. */
+  var STROKE_ART = {
+    cloud: 'M7 17.5h9.5a3.8 3.8 0 0 0 .4-7.6 5.6 5.6 0 0 0-10.7-1.3A3.9 3.9 0 0 0 7 17.5z',
+    sun: 'M12 15.6a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2z|M12 3.2v2.1|M12 18.7v2.1|M3.2 12h2.1|M18.7 12h2.1|M5.8 5.8l1.5 1.5|M16.7 16.7l1.5 1.5|M18.2 5.8l-1.5 1.5|M7.3 16.7l-1.5 1.5',
+    moon: 'M19.5 14.8A8 8 0 0 1 9.2 4.5a8 8 0 1 0 10.3 10.3z',
+    partly: 'M9 18h8a3.4 3.4 0 0 0 .3-6.8A5 5 0 0 0 8 10.2 3.5 3.5 0 0 0 9 18z|M6.6 11.2a4 4 0 0 1 5.6-5.4|M15.6 5.2V3.4|M20 8.4h1.7|M19.1 4.6l1.2-1.2',
+    fog: 'M7 14h9.5a3.8 3.8 0 0 0 .4-7.6A5.6 5.6 0 0 0 6.2 5.1 3.9 3.9 0 0 0 7 14z|M4.5 17.6h15|M6.8 20.6h10.4',
+    drizzle: 'M7 15h9.5a3.8 3.8 0 0 0 .4-7.6A5.6 5.6 0 0 0 6.2 6.1 3.9 3.9 0 0 0 7 15z|M9.4 18.2l-.8 2|M14.6 18.2l-.8 2',
+    rain: 'M7 14.6h9.5a3.8 3.8 0 0 0 .4-7.6A5.6 5.6 0 0 0 6.2 5.7 3.9 3.9 0 0 0 7 14.6z|M8.8 17.6l-1.3 3.2|M12.6 17.6l-1.3 3.2|M16.4 17.6l-1.3 3.2',
+    snow: 'M7 14.6h9.5a3.8 3.8 0 0 0 .4-7.6A5.6 5.6 0 0 0 6.2 5.7 3.9 3.9 0 0 0 7 14.6z|M9 18.6v.1|M12 20.2v.1|M15 18.6v.1',
+    storm: 'M7 14.2h9.5a3.8 3.8 0 0 0 .4-7.6A5.6 5.6 0 0 0 6.2 5.3 3.9 3.9 0 0 0 7 14.2z|M13.2 16.6l-3.4 3.1h3l-1.4 2.5'
+  };
+
+  function strokeSVG(name) {
+    var d = STROKE_ART[name] || STROKE_ART.cloud;
+    var paths = d.split('|').map(function (seg) {
+      return '<path d="' + seg + '"/>';
+    }).join('');
+    return '<svg class="px sprite stroke" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet"' +
+      ' fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"' +
+      ' stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"' +
+      ' focusable="false" aria-hidden="true">' + paths + '</svg>';
+  }
+
   function spriteSVG(name) {
+    if (fontMode === 'system') return strokeSVG(name);
     return artSVG(SPRITES[name] || SPRITES.cloud, 'sprite');
   }
 

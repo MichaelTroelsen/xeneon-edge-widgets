@@ -12,7 +12,7 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.3.0';
+  var WIDGET_VERSION = '1.3.1';
 
   /* ---------- themes ----------
      Each theme is a palette (CSS class), a boot screen, and a font mode. The

@@ -3,7 +3,7 @@
   "id": "com.thordanielz.c64weather",
   "name": "C64 Weather",
   "description": "Current temperature on a Commodore 64 boot screen. Light-blue-on-blue PETSCII, blinking cursor, and authentic C64 error messages when the data source is unreachable. Powered by Open-Meteo, no API key required.",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "preview_icon": "resources/icon.svg",
   "min_app_version": "5.47",
   "min_framework_version": "1.0.0",

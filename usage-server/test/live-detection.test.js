@@ -179,6 +179,14 @@ async function main() {
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: Object.assign({}, process.env, {
       CLAUDE_USAGE_PROJECTS_DIR: PROJECTS,
+      /* Without this the test server polls Anthropic on startup - a real
+         request to an already rate-limited endpoint, from a test that claims
+         to cost nothing. */
+      CLAUDE_USAGE_NO_REMOTE: '1',
+      /* And point the statusline reader at a path inside the fixture root:
+         otherwise the test reads the real machine's reading and `official`
+         is whatever the developer's own usage happens to be. */
+      CLAUDE_USAGE_STATUSLINE_FILE: path.join(ROOT, 'no-statusline.json'),
       PORT: String(PORT)
     }),
     stdio: ['ignore', 'ignore', 'inherit']
@@ -188,6 +196,12 @@ async function main() {
     const feed = await waitForServer(child);
     const wfNames = feed.workflows.map(w => w.id).sort();
     const taskLabels = feed.subtasks.map(t => t.label).sort();
+
+    console.log('hermetic:');
+    /* Proves the guard is in force. Without it this test makes a real request
+       to Anthropic every run, which is the opposite of what it advertises. */
+    check('the server did not poll Anthropic',
+      /CLAUDE_USAGE_NO_REMOTE/.test(feed.official.error || ''), true);
 
     console.log('detection:');
     check('a run in flight is reported', wfNames.includes('wf_live0001'), true);

@@ -422,7 +422,7 @@ function collectRecords(cfg) {
       const id = path.basename(entry.file, '.jsonl');
       sessions.push({
         id: id,
-        label: (state.meta && (state.meta.title || state.meta.slug)) || id.slice(0, 8),
+        label: redactSecrets((state.meta && (state.meta.title || state.meta.slug)) || id.slice(0, 8)),
         project: projectLabel(path.basename(path.dirname(entry.file))),
         lastAt: lastAt || entry.mtime,
         messages: messages,
@@ -536,6 +536,23 @@ function planLabelFromTier(tier) {
 }
 
 /* --------------------------------------------- workflows and their subtasks */
+
+/* Labels are built from prompt text, and people paste keys into prompts. A
+   label is cosmetic; a credential rendered on a desk display is not, so anything
+   key-shaped is replaced before it can reach the widget or the debug page.
+   Deliberately narrow - broad entropy heuristics would mangle ordinary text. */
+const SECRET_PATTERNS = [
+  /sk-ant-[A-Za-z0-9_-]{6,}/g,
+  /sk-[A-Za-z0-9_-]{20,}/g,
+  /Bearer\s+[A-Za-z0-9._~+/-]{16,}/gi,
+  /gh[pousr]_[A-Za-z0-9]{16,}/g
+];
+
+function redactSecrets(text) {
+  let out = String(text == null ? '' : text);
+  for (const re of SECRET_PATTERNS) out = out.replace(re, '[redacted]');
+  return out;
+}
 
 function projectLabel(dirName) {
   const parts = dirName.split('-').filter(Boolean);
@@ -661,7 +678,7 @@ function agentLabel(dir, agentId) {
       ? content
       : (Array.isArray(content) ? (content.find(c => c.type === 'text') || {}).text || '' : '');
     const first = String(text).split('\n').find(l => l.trim());
-    return first ? first.trim().slice(0, 60) : agentId.slice(0, 8);
+    return first ? redactSecrets(first.trim()).slice(0, 60) : agentId.slice(0, 8);
   } catch (err) {
     return agentId.slice(0, 8);
   }
@@ -964,10 +981,22 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify({ error: 'not found' }));
 });
 
+/* A test server must not poll Anthropic. Without this guard every spawned test
+   server made a real request to an endpoint that is already rate-limited - which
+   is exactly what the fixture tests were doing while being described as costing
+   nothing. Unset in normal use. */
+if (process.env.CLAUDE_USAGE_NO_REMOTE) {
+  officialState = { ok: false, fetchedAt: Date.now(), error: 'remote polling disabled (CLAUDE_USAGE_NO_REMOTE)' };
+} else {
+  refreshOfficial();   /* schedules its own next run, with backoff on failure */
+  watchCredentials();
+}
+
+/* The guard above runs first on purpose: rebuild() caches a snapshot, and one
+   built before officialState was set would carry "not fetched yet" until the
+   next refresh. */
 rebuild();
 setInterval(rebuild, REFRESH_MS).unref();
-refreshOfficial();   /* schedules its own next run, with backoff on failure */
-watchCredentials();
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude usage feed on http://127.0.0.1:${PORT}/usage`);

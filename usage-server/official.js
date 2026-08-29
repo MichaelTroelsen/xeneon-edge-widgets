@@ -18,7 +18,9 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 
-const CREDENTIALS = path.join(os.homedir(), '.claude', '.credentials.json');
+/* Overridable so a test can point at a fixture instead of the real login. */
+const CREDENTIALS = process.env.CLAUDE_USAGE_CREDENTIALS_FILE ||
+  path.join(os.homedir(), '.claude', '.credentials.json');
 const BACKUP = CREDENTIALS + '.before-usage-server';
 const HOST = 'api.anthropic.com';
 const USAGE_PATH = '/api/oauth/usage';

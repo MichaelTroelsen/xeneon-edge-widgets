@@ -92,6 +92,17 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       the live-run lookup fails 9 checks, reverting the just-opened-session rule
       fails 3.
 
+- [x] **Tested the statusline path and the credential claim** (2026-08-29).
+      `test/statusline.test.js` — 28 checks covering the freshness rules and
+      asserting no credential material reaches `/usage` or `/usagehtml`. Added
+      `CLAUDE_USAGE_STATUSLINE_FILE` and `CLAUDE_USAGE_CREDENTIALS_FILE` to make
+      it hermetic, and **`CLAUDE_USAGE_NO_REMOTE`** because the fixture tests
+      were making a real request to the rate-limited endpoint on every run while
+      being described as costing nothing.
+- [x] **Redact key-shaped text from labels** (2026-08-29). Rows are named from
+      prompt text, so a pasted key would have been rendered on the display.
+      `sk-ant-…`, long `sk-…`, `Bearer …` and `ghp_…` become `[redacted]`.
+
 ### Open
 
 - [ ] **Show sessions from the other machine (`tdzlaptop`).** The Activity

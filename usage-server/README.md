@@ -86,9 +86,10 @@ Two tests cover this, because they catch different things.
 
 ```bash
 node usage-server/test/live-detection.test.js
+node usage-server/test/statusline.test.js
 ```
 
-runs in a couple of seconds and needs nothing but node. It points the server at
+run in a couple of seconds each and need nothing but node. It points the server at
 a fixture tree via `CLAUDE_USAGE_PROJECTS_DIR` (unset in normal use) and asserts
 the cases that were got wrong or could be: a run in flight is reported, a
 finished one is not despite its `wf_*.json` existing, a killed run gone stale is
@@ -98,6 +99,19 @@ messages yet is reported, an old idle one is not, and a transcript nested under
 a session directory belongs to a subagent rather than being a session. Seventeen
 checks. Reverting the live-run lookup fails 9 of them and reverting the
 just-opened-session rule fails 3 more, which is the point of having them.
+
+`statusline.test.js` covers the other half: the freshness rules (current,
+stale past 10 minutes, withheld past 45, withheld for a future timestamp, a
+malformed file, an absent file, one window present and the other not, no windows
+at all), plus the credential and redaction checks above. 28 checks.
+
+Three environment overrides exist for these tests and are unset in normal use:
+`CLAUDE_USAGE_PROJECTS_DIR`, `CLAUDE_USAGE_STATUSLINE_FILE` and
+`CLAUDE_USAGE_CREDENTIALS_FILE` point at fixtures, and **`CLAUDE_USAGE_NO_REMOTE`
+stops the server polling Anthropic at startup**. That last one matters: without
+it a spawned test server makes a real request to an already rate-limited
+endpoint every run. `live-detection.test.js` asserts the guard is in force
+rather than trusting it.
 
 The end-to-end probe needs an agent runner and real tokens, so it is the one you
 run when changing how the widget renders rather than after every edit. Launch
@@ -217,9 +231,18 @@ works without any credential.
 - Reads it from `~/.claude/.credentials.json` into memory.
 - Sends it as one `Authorization: Bearer` header per request, only to
   `api.anthropic.com` (usage, profile) and `console.anthropic.com` (refresh).
-- **Never** logs it, prints it, or includes it in `/usage`'s output. The served
-  payload is scanned for `accessToken`, `refreshToken`, `Bearer` and `sk-ant` as
-  part of testing.
+- **Never** logs it, prints it, or includes it in `/usage`'s output.
+  `test/statusline.test.js` asserts this: it points the server at a fixture
+  credentials file holding recognisable fake tokens and checks that neither they
+  nor `accessToken`, `refreshToken`, `Bearer ` or `sk-ant-` appear anywhere in
+  `/usage` or `/usagehtml`. The test runs with remote polling disabled, so it
+  proves the payload does not echo the credentials file — not what would happen
+  mid-request.
+- **Labels are redacted.** Session and subtask rows are built from prompt text,
+  and people paste keys into prompts, so anything shaped like one
+  (`sk-ant-…`, a long `sk-…`, `Bearer …`, `ghp_…`) is replaced with
+  `[redacted]` before it can reach the widget or the debug page. The patterns
+  are deliberately narrow: an entropy heuristic would mangle ordinary text.
 - Polls **every twelve minutes**, not every rebuild. One-minute polling drew a
   `429` within the hour. Be aware that no polite cadence necessarily fixes this:
   [anthropics/claude-code#30930](https://github.com/anthropics/claude-code/issues/30930)

@@ -24,7 +24,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const FILE = path.join(os.homedir(), '.claude', 'statusline-usage.json');
+/* Overridable so the freshness rules can be tested against fixtures rather
+   than against whatever the real statusline happens to have written. */
+const FILE = process.env.CLAUDE_USAGE_STATUSLINE_FILE ||
+  path.join(os.homedir(), '.claude', 'statusline-usage.json');
 
 /* Past this a reading stops being shown at all. Utilisation only climbs within
    a window, so an old reading is not wrong so much as an undercount - but an

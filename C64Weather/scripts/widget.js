@@ -12,75 +12,100 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.3.2';
+  var WIDGET_VERSION = '1.4.0';
 
   /* ---------- themes ----------
-     Each theme is a palette (CSS class), a boot screen, and a font mode. The
+     Each theme is a palette (CSS class), a startup screen, and a font mode. The
      palette tokens were already the only thing the stylesheet consumed, so a
      theme is a token redefinition rather than a second stylesheet.
 
-     HONESTY, because "authentic" is the whole point of these: the boot text is
-     a homage in the same spirit as the existing C64 one - it says WEATHER where
-     the real machine said BASIC - and the letterforms are the project's own 8x8
-     set, NOT a ROM dump. What is faithful is the palette, the screen furniture
-     and the wording's shape. See README.md. */
+     `boot` is the machine's real startup screen, line for line. It used to be a
+     homage that said WEATHER where the machine said BASIC; the reference shots
+     these were checked against made the homage look like a mistake instead of a
+     joke, so the startup text is now verbatim and the widget's own line - the
+     one carrying the version - is `load`, which on every one of these machines
+     was something the user typed, not something the ROM printed.
+
+     STILL NOT AUTHENTIC, and worth saying plainly: the letterforms are this
+     project's own 8x8 set, NOT a ROM dump. See TODO.md.
+
+     `mixedCase` is a property of the machine, not a preference. The C64 and the
+     PET boot in their uppercase/graphics character set, so folding their text
+     to capitals is right; the BBC, CPC, Spectrum and Amiga all printed mixed
+     case and folding theirs was simply wrong. */
   var THEMES = {
     c64: {
       label: 'Commodore 64',
-      banner: '**** COMMODORE 64 WEATHER V' + WIDGET_VERSION + ' ****',
-      ram: '64K RAM SYSTEM  38911 BASIC BYTES FREE',
-      load: 'LOAD"WEATHER",8,1',
+      boot: ['**** COMMODORE 64 BASIC V2 ****',
+             '64K RAM SYSTEM  38911 BASIC BYTES FREE'],
+      load: 'LOAD"WEATHER ' + WIDGET_VERSION + '",8,1',
       ready: 'READY.',
       cursor: 'block'
     },
     pet: {
+      /* The CBM 8032 in the reference photo: 32K, BASIC 4.0. An 8K PET running
+         BASIC 2.0 says "*** COMMODORE BASIC ***" and 7167 bytes instead. */
       label: 'Commodore PET',
-      banner: '*** COMMODORE WEATHER BASIC ***',
-      ram: '31743 BYTES FREE',
-      load: 'LOAD"WEATHER",8,1',
+      boot: ['*** COMMODORE BASIC 4.0 ***',
+             '31743 BYTES FREE'],
+      load: 'LOAD"WEATHER ' + WIDGET_VERSION + '",8',
       ready: 'READY.',
       cursor: 'block'
     },
     bbc: {
       label: 'BBC Micro',
-      banner: 'BBC COMPUTER 32K',
-      ram: 'WEATHER BASIC',
-      load: '>CHAIN "WEATHER"',
+      boot: ['BBC Computer 32K',
+             'Acorn DFS',
+             'BASIC'],
+      load: '>CHAIN "WEATHER ' + WIDGET_VERSION + '"',
       ready: '>',
-      cursor: 'underline'
+      cursor: 'underline',
+      mixedCase: true
     },
     cpc: {
+      /* The CPC 464 in the reference photo. A 6128 says 128K, (v3) and
+         BASIC 1.1, with the copyright year 1985. */
       label: 'Amstrad CPC',
-      banner: 'AMSTRAD 64K MICROCOMPUTER  (V1)',
-      ram: 'BASIC 1.0',
-      load: 'RUN"WEATHER',
-      ready: 'READY',
-      cursor: 'block'
+      boot: ['Amstrad 64K Microcomputer  (v1)',
+             '©1984 Amstrad Consumer Electronics plc',
+             '        and Locomotive Software Ltd.',
+             'BASIC 1.0'],
+      load: 'RUN"WEATHER ' + WIDGET_VERSION,
+      ready: 'Ready',
+      cursor: 'block',
+      mixedCase: true
     },
     spectrum: {
+      /* One line, and it sat at the foot of the screen rather than the top -
+         see the `order` rule for .theme-spectrum .boot. */
       label: 'ZX Spectrum',
-      banner: '(C) 1982 SINCLAIR RESEARCH LTD',
-      ram: '48K SPECTRUM',
-      load: 'LOAD ""',
+      boot: ['© 1982 Sinclair Research Ltd'],
+      load: 'LOAD "WEATHER ' + WIDGET_VERSION + '"',
       ready: '0 OK, 0:1',
-      cursor: 'block'
+      cursor: 'block',
+      mixedCase: true
     },
     amiga: {
+      /* Kickstart 3.1, which is the ROM screen in the reference shot, not the
+         Workbench 1.3 screen this theme used to claim. */
       label: 'Amiga',
-      banner: 'WORKBENCH RELEASE 1.3',
-      ram: 'WEATHER',
-      load: '',
-      ready: '',
-      cursor: 'none'
-    },
-    modern: {
-      label: 'Modern',
-      banner: '',
-      ram: '',
+      boot: ['3.1 ROM  40.063',
+             'Copyright © 1985-1993',
+             'Commodore-Amiga, Inc.',
+             'All Rights Reserved.'],
       load: '',
       ready: '',
       cursor: 'none',
-      font: 'system'
+      mixedCase: true
+    },
+    modern: {
+      label: 'Modern',
+      boot: [],
+      load: '',
+      ready: '',
+      cursor: 'none',
+      font: 'system',
+      mixedCase: true
     }
   };
 
@@ -124,18 +149,46 @@
     render();
   }
 
+  var appliedTheme = null;
+
   function applyTheme() {
     var name = themeName();
     var t = THEMES[name];
-    PETSCII.setFont(t.font === 'system' ? 'system' : 'pixel', t.glyphs || null);
+    PETSCII.setFont(t.font === 'system' ? 'system' : 'pixel', t.glyphs || null, t.mixedCase);
     var root = document.querySelector('.widget-root');
     if (root) {
       THEME_ORDER.forEach(function (n) { root.classList.remove('theme-' + n); });
       root.classList.add('theme-' + name);
-      root.classList.toggle('is-bare', !t.banner);
+      root.classList.toggle('is-bare', !t.boot.length);
       root.setAttribute('data-cursor', t.cursor);
     }
+    appliedTheme = name;
     return t;
+  }
+
+  /* ---------- the boot sequence ----------
+     Changing machine reboots it. The new machine's startup screen holds the
+     whole slot for BOOT_MS and then hands over to the weather screen, which is
+     what lets the startup text be the real thing at its real length: four lines
+     of Amstrad copyright have somewhere to go without crowding the readout.
+
+     Modern has no startup screen to play, so it just appears. */
+  var BOOT_MS = 2000;
+  var bootTimer = null;
+  var bootedTheme = null;
+
+  function endBoot() {
+    bootTimer = null;
+    if (els.root) els.root.classList.remove('is-booting');
+  }
+
+  function playBoot(name, hasBoot) {
+    if (bootedTheme === name) return;   /* a redraw is not a reboot */
+    bootedTheme = name;
+    if (bootTimer) clearTimeout(bootTimer);
+    if (!hasBoot || !els.root) { endBoot(); return; }
+    els.root.classList.add('is-booting');
+    bootTimer = setTimeout(endBoot, BOOT_MS);
   }
 
   var els = {};
@@ -443,12 +496,40 @@
     showState('content');
   }
 
+  /* A line the theme leaves empty is removed rather than drawn as a blank one:
+     the Amiga's ROM screen has no prompt at all, and an empty row of the right
+     height still reads as a gap someone forgot to fill. */
+  function setLine(el, text, flagEl) {
+    if (!el) return;
+    /* The READY prompt is a span sharing its row with the cursor, so the row is
+       what has to be hidden, not the span. */
+    var host = flagEl || el;
+    if (!text) {
+      host.setAttribute('data-empty', '1');
+      PETSCII.setText(el, '');
+      return;
+    }
+    host.removeAttribute('data-empty');
+    PETSCII.setText(el, text);
+  }
+
+  function renderBootLines(lines) {
+    if (!els.boot) return;
+    els.boot.innerHTML = '';
+    lines.forEach(function (text) {
+      var div = document.createElement('div');
+      div.className = 'boot-line';
+      PETSCII.setText(div, text);
+      els.boot.appendChild(div);
+    });
+  }
+
   function renderStatic() {
     var theme = applyTheme();
-    PETSCII.setText(els.banner, theme.banner);
-    PETSCII.setText(els.ram, theme.ram);
-    PETSCII.setText(els.load, theme.load);
-    PETSCII.setText(els.ready, theme.ready);
+    renderBootLines(theme.boot);
+    setLine(els.load, theme.load);
+    setLine(els.ready, theme.ready, els.readyLine);
+    playBoot(appliedTheme, theme.boot.length > 0);
     PETSCII.setText(els.loadingA, 'SEARCHING FOR WEATHER');
     PETSCII.setText(els.loadingB, 'LOADING');
     PETSCII.setText(els.errorA, '?DEVICE NOT PRESENT  ERROR');
@@ -536,10 +617,10 @@
 
   function cacheElements() {
     els.root = document.querySelector('.widget-root');
-    els.banner = document.getElementById('boot-banner');
-    els.ram = document.getElementById('boot-ram');
+    els.boot = document.getElementById('boot');
     els.load = document.getElementById('load-line');
     els.ready = document.getElementById('ready-text');
+    els.readyLine = document.querySelector('.ready-line');
     els.temp = document.getElementById('temp');
     els.condition = document.getElementById('condition');
     els.city = document.getElementById('city');

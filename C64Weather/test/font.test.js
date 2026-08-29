@@ -44,6 +44,11 @@ function check(name, actual, expected) {
 
 /* ------------------------------------------------------------ the font itself */
 
+/* Mixed case, or this whole file is vacuous for lowercase: the default is the
+   C64's uppercase set, which folds 'a' to 'A' and would report every missing
+   lowercase glyph as present. */
+PETSCII.setFont('pixel', null, true);
+
 /* FONT is private to the IIFE, so probe it the way the widget does: a glyph
    the font lacks renders identically to any other glyph it lacks, and both
    differ from a glyph it has. */
@@ -59,12 +64,23 @@ console.log('font:');
 check('the missing-glyph probe itself works',
   [spellable('A'), spellable(''), spellable('')], [true, false, false]);
 
+check('the case setting is honoured, so lowercase is really being tested',
+  PETSCII.letterCase(), 'mixed');
+check('lowercase renders differently from uppercase',
+  PETSCII.textSVG('a') !== PETSCII.textSVG('A'), true);
+
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ';
 check('every letter, digit and space is spellable', unspellable(ALPHABET), []);
 
+/* The BBC, CPC, Spectrum and Amiga all boot in mixed case, so these are load
+   bearing, not decoration. */
+const LOWERCASE = 'abcdefghijklmnopqrstuvwxyz';
+check('every lowercase letter is spellable', unspellable(LOWERCASE), []);
+
 /* Punctuation the widget is known to use. The `|` is listed because its
-   absence is the bug this file exists for. */
-const PUNCTUATION = '.,:"°*?/-|()';
+   absence is the bug this file exists for, and `©` because three themes print
+   a real copyright line. */
+const PUNCTUATION = '.,:"°*?/-|()©';
 check('the punctuation the widget uses is spellable', unspellable(PUNCTUATION), []);
 
 /* -------------------------------------------------- strings widget.js renders */
@@ -73,11 +89,25 @@ check('the punctuation the widget uses is spellable', unspellable(PUNCTUATION), 
 const literals = [...widgetSrc.matchAll(/PETSCII\.setText\([^,]+,\s*'((?:[^'\\]|\\.)*)'\s*\)/g)]
   .map(m => m[1].replace(/\\'/g, "'"));
 
-/* Every theme's boot screen. This is where an unspellable character now enters:
-   a theme is authored as plain text, and nothing else looks at it before it
-   reaches the device. */
-const themeStrings = [...widgetSrc.matchAll(/^\s*(?:banner|ram|load|ready):\s*'((?:[^'\\]|\\.)*)'/gm)]
-  .map(m => m[1].replace(/\\'/g, "'"))
+/* Every theme's startup screen. This is where an unspellable character now
+   enters: a theme is authored as plain text, and nothing else looks at it
+   before it reaches the device. `boot` is an array spanning several lines, so
+   it is pulled out whole and then split into its quoted strings. */
+const bootBlocks = [...widgetSrc.matchAll(/^\s*boot: \[([\s\S]*?)\],$/gm)].map(m => m[1]);
+const bootLines = bootBlocks
+  .flatMap(b => [...b.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map(m => m[1]));
+const readyLines = [...widgetSrc.matchAll(/^\s*ready: '((?:[^'\\]|\\.)*)'/gm)]
+  .map(m => m[1]);
+
+/* `load` is an expression rather than a literal - it concatenates
+   WIDGET_VERSION - so it is pulled out whole and evaluated with the real
+   version, which is the string that actually reaches the screen. */
+const version = (widgetSrc.match(/var WIDGET_VERSION = '([^']+)'/) || [])[1];
+const loadExprs = [...widgetSrc.matchAll(/^\s*load: (.+),$/gm)].map(m => m[1]);
+const loadLines = loadExprs.map(e => new Function('WIDGET_VERSION', 'return ' + e)(version));
+
+const themeStrings = [...bootLines, ...readyLines, ...loadLines]
+  .map(s => s.replace(/\\'/g, "'"))
   .filter(Boolean);
 
 const themeIds = [...widgetSrc.matchAll(/^ {4}([a-z0-9]+): \{$/gm)].map(m => m[1]);
@@ -98,7 +128,8 @@ console.log('extraction:');
    moved into the theme table and are counted as themeStrings instead. */
 check('setText literals were found', literals.length >= 7, true);
 check('every theme was found', themeIds.length >= 7, true);
-check('theme boot strings were found', themeStrings.length >= 15, true);
+check('every theme with a startup screen was found', bootBlocks.length >= 7, true);
+check('theme boot strings were found', themeStrings.length >= 20, true);
 check('the condition table was found', conditions.length >= 25, true);
 check('day/night sprite pairs were found', nightSprites.length >= 4, true);
 
@@ -113,11 +144,15 @@ console.log(`  ${failures ? 'see above' : 'pass'}  all ${literals.length + theme
 const badConditions = conditions.filter(c => unspellable(c.text).length);
 check('every weather-code description is spellable', badConditions.map(c => c.text), []);
 
-/* The banner is built from the version, so digits and dots must survive it. */
-const version = (widgetSrc.match(/var WIDGET_VERSION = '([^']+)'/) || [])[1];
+/* The load line is now the only place the widget states its own version on the
+   device, which is how a copy left stale by iCUE's page cache gets spotted. If
+   a theme ever stops carrying it, that diagnostic silently disappears. */
 check('a version string was found', typeof version === 'string' && version.length > 0, true);
-check('the boot banner is spellable',
-  unspellable('**** COMMODORE 64 WEATHER V' + version + ' ****'), []);
+check('the load lines were found', loadExprs.length >= 7, true);
+check('every theme that prints a load line carries the version in it',
+  loadExprs.filter(e => e !== "''" && !e.includes('WIDGET_VERSION')), []);
+check('the load lines are spellable with the version in them',
+  loadLines.flatMap(s => unspellable(s)), []);
 
 /* ------------------------------------------------------------- art name checks */
 

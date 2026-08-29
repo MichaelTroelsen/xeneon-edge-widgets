@@ -33,10 +33,10 @@
   <div class="widget-root">
     <div class="crt">
       <div class="screen">
-        <div class="boot">
-          <div class="boot-line" id="boot-banner"></div>
-          <div class="boot-line boot-ram" id="boot-ram"></div>
-        </div>
+        <!-- Filled by renderStatic: one .boot-line per line of the machine's
+             real startup screen, which is four for the CPC and one for the
+             Spectrum. All of them show while booting, the first two after. -->
+        <div class="boot" id="boot"></div>
         <div class="load-line" id="load-line"></div>
 
         <div class="stage">

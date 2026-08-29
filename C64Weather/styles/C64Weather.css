@@ -168,7 +168,9 @@ body {
 
 /* Rows with no value must not leave a gap. */
 .stat[data-empty],
-.range[data-empty] { display: none; }
+.range[data-empty],
+.load-line[data-empty],
+.ready-line[data-empty] { display: none; }
 
 .sprite-cell {
   flex: 0 0 auto;
@@ -313,10 +315,32 @@ body {
   #stat-feels, #stat-hum { display: flex; }
 }
 
-/* Very short slots: drop the 38-column RAM banner before anything else. */
-@media (max-height: 360px) {
-  .boot-ram { display: none; }
+/* Lowercase brought descenders, which reach the last row of the 8-row cell, so
+   consecutive lines touch without a gap - the CPC's "plc" ran into the line
+   below it. The gap is smaller than .screen's because these are lines of one
+   screen, not separate blocks. */
+.boot {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 1.2);
+  width: 100%;
 }
+
+/* The startup screen is transient. All of its lines show while the machine is
+   booting; once the weather screen takes over only the first two remain, which
+   is the header this widget has always had. */
+.boot-line { display: none; }
+.boot-line:nth-child(-n+2) { display: block; }
+
+/* Very short slots: drop the second line before anything else. */
+@media (max-height: 360px) {
+  .boot-line:nth-child(2) { display: none; }
+}
+
+/* Booting: the whole startup screen, and nothing else. Specificity beats the
+   media query above, so a short slot still shows every line while it boots. */
+.widget-root.is-booting .boot-line { display: block; }
+.widget-root.is-booting .stage { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -362,10 +386,12 @@ body {
 }
 
 /* Amstrad CPC - bright yellow on blue, the 464's defining pairing. */
+/* Sampled: the CPC's blue is #000088, not #000080, and its ink is exactly
+   #ffff00, which this already had right. */
 .theme-cpc {
-  --c64-screen: #000080;
+  --c64-screen: #000088;
   --c64-border: #ffff00;
-  --frame: #000080;
+  --frame: #000088;
   --c64-white: #ffffff;
   --c64-yellow: #ffff00;
   --c64-cyan: #00ffff;
@@ -374,10 +400,12 @@ body {
 }
 
 /* ZX Spectrum - black on white, inside a coloured border. */
+/* Sampled from the reference shot: the Spectrum's paper is a bright off-white,
+   not #ffffff, and the border is the same value as the paper on boot. */
 .theme-spectrum {
-  --c64-screen: #ffffff;
+  --c64-screen: #d0d0d0;
   --c64-border: #000000;
-  --frame: #d7d7d7;
+  --frame: #d0d0d0;
   --c64-white: #000000;
   --c64-yellow: #cdcd00;
   --c64-cyan: #00cdcd;
@@ -385,16 +413,28 @@ body {
   --c64-lightred: #cd0000;
 }
 
-/* Amiga - Workbench 1.x blue and orange. */
+/* Amiga - the Kickstart 3.1 ROM screen, both values sampled from the reference
+   shot rather than guessed: #411040 is 81% of that image and #e9a888 is its
+   text. This theme used to be Workbench 1.3 blue, which is a different screen
+   from a different decade of the machine. */
 .theme-amiga {
-  --c64-screen: #0055aa;
-  --c64-border: #ffffff;
-  --frame: #0055aa;
-  --c64-white: #ffffff;
-  --c64-yellow: #ff8800;
-  --c64-cyan: #77aaff;
-  --c64-grey: #aaaaaa;
-  --c64-lightred: #ff8800;
+  --c64-screen: #411040;
+  --c64-border: #e9a888;
+  --frame: #411040;
+  --c64-white: #f7fcf8;
+  --c64-yellow: #e9a888;
+  --c64-cyan: #7788cc;
+  --c64-grey: #998870;
+  --c64-lightred: #e9a888;
+}
+
+/* The Spectrum printed its copyright at the foot of the screen, alone, rather
+   than at the top like every other machine here. .screen is a flex column, so
+   `order` moves it past the readout and the auto margin pushes it the rest of
+   the way down - order alone only reorders, it does not drop to the bottom. */
+.theme-spectrum .boot {
+  order: 3;
+  margin-top: auto;
 }
 
 /* Modern - the user's own black/white/orange, no border, no pixel font. */

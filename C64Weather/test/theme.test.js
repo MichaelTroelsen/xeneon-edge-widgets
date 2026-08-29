@@ -39,9 +39,11 @@ function makeElement() {
   const classes = new Set();
   const attrs = {};
   const kids = {};
-  return {
-    style: {}, innerHTML: '', textContent: '', className: '',
-    classes, attrs,
+  const children = [];
+  const el = {
+    style: {}, textContent: '', className: '',
+    classes, attrs, children,
+    appendChild: c => { children.push(c); return c; },
     classList: {
       add: c => classes.add(c),
       remove: c => classes.delete(c),
@@ -57,6 +59,15 @@ function makeElement() {
     getAttribute: k => (k in attrs ? attrs[k] : null),
     querySelector: sel => (kids[sel] || (kids[sel] = makeElement()))
   };
+  /* renderBootLines empties the host with innerHTML = '' before refilling it,
+     so the stub has to treat that as "drop the children" or every redraw would
+     look like it appended a second copy. */
+  let html = '';
+  Object.defineProperty(el, 'innerHTML', {
+    get: () => html,
+    set: v => { html = v; if (!v) children.length = 0; }
+  });
+  return el;
 }
 
 function makeDocument() {
@@ -67,7 +78,33 @@ function makeDocument() {
     byKey, listeners,
     querySelector: sel => el(sel),
     getElementById: id => el('#' + id),
+    createElement: () => makeElement(),
     addEventListener: (type, fn) => { (listeners[type] || (listeners[type] = [])).push(fn); }
+  };
+}
+
+/* A timer queue, so the two-second boot can be tested without waiting two
+   seconds. bootCheck also schedules on this queue; that is why fetch is stubbed
+   out below rather than left undefined. */
+function makeTimers(clock) {
+  const pending = new Map();
+  let nextId = 1;
+  return {
+    setTimeout: (fn, ms) => { pending.set(nextId, { at: clock.now + (ms || 0), fn }); return nextId++; },
+    clearTimeout: id => { pending.delete(id); },
+    advance(ms) {
+      clock.now += ms;
+      for (let guard = 0; guard < 1000; guard++) {
+        let dueId = null;
+        for (const [id, t] of pending) if (t.at <= clock.now) { dueId = id; break; }
+        if (dueId === null) return;
+        const t = pending.get(dueId);
+        pending.delete(dueId);
+        t.fn();
+      }
+      throw new Error('timer queue did not drain');
+    },
+    get size() { return pending.size; }
   };
 }
 
@@ -99,15 +136,23 @@ function boot(opts) {
   new Function('window', petsciiSrc)(petsciiWindow);
   const PETSCII = petsciiWindow.PETSCII;
 
+  const timers = makeTimers(clock);
   const noop = () => 0;
-  new Function('window', 'document', 'localStorage', 'setTimeout', 'setInterval',
-    'clearInterval', 'PETSCII', 'Date', widgetSrc)(
-    window, document, localStorage, noop, noop, noop, PETSCII, makeDate(clock));
+  /* A fetch that never settles: the widget may reach refresh() once the boot
+     retries drain, and this keeps it from touching the network or throwing. */
+  const fetchStub = () => new Promise(() => {});
+  new Function('window', 'document', 'localStorage', 'setTimeout', 'clearTimeout',
+    'setInterval', 'clearInterval', 'PETSCII', 'Date', 'fetch', widgetSrc)(
+    window, document, localStorage, timers.setTimeout, timers.clearTimeout,
+    noop, noop, PETSCII, makeDate(clock), fetchStub);
 
   const fire = (type, e) => (document.listeners[type] || []).forEach(fn => fn(e));
 
   return {
-    store, window, PETSCII, clock,
+    store, window, PETSCII, clock, timers, document,
+    booting: () => document.querySelector('.widget-root').classes.has('is-booting'),
+    bootLines: () => document.getElementById('boot').children.length,
+    advance: ms => timers.advance(ms),
     /* A theme is live when its class is on .widget-root - the one thing the
        stylesheet actually reads. */
     theme() {
@@ -199,6 +244,75 @@ console.log('the settings panel outranks a tap:');
 
   const kept = boot({ store: Object.assign({}, w.store), theme: 'c64' });
   check('an unchanged setting leaves the tap in force', kept.theme(), 'pet');
+}
+
+console.log('the boot sequence:');
+const BOOT_MS = Number((widgetSrc.match(/var BOOT_MS = (\d+);/) || [])[1]);
+check('BOOT_MS was found', BOOT_MS > 0, true);
+{
+  const w = boot();
+  check('the machine boots on first load', w.booting(), true);
+  check('and shows its whole startup screen while it does', w.bootLines(), 2);
+  w.advance(BOOT_MS - 1);
+  check('it is still booting just before the timer', w.booting(), true);
+  w.advance(1);
+  check('and the weather screen takes over on it', w.booting(), false);
+
+  w.tap();
+  check('changing machine reboots it', [w.theme(), w.booting()], ['pet', true]);
+  w.advance(BOOT_MS);
+  check('that boot ends too', w.booting(), false);
+}
+
+{
+  /* Every iCUE data update redraws the static text. If a redraw counted as a
+     reboot, the weather would vanish behind the startup screen on every
+     refresh cycle for the rest of the day. */
+  const w = boot();
+  w.advance(BOOT_MS);
+  w.window.C64Weather.onDataUpdated();
+  check('a data refresh redraws without rebooting', w.booting(), false);
+  w.window.C64Weather.onDataUpdated();
+  check('and keeps not rebooting', w.booting(), false);
+}
+
+{
+  /* The CPC prints four lines and the Spectrum one; a fixed two-line header
+     could show neither honestly, which is what the boot screen is for. */
+  const w = boot({ theme: 'cpc' });
+  check('the CPC shows all four of its startup lines', w.bootLines(), 4);
+  const s = boot({ theme: 'spectrum' });
+  check('the Spectrum shows its single line', s.bootLines(), 1);
+}
+
+{
+  const w = boot({ theme: 'modern' });
+  check('a theme with no startup screen does not play one',
+    [w.bootLines(), w.booting()], [0, false]);
+}
+
+{
+  const w = boot();
+  w.advance(BOOT_MS);
+  check('settled after the first boot', w.booting(), false);
+  w.tap();
+  w.advance(BOOT_MS - 500);
+  w.tap();   /* second machine, mid-boot */
+  check('a second tap restarts the boot rather than inheriting the old timer',
+    w.booting(), true);
+  w.advance(BOOT_MS - 500);
+  check('the first timer does not cut the second boot short', w.booting(), true);
+  w.advance(500);
+  check('the second boot ends on its own clock', w.booting(), false);
+}
+
+console.log('letter case is a property of the machine:');
+{
+  check('the C64 folds to its uppercase set', boot({ theme: 'c64' }).PETSCII.letterCase(), 'upper');
+  check('the PET does too', boot({ theme: 'pet' }).PETSCII.letterCase(), 'upper');
+  for (const t of ['bbc', 'cpc', 'spectrum', 'amiga']) {
+    check(`the ${t} keeps mixed case`, boot({ theme: t }).PETSCII.letterCase(), 'mixed');
+  }
 }
 
 console.log('the plumbing that makes taps arrive at all:');

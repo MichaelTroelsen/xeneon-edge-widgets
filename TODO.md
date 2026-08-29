@@ -1,6 +1,6 @@
 # iCUE widgets — TODO
 
-## C64 Weather — 1.3.0
+## C64 Weather — 1.4.0
 
 ### Done
 
@@ -44,15 +44,55 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ### Open
 
-- [ ] **Per-machine ROM letterforms.** The themes share one hand-authored 8x8
-      font. Authentic per-machine fonts need real ROM dumps to check against;
-      inventing 240 bitmaps would look authentic while being fiction. The hook
-      exists (`PETSCII.setFont(mode, glyphs)`), so this is additive.
-- [ ] **Smooth condition art for the Modern theme.** It uses system type but
-      still draws the pixel sprite; the reference design has a smooth outlined
-      icon.
-- [ ] **`tab-buttons` throws in iCUE's settings panel for `tempUnit`** — see
-      the "Both widgets" section below; not yet investigated.
+- [ ] **Per-machine ROM letterforms.** Every retro theme still renders in one
+      hand-authored 8x8 set. What is actually missing, per machine: the C64's
+      4 KB character generator ROM, the PET's 2 KB character ROM, the BBC's font
+      in the MOS ROM, the CPC's character matrix table in the lower ROM, the
+      Spectrum's 768 bytes at 0x3D00, and the Amiga's Topaz 8 in Kickstart. The
+      BBC and CPC offsets above are not verified — the other four are. Sourcing
+      any of them is a licensing question as much as a technical one (Cloanto,
+      Amstrad, Acorn/RISC OS Open), so it is not simply a matter of extraction.
+      The hook exists (`PETSCII.setFont(mode, glyphs)`), so this stays additive.
+
+- [ ] **Machine art on the boot screen.** Pixel art of each machine beside its
+      startup text. The boot screen now has the room for it — it holds the whole
+      slot for two seconds and then clears — which is what made this worth doing
+      at all. Reference photos supplied for the CPC 464, the ZX Spectrum, and a
+      CBM 8032; the BBC Micro and the C64 still need one.
+
+- [x] **Smooth condition art for the Modern theme** (1.3.0, `3214d2b`). Nine
+      stroked 24x24 condition sets on `fontMode === 'system'`. Eight of the nine
+      were checked structurally rather than visually; that is where to look
+      first if one renders wrong on the device.
+
+- [x] **Boot-accurate startup screens** (1.4.0). Every theme's startup text is
+      now the machine's own, verbatim and at its real length — four lines for
+      the CPC 464, one for the Spectrum, at the foot of the screen where the
+      real one sat. The homage wording that said WEATHER where the machine said
+      BASIC is gone; the widget's own line is `load`, which on all six machines
+      was something the user typed. That line also carries the version, so the
+      device still states which build it is running.
+
+- [x] **Lowercase and `©` in the font** (1.4.0). 27 new glyphs. The BBC, CPC,
+      Spectrum and Amiga all boot in mixed case, so rendering them in capitals
+      was an inaccuracy, not a stylistic choice. Case is now a property of the
+      machine: the C64 and PET fold to their uppercase/graphics set, the rest do
+      not. The font test sets mixed case before probing — without that it would
+      have passed vacuously, reporting every missing lowercase glyph as present.
+
+- [x] **Three palettes corrected against sampled references** (1.4.0). The Amiga
+      theme was Workbench 1.3 blue while the reference is the Kickstart 3.1 ROM
+      screen: `#411040` on `#e9a888`, both sampled. The CPC's blue is `#000088`,
+      not `#000080`. The Spectrum's paper is `#d0d0d0`, not white.
+
+- [x] **Tap to change theme** (1.3.2, `1710ee2`). Steps through THEME_ORDER and
+      wraps; the iCUE combobox still wins when it changes. Also fixed a theme
+      picked in the settings panel not appearing until the widget reloaded.
+
+- [x] **`tab-buttons` throws in iCUE's settings panel** (`c1f7644`). Moved
+      `tempUnit` and `colorTheme` to `combobox`. iCUE's own
+      TabButtonsEditorSetting.qml:33 calls `rowCount()` on a QVariantList, which
+      throws for every possible payload — Corsair's bundled widgets included.
 
 ## Claude Code Usage — 1.9.0
 
@@ -196,7 +236,8 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ## Both widgets
 
-- [ ] **tab-buttons throws in iCUE's settings panel:**
+- [x] **tab-buttons throws in iCUE's settings panel** (fixed in `c1f7644` by
+      moving off the control; the underlying bug is iCUE's):
       `TabButtonsEditorSetting.qml:33: TypeError: Property 'rowCount' of object
       [object Object],[object Object],[object Object] is not a function`. Fires
       for C64 Weather's `tempUnit` and the usage widget's `colorTheme`. It is in

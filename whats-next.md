@@ -1,17 +1,16 @@
 # Handoff — Xeneon Edge widgets
 
-Written 2026-08-30, rewritten at ~09:15 and topped up at the end of the drain
-that followed. Replaces the version written at f0c4a29.
+Written 2026-08-30. Replaces the version written at f0c4a29, and updated again
+after the usage-widget stats work landed.
 
 Repo: `C:\Users\mit\claude\icue` → https://github.com/MichaelTroelsen/xeneon-edge-widgets
-(public, `main`). The widget is at **C64 Weather 1.5.4**, Claude Code Usage
-**1.9.1**.
+(public, `main`). The widgets are at **C64 Weather 1.5.4** and **Claude Code
+Usage 1.10.0**.
 
-**This file was rewritten mid-drain and was stale within the hour** — three
-times over this session. The lesson is recorded in the conventions below and is
-worth repeating here: write the handoff LAST, after the work is committed. What
-follows was reconciled against `.claude/tasks/runs.jsonl` at the end of the
-drain, not during it.
+**This file went stale within the hour three times earlier in the session.** The
+lesson is in the conventions below and is worth repeating here: write the handoff
+LAST, after the work is committed. This revision was written after the commits it
+describes were made, and reconciled against `.claude/tasks/runs.jsonl`.
 
 <original_task>
 The session opened with **"read what next"**. Everything after came from the
@@ -31,6 +30,10 @@ user's follow-ups, in order:
    tempuratur size is fine."**
 6. **"i have reloaded the widgets"** (twice), **"please check all themes"**,
    **"any suggested improvements"**.
+7. Two `/stats` screenshots with **"can you make stats like this be added? to
+   the claude code widget?"** — the Overview heatmap and the Models chart.
+8. **"add code review of server js to the todo list."**
+9. **"loop 4 /runtask next"**, then **"commit and push"** and **"update docs."**
 </original_task>
 
 <work_completed>
@@ -50,6 +53,9 @@ carries this file, so it is not listed below.
 | `f0c4a29` | Handoff (superseded by this file) |
 | `3dc0c4b` | Each machine appears beside its own boot screen (1.5.0) |
 | `fb8520c` | Bigger small text on the weather widget (1.5.1) |
+| `74ab741` | A test that looks at the widget, and the defects it found |
+| `5cc7e20` | Serve Claude Code's own stats rollup from the feed |
+| `200916e` | A fourth view for the usage widget: all time (1.10.0) |
 
 ## What the widget does now that it did not
 
@@ -73,6 +79,25 @@ carries this file, so it is not listed below.
 - **Bigger small text** (1.5.1): `--font-boot` +53%, `--font-label` +50%,
   `--font-hero` deliberately unchanged.
 
+## What the USAGE widget does now that it did not
+
+- **A `stats` block on `GET /usage`**, read from `~/.claude/stats-cache.json`
+  through `CLAUDE_USAGE_STATS_FILE`, mtime-cached, gated on `version === 5`.
+  Absent / unparseable / wrong-version each return
+  `stats: {unavailable: "<reason>"}` with the rest of the payload intact.
+- **A fourth view, All time** (1.10.0): a contribution heatmap plus eight
+  headline figures — sessions, messages, active days, current and longest
+  streak, busiest day, top model, total tokens. Tapping cycles four views and
+  wraps; the indicator has four dots.
+- **The heatmap is laid out by CALENDAR DATE, not array position.** The rollup
+  writes a row only for a day that had activity, so it is sparse — 92 rows
+  across a 284-day span here. This is the single most important thing to know
+  before touching that view: packing the entries side by side draws a
+  plausible-looking grid in which every date is wrong, and that is exactly what
+  the first attempt did.
+- **`stats.unavailable` prints the reason** rather than drawing an empty grid,
+  which would read as months of silence instead of a missing file.
+
 ## Tests
 
 `C64Weather/test/theme.test.js` is new this session — 65 checks over a stub DOM
@@ -89,27 +114,44 @@ mixed case before probing.
 
 <work_remaining>
 
-Everything open is in `.claude/tasks/whattask.json`. Six tasks ran in the drain
-that followed this file's first draft; **only two remain, and both are yours** -
-neither is blocked on work.
+Everything open is in `.claude/tasks/whattask.json`, whose snapshot is keyed to
+HEAD `74ab741` and is therefore now one commit behind - re-run `/whattask`
+before trusting its readiness column.
 
-- **`render-smoke-test-in-ci`** - the local half is DONE. `C64Weather/test/layout.test.js`
-  exists, exits 0, and both its own mutation checks fire. The only unmet clause
-  is "green on all four matrix jobs", which needs a commit and a push before CI
-  can run. It is worth knowing why this test exists: THREE visual defects
-  reached the device in one session and every one was found by a human looking
-  at a picture, with all suites green throughout. On its first run it measured a
-  fourth that eye inspection had missed.
-- **`verify-touch-drag`** - needs a finger on the Edge, which is running a build
-  with the tap handler. The real risk is the USAGE widget, not the weather one:
-  its lists scroll AND it switches view on tap, both on the same 12px slop rule,
-  so a webview delivering a drag without intermediate pointer positions would
-  flip the view on every scroll.
+Four tasks are open, and one more exists only in `runs.jsonl` because nothing
+has re-planned since it was opened:
 
-Closed in that drain, for the record: `polish-visual-seams`,
-`modern-theme-shows-no-version`, `machine-art-distinctiveness`,
-`sync-docs-after-1-5-x` and this file's own rewrite. See `runs.jsonl` for what
-each actually found - three of them corrected a brief rather than following it.
+- **`server-js-code-review`** (opus, xhigh, subtask) - the user asked for this
+  explicitly. `usage-server/server.js` is 1138 lines, 35 functions and **11
+  module-level mutable variables**; it is framed in `TODO.md:208` as a
+  falsification pass, not a tidy-up.
+- **`usage-server-ci-add-stats-test`** (sonnet, low, subtask) - `stats.test.js`
+  is hermetic and passes, but is NOT in `.github/workflows/tests.yml`, so it
+  only runs when invoked by hand. The agent that wrote it stopped at the
+  undeclared path rather than editing the workflow, which is the behaviour the
+  touches rule exists to produce; this is the follow-up it opened.
+- **`usage-widget-model-token-chart`** (opus, medium, main) - the second half of
+  the user's `/stats` request: the Models chart. Its dependency
+  `usage-widget-stats-view` is now `done`, so it is READY. `dailyModelTokens`
+  (34 entries, fewer days than `dailyActivity`) is the source.
+- **`usage-widget-stats-layout-test`** (opened 2026-08-30, not yet in the plan)
+  - the render-and-probe harness for the All time view lives only in the
+  scratchpad, so nothing in the repo would catch a regression in it. C64Weather
+  has `test/layout.test.js` doing exactly this job; **ClaudeUsage has no test
+  directory at all**. The harness already carries the two Chrome calibrations
+  recorded below, which cost most of the time in that task.
+- **`verify-touch-drag`** (requires-user) - needs a finger on the Edge. The real
+  risk is the USAGE widget, not the weather one: its lists scroll AND it
+  switches view on tap, both on the same 12px slop rule, so a webview delivering
+  a drag without intermediate pointer positions would flip the view on every
+  scroll. That risk is now larger, not smaller - there are four views to flip
+  through instead of three.
+
+Closed for the record: `polish-visual-seams`, `modern-theme-shows-no-version`,
+`machine-art-distinctiveness`, `sync-docs-after-1-5-x`, `render-smoke-test-in-ci`,
+`usage-server-expose-stats` and `usage-widget-stats-view`. See `runs.jsonl` for
+what each actually found - several corrected their own brief rather than
+following it.
 
 ## Known limitations, documented not fixed
 
@@ -163,14 +205,16 @@ each actually found - three of them corrected a brief rather than following it.
   existence and "no empty `d`" all passed on a snow icon that rendered as three
   dots. If the claim is about how something LOOKS, the check has to look.
 
-## The recurring environment trap — SEVEN sightings
+## The recurring environment trap — EIGHT sightings
 
 **A backslash escape (`\n`, `\\E`, `\U`) or a Windows path inside a heredoc'd or
 `python -c` string gets mangled.** It has broken `live-detection.test.js`,
 `statusline.test.js`, `usagehtml.js`, the `usage-server/README.md` edit (which
 was committed *without* its documentation as a result), a `theme.test.js`
-heredoc, and — the seventh, on 2026-08-30 — a `python -c` regex that came back as
-a bare `re.PatternError` with nothing pointing at the cause.
+heredoc, a `python -c` regex that came back as a bare `re.PatternError` with
+nothing pointing at the cause, and — the eighth, while editing THIS FILE to
+record the seventh — a heredoc'd Python string containing `C:\Users`, which
+died on `truncated \UXXXXXXXX escape`.
 
 **Use the Write/Edit tools for any line containing a backslash escape or a
 Windows path, or put the script in a scratch `.py` file and run it by path.**
@@ -187,6 +231,22 @@ Windows path, or put the script in a scratch `.py` file and run it by path.**
   `petscii.js` tag; `getIcueProperty` reads `window[name]`.
 - Budget past the 2-second boot (`--virtual-time-budget=6000`) for the settled
   screen, and inside it (~900) for the boot screen.
+- **`--window-size` means different things in the two modes**, measured
+  2026-08-30 with a 100vw/100vh marker box. Under `--dump-dom` it is the window
+  and Chrome subtracts its chrome: `840,344` lays out at **824x193**, `856,495`
+  at a true **840x344**. Under `--screenshot` the viewport is resized to the FULL
+  window just before capture, so `840,344` is what gives an 840x344 page. A probe
+  and a screenshot of the same layout therefore need DIFFERENT flags. Have the
+  probe assert `window.innerWidth`/`innerHeight`. The figure the README carried
+  before this (824x249) was simply wrong, and nothing caught it.
+- **`window.innerWidth` read during load disagrees with what is painted** in
+  screenshot mode, for the same reason — it is the pre-resize size. Measuring it
+  early is how the wrong figure got recorded in the first place.
+- **CSS transitions do not advance under `--virtual-time-budget`**, and
+  `--force-prefers-reduced-motion` does not help. `getComputedStyle` returns the
+  colour a transitioning property had BEFORE the change; this made the usage
+  widget's view indicator look stuck on the first dot when it was in fact
+  correct. Inject `* { transition: none !important }` in the harness.
 
 ## Task-pipeline traps, new this session
 
@@ -325,9 +385,10 @@ Windows path, or put the script in a scratch `.py` file and run it by path.**
 ```bash
 node C64Weather/test/font.test.js        # font, art names, machine art
 node C64Weather/test/theme.test.js       # 65 checks: tap, boot, case, machines, version
-node C64Weather/test/layout.test.js      # NEW: renders 7 themes, measures every box
+node C64Weather/test/layout.test.js      # renders 7 themes, measures every box
 node usage-server/test/live-detection.test.js   # 18 checks
 node usage-server/test/statusline.test.js       # 35 checks
+node usage-server/test/stats.test.js            # 47 checks - NOT in CI yet
 ```
 
 `layout.test.js` is the only suite that LOOKS at the widget rather than reading
@@ -337,13 +398,24 @@ declared font-size. It carries its own two mutation checks. It has not run in CI
 yet — the workflow step exists but needs a push.
 
 `icuewidget validate C64Weather` → valid, 1.5.4.
+`icuewidget validate ClaudeUsage` → valid, 1.10.0.
+
+**The All time view has no test in the repo.** It was verified by a scratchpad
+harness (render + `getComputedStyle` probe, 16 checks, three mutations) that is
+not committed. See `usage-widget-stats-layout-test` above.
 
 ## Task queue
 
-`.claude/tasks/whattask.json`, `runs.jsonl` (23 lines) and `decisions.jsonl`
-(5 lines, two of which cancelled tasks outright). Only two tasks remain and both
-need a human, not work: push so CI can judge `layout.test.js`, and drag a finger
-on the device for `verify-touch-drag`.
+`.claude/tasks/whattask.json` (snapshot at `74ab741`, now one commit stale),
+`runs.jsonl` and `decisions.jsonl` (5 lines, two of which cancelled tasks
+outright). Three of the open tasks are runnable work; only `verify-touch-drag`
+needs a human.
+
+**Data bug in `runs.jsonl`, worth fixing before it misleads a runner:** several
+earlier records put FILE PATHS in their `opened` array instead of task ids -
+`C:/Program Files/Corsair/...HtmlWidgetCore.dll`, `.../widgets/Weather/index.html`,
+`C:/Users/mit/claude/icue/ClaudeUsage/index.html` and others. Anything walking
+`opened` to find newly-opened tasks will treat those as task ids.
 
 ## Open questions
 
@@ -351,12 +423,17 @@ on the device for `verify-touch-drag`.
   for the usage widget's scrolling lists, where a drag misread as a tap would
   flip the view.
 - Should the 10 s / 10 s poll intervals be tightened? Cheap, still not asked for.
-- Can `/stats`-style history be added to the usage widget? Researched and YES,
-  cheaply: `~/.claude/stats-cache.json` (19 KB) already holds `dailyActivity`
-  back to 2025-11-19, `dailyModelTokens`, `modelUsage`, `hourCounts` and totals
-  — its `totalSessions` matches what `/stats` prints, so it is the same source.
-  Caveats: undocumented internal file already at `version: 5`, a day stale
-  between `/stats` runs, and `dailyModelTokens` covers fewer days than
-  `dailyActivity`.
+- ~~Can `/stats`-style history be added to the usage widget?~~ **ANSWERED and
+  shipped** in `5cc7e20` + `200916e`. The Overview heatmap half is done; the
+  Models chart half is `usage-widget-model-token-chart`, still open. Caveats
+  that survive: `~/.claude/stats-cache.json` is an undocumented internal file
+  already at `version: 5` (the server refuses any other version outright), it is
+  a day stale between `/stats` runs, and `dailyModelTokens` covers fewer days
+  (34) than `dailyActivity` (92).
+- **The device will show "the feed is not serving a stats block"** until the
+  `ClaudeUsageFeed` scheduled task is restarted. That process was started from
+  the pre-`5cc7e20` `server.js`, so it serves no `stats` block at all. The view
+  is behaving correctly, but it will look like a fault. Restarting the task is
+  the fix, and it should happen before anyone judges the new view on hardware.
 
 </current_state>

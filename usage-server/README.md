@@ -565,6 +565,26 @@ without ever touching the real file, and `CLAUDE_USAGE_REFRESH_MS` shortens
 the background rebuild's cadence so a test can wait out a rebuild in
 milliseconds rather than the real 10s.
 
+`http.test.js` also spawns two more short-lived servers to drive
+`watchCredentials()` itself, which in normal operation only runs once
+`CLAUDE_USAGE_NO_REMOTE` is unset - unreachable under test by construction,
+since every suite here sets that guard to keep from firing a real request at
+an already rate-limited endpoint. `CLAUDE_USAGE_CREDENTIALS_FILE` (named
+above for `statusline.test.js`'s redaction checks) is what gets around that:
+under `CLAUDE_USAGE_NO_REMOTE`, server.js only calls `watchCredentials()` at
+all when this is also set, and it points the watcher at a fixture file
+instead of the real `~/.claude/.credentials.json`, so a test can rotate the
+fixture and watch the server react. `CLAUDE_USAGE_FAKE_OFFICIAL_ERROR`
+chooses the canned failure text that `fetchOfficialResult()` returns while
+`CLAUDE_USAGE_NO_REMOTE` is set, so a rotation can be made to resolve as a
+rate-limited (`HTTP 429 ...`) or a non-rate-limited (`HTTP 401 ...`) result
+and a test can assert the watcher's reset/backoff decision in each case,
+without a real request ever leaving the machine. Every canned result also
+carries a trailing `#N` call counter, incremented on each fetch, so a test
+can tell "the watcher fired again" apart from "the watcher left the last
+result alone" even when both happen within the same millisecond. Both
+overrides are unset in normal use.
+
 ## Cost
 
 The index is incremental: a file is only re-parsed from the byte offset where it

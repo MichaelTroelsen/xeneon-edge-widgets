@@ -131,6 +131,8 @@ function boot(opts) {
     removeItem: k => { delete store[k]; }
   };
   if (opts.theme !== undefined) window.theme = opts.theme;
+  if (opts.location !== undefined) window.cityName = opts.location;
+  if (opts.refreshMinutes !== undefined) window.refreshMinutes = opts.refreshMinutes;
 
   const petsciiWindow = {};
   new Function('window', petsciiSrc)(petsciiWindow);
@@ -139,8 +141,16 @@ function boot(opts) {
   const timers = makeTimers(clock);
   const noop = () => 0;
   /* A fetch that never settles: the widget may reach refresh() once the boot
-     retries drain, and this keeps it from touching the network or throwing. */
-  const fetchStub = () => new Promise(() => {});
+     retries drain, and this keeps it from touching the network or throwing.
+     opts.fetch overrides this for suites that need to control fetch outcomes
+     (the retry-after-failure tests below). */
+  const fetchCalls = [];
+  const defaultFetch = () => new Promise(() => {});
+  const fetchImpl = opts.fetch || defaultFetch;
+  const fetchStub = (url, fetchOpts) => {
+    fetchCalls.push(url);
+    return fetchImpl(url, fetchOpts);
+  };
   new Function('window', 'document', 'localStorage', 'setTimeout', 'clearTimeout',
     'setInterval', 'clearInterval', 'PETSCII', 'Date', 'fetch', widgetSrc)(
     window, document, localStorage, timers.setTimeout, timers.clearTimeout,
@@ -149,11 +159,18 @@ function boot(opts) {
   const fire = (type, e) => (document.listeners[type] || []).forEach(fn => fn(e));
 
   return {
-    store, window, PETSCII, clock, timers, document,
+    store, window, PETSCII, clock, timers, document, fetchCalls,
     booting: () => document.querySelector('.widget-root').classes.has('is-booting'),
     bootLines: () => document.getElementById('boot').children.length,
     machine: () => document.getElementById('machine').innerHTML,
     advance: ms => timers.advance(ms),
+    /* Which of the four mutually-exclusive panels showState() last picked -
+       the display style is the one thing render logic actually toggles. */
+    state() {
+      const names = ['loading-state', 'error-state', 'empty-state', 'content'];
+      const shown = names.filter(n => document.querySelector('.' + n).style.display === '');
+      return shown.length === 1 ? shown[0] : shown;
+    },
     /* A theme is live when its class is on .widget-root - the one thing the
        stylesheet actually reads. */
     theme() {
@@ -376,6 +393,136 @@ check('the manifest declares the widget interactive', manifest.interactive, true
 check('a click fallback exists for contexts without pointer events',
   /addEventListener\('click', cycleTheme\)/.test(widgetSrc), true);
 
-console.log('');
-console.log(failures ? `${failures} FAILED` : 'all passed');
-process.exit(failures ? 1 : 0);
+/* Real (not simulated) microtask flush: refresh()'s promise chain settles on
+   the real microtask queue regardless of the fake clock, so every assertion
+   that follows a boot() or an advance() that should cross a promise boundary
+   needs one of these first. A macrotask (setImmediate) always runs after the
+   whole microtask queue has drained, however many .then hops are queued. */
+function flush() {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
+/* Bypasses bootCheck's own 15-step, 100ms-apart polling loop (see widget.js)
+   by making its very first check see an already-initialized iCUE, so
+   onIcueInitialized fires synchronously inside boot() with no timer left
+   dangling to fire unpredictably mid-test later. Scoped tightly around the
+   boot() call so it cannot affect any other suite in this file. */
+function bootInitialized(opts) {
+  global.iCUE_initialized = true;
+  try {
+    return boot(opts);
+  } finally {
+    delete global.iCUE_initialized;
+  }
+}
+
+async function retryTests() {
+  console.log('retrying quickly after a failed fetch:');
+
+  /* Coordinates skip the geocoder (see COORD_RE in widget.js), so each
+     refresh attempt makes exactly one fetch call - fetchWeather's - which
+     keeps the call count a direct count of retries. */
+  const COORDS = '51.50,-0.12';
+
+  function reject() { return Promise.reject(new Error('network down')); }
+  function ok() {
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        current: { temperature_2m: 9, weather_code: 1, is_day: 1 },
+        daily: {}
+      })
+    });
+  }
+  function hang() { return new Promise(() => {}); }
+
+  function makeCountingFetch(behaviors) {
+    let i = 0;
+    return () => behaviors[Math.min(i++, behaviors.length - 1)]();
+  }
+
+  {
+    const w = bootInitialized({ location: COORDS, refreshMinutes: 15,
+      fetch: makeCountingFetch([reject, reject, ok]) });
+    await flush();
+    check('first attempt fails straight into the error screen, not a blank one',
+      [w.fetchCalls.length, w.state()], [1, 'error-state']);
+
+    w.advance(9999);
+    await flush();
+    check('no second attempt before the 10s floor', w.fetchCalls.length, 1);
+    w.advance(1);
+    await flush();
+    check('the second attempt fires at the 10s floor', w.fetchCalls.length, 2);
+    check('still failing, still the error screen', w.state(), 'error-state');
+
+    w.advance(19999);
+    await flush();
+    check('the third attempt waits the doubled 20s, not another 10s',
+      w.fetchCalls.length, 2);
+    w.advance(1);
+    await flush();
+    check('the third attempt succeeds', [w.fetchCalls.length, w.state()], [3, 'content']);
+
+    w.advance(10 * 60000);
+    await flush();
+    check('a settled fetch does not keep retrying on the fast cadence',
+      w.fetchCalls.length, 3);
+  }
+
+  {
+    /* readRefreshMinutes() clamps to a 5-120 minute range (the slider's own
+       range), so 5 minutes (300000ms) is the shortest cap reachable - and
+       the one relevant case, since it's the closest the doubling ever gets
+       to overshooting the configured interval. 10s doubles five times
+       (10,20,40,80,160s) before 320s would overshoot 300s, at which point
+       it should clamp to exactly 300s rather than run past it. */
+    const w = bootInitialized({ location: COORDS, refreshMinutes: 5,
+      fetch: makeCountingFetch([reject, reject, reject, reject, reject, reject, reject, reject]) });
+    await flush();
+    check('attempt 1 at the boot fallback', w.fetchCalls.length, 1);
+
+    const preCapDelays = [10000, 20000, 40000, 80000, 160000];
+    for (let i = 0; i < preCapDelays.length; i++) {
+      w.advance(preCapDelays[i]);
+      await flush();
+      check(`attempt ${i + 2} after doubling to ${preCapDelays[i]}ms`,
+        w.fetchCalls.length, i + 2);
+    }
+
+    w.advance(300000);
+    await flush();
+    check('the next attempt clamps to the 300s cap, not a 320s double',
+      w.fetchCalls.length, 7);
+    w.advance(300000);
+    await flush();
+    check('and stays capped there rather than climbing further',
+      w.fetchCalls.length, 8);
+  }
+
+  {
+    /* The single-flight guard (`if (inFlight) return`) is only released when
+       the in-flight promise settles. A fetch that ignores its abort signal -
+       exactly what a real hung socket looks like - must still be forced to
+       settle, or every later retry silently no-ops forever. */
+    const w = bootInitialized({ location: COORDS, refreshMinutes: 15,
+      fetch: makeCountingFetch([hang, ok]) });
+    await flush();
+    check('the first attempt goes out and hangs', w.fetchCalls.length, 1);
+    w.advance(20000);
+    await flush();
+    check('the hang alone does not produce a second attempt yet',
+      w.fetchCalls.length, 1);
+    w.advance(60000);
+    await flush();
+    check('the request-timeout guard eventually forces it to settle, ' +
+      'freeing the guard for a retry that succeeds',
+      [w.fetchCalls.length, w.state()], [2, 'content']);
+  }
+}
+
+retryTests().then(() => {
+  console.log('');
+  console.log(failures ? `${failures} FAILED` : 'all passed');
+  process.exit(failures ? 1 : 0);
+});

@@ -12,7 +12,7 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.5.4';
+  var WIDGET_VERSION = '1.5.5';
 
   /* ---------- themes ----------
      Each theme is a palette (CSS class), a startup screen, and a font mode. The
@@ -194,6 +194,9 @@
   var els = {};
   var refreshTimer = null;
   var inFlight = null;
+  var retryTimer = null;
+  var retryDelayMs = 0;   /* 0 = not currently in a retry backoff */
+  var RETRY_INITIAL_MS = 10000;
   var lastQuery = null;   /* location string the current data was fetched for */
   var current = null;     /* normalised reading, always in Celsius */
   var offline = false;    /* last fetch failed and we are showing older data */
@@ -336,14 +339,29 @@
     var controller = (typeof AbortController === 'function') ? new AbortController() : null;
     var timer = setTimeout(function () { if (controller) controller.abort(); }, REQUEST_TIMEOUT_MS);
     var opts = controller ? { signal: controller.signal } : {};
-    return fetch(url, opts).then(function (res) {
+    var settled = false;
+    /* abort() only works when AbortController exists; on a webview without it
+       (or a fetch that ignores the abort signal) the underlying promise can
+       simply never settle, which would wedge `inFlight` forever and starve
+       every future refresh and retry. Race a plain timer alongside it so this
+       promise always settles within REQUEST_TIMEOUT_MS regardless of whether
+       the abort actually took effect. */
+    var timeoutGuard = new Promise(function (_, reject) {
+      setTimeout(function () {
+        if (!settled) reject(new Error('request timed out'));
+      }, REQUEST_TIMEOUT_MS + 500);
+    });
+    var request = fetch(url, opts).then(function (res) {
+      settled = true;
       clearTimeout(timer);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return res.json();
     }, function (err) {
+      settled = true;
       clearTimeout(timer);
       throw err;
     });
+    return Promise.race([request, timeoutGuard]);
   }
 
   var COORD_RE = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/;
@@ -565,8 +583,10 @@
     inFlight = resolveLocation(query)
       .then(function (place) {
         if (!place) {
-          /* Geocoder answered, the place just does not exist. */
+          /* Geocoder answered, the place just does not exist. This is not a
+             transient failure, so it does not enter the retry backoff. */
           if (!current) showState('empty-state');
+          clearRetry();
           return null;
         }
         return fetchWeather(place).then(function (reading) {
@@ -575,6 +595,7 @@
           offline = false;
           saveCache(reading);
           render();
+          clearRetry();
           return reading;
         });
       })
@@ -587,8 +608,35 @@
         } else {
           showState('error-state');
         }
+        scheduleRetry();
       })
-      .then(function () { inFlight = null; });
+      /* Both callbacks run inFlight = null, so a synchronous throw anywhere
+         above (not just the expected reject path) still releases the
+         single-flight guard instead of wedging it forever. */
+      .then(clearInFlight, clearInFlight);
+  }
+
+  function clearInFlight() {
+    inFlight = null;
+  }
+
+  function clearRetry() {
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+    retryDelayMs = 0;
+  }
+
+  /* A failed fetch re-enters quickly instead of waiting out the full refresh
+     interval (5-120 minutes): 10s, doubling each further failure, capped at
+     the configured interval. This is what lets a cold boot before Wi-Fi
+     associates recover in well under a minute instead of sitting on the
+     C64 error screen for up to 15 minutes. The endpoints are public and
+     rate-limited, so this stays a bounded backoff, never a tight loop. */
+  function scheduleRetry() {
+    var capMs = readRefreshMinutes() * 60000;
+    retryDelayMs = retryDelayMs ? Math.min(retryDelayMs * 2, capMs) : RETRY_INITIAL_MS;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(function () { refresh(true); }, retryDelayMs);
   }
 
   function scheduleRefresh() {
@@ -673,7 +721,19 @@
      A plain click listener would also fire at the end of a drag, so a gesture
      counts as a tap only if the pointer barely moved and was not held. Pointer
      events cover mouse and touch alike; the click fallback is for any context
-     that does not deliver them. */
+     that does not deliver them.
+
+     DECIDED: tap stays cycleTheme-only, even in error-state, rather than also
+     forcing a refresh there. It is the one gesture this device forwards, it
+     already has a settled, shipped meaning, and overloading it would make it
+     ambiguous right when a user is staring at the error screen wondering
+     what a tap will do. The retry backoff below now closes the actual gap
+     (recovering in well under a minute on its own); a tap-to-retry would
+     only shave a few seconds off that in the rare case someone is watching
+     the screen at that exact moment, and touch-drag is not forwarded here
+     so there is no unused second gesture to spend on it either. Revisit
+     only if the backoff still leaves a case where the widget sits idle
+     for longer than a user is willing to wait with their eyes on it. */
   function bindTap() {
     var startX = 0, startY = 0, startT = 0, tracking = false;
 

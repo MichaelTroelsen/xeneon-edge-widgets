@@ -585,6 +585,19 @@ can tell "the watcher fired again" apart from "the watcher left the last
 result alone" even when both happen within the same millisecond. Both
 overrides are unset in normal use.
 
+One `CLAUDE_USAGE_*` variable is **not** test-only: `CLAUDE_USAGE_VERBOSE`
+(server.js:1259) prints a line after every successful rebuild giving how long
+it took and the session, workflow and subtask counts it produced. It is a
+debugging switch for a human watching the feed, not something a test sets.
+
+Setting it on the scheduled task achieves nothing, which is the part worth
+knowing before you try it. `start-hidden.vbs` launches the server with
+`shell.Run "node.exe ...", 0, False` — window style 0, no redirection — so
+stdout goes to a hidden console that is never shown and never captured. The
+line only reaches you when you run `node usage-server/server.js` yourself in a
+terminal. Use `/health` and the `generatedAt` it reports to see whether the
+scheduled instance is rebuilding.
+
 ## Cost
 
 The index is incremental: a file is only re-parsed from the byte offset where it

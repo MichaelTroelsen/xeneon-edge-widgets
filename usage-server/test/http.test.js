@@ -131,6 +131,152 @@ function checkTrue(name, actual) {
   check(name, actual, true);
 }
 
+/* --- CLAUDE_USAGE_* env-override cross-check (CODE <-> DOCS) --------------
+ *
+ * BUG THIS GUARDS AGAINST: README.md:128 once named CLAUDE_USAGE_CREDENTIALS_FILE
+ * as an override before server.js read it at all - `git show
+ * 0a09297~1:usage-server/server.js | grep -c CLAUDE_USAGE_CREDENTIALS_FILE`
+ * returns 0, and the pre-fix credentials watcher matched a hardcoded
+ * '.credentials.json' instead. The doc asserted an override that did not
+ * exist, and nothing noticed until the code happened to catch up.
+ * Separately, CLAUDE_USAGE_FAKE_OFFICIAL_ERROR shipped in server.js (commit
+ * 0a09297) undocumented and stayed that way until commit 642f80a. Both
+ * directions below are asserted independently because they catch different
+ * mistakes - see the two mutation tests further down for what each one
+ * actually catches when it fires.
+ *
+ * EXTRACTION: a name counts as "read by server.js" only if it appears as the
+ * literal expression process.env.CLAUDE_USAGE_<NAME> (or the bracketed form
+ * process.env['CLAUDE_USAGE_<NAME>']) OUTSIDE any /* *\/ block comment.
+ * Block comments are stripped from a copy of the source before matching, so
+ * a name that is only discussed in prose inside one of server.js's comment
+ * blocks about these overrides (there are three: ~line 41-46, ~164-170,
+ * ~1437-1448) does not, by itself, count as a read. The mutation test below
+ * proves this: it removes a real read and confirms the leftover comment
+ * mention does NOT keep the check green, and separately shows a naive
+ * anywhere-in-the-file scan WOULD have been fooled by it. Requiring the
+ * literal process.env. prefix also means a bare string literal that happens
+ * to mention a CLAUDE_USAGE_* name (e.g. the error text built at
+ * server.js:178) is never mistaken for a read.
+ *
+ * WHAT THIS CANNOT SEE (stated, not implied):
+ *   - A computed lookup such as process.env['CLAUDE_USAGE_' + suffix] would
+ *     not be matched. server.js has none as of this writing (checked by
+ *     hand: no `process.env[` of any form appears in server.js today except
+ *     the literal-string ones this extraction already understands).
+ *   - A name that is present on BOTH sides, correctly, but whose DOCUMENTED
+ *     DESCRIPTION in README.md is stale or wrong. This is a name-presence
+ *     check only - it cannot validate prose once a name is found.
+ *   - CLAUDE_USAGE_STATUSLINE_FILE: real and documented, but read inside
+ *     statusline.js (`process.env.CLAUDE_USAGE_STATUSLINE_FILE`, verified by
+ *     hand) rather than in server.js's own source text - server.js only
+ *     requires that module (`require('./statusline')`, server.js:21). This
+ *     check is scoped to server.js's and README.md's own text (this task's
+ *     declared touches include neither statusline.js nor any other sibling
+ *     file), so it cannot confirm that read directly and carries this one
+ *     name as an explicit, hand-verified exception rather than silently
+ *     dropping it - a NEW name that isn't this one still fails DOCS -> CODE.
+ */
+
+function stripBlockComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+function extractCodeReads(src) {
+  const code = stripBlockComments(src);
+  const names = new Set();
+  const dotRe = /process\.env\.(CLAUDE_USAGE_[A-Z0-9_]+)/g;
+  const bracketRe = /process\.env\[\s*['"](CLAUDE_USAGE_[A-Z0-9_]+)['"]\s*\]/g;
+  let m;
+  while ((m = dotRe.exec(code))) names.add(m[1]);
+  while ((m = bracketRe.exec(code))) names.add(m[1]);
+  return names;
+}
+
+/* Deliberately naive: matches the token anywhere at all, comments and
+   strings included. Used both to derive "what README.md mentions" (docs are
+   prose, there is no comment/code distinction to make) and, further down, to
+   demonstrate what a careless CODE extractor would have gotten wrong. */
+function extractAnyMention(src) {
+  const names = new Set();
+  const re = /CLAUDE_USAGE_[A-Z0-9_]+/g;
+  let m;
+  while ((m = re.exec(src))) names.add(m[0]);
+  return names;
+}
+
+/* One verified, explicit exception - see the EXTRACTION comment block above. */
+const KNOWN_CROSS_FILE_DOC_NAMES = new Set(['CLAUDE_USAGE_STATUSLINE_FILE']);
+
+function mismatches(codeNames, docNames) {
+  const undocumented = [...codeNames].filter(n => !docNames.has(n));
+  const phantom = [...docNames].filter(n => !codeNames.has(n) && !KNOWN_CROSS_FILE_DOC_NAMES.has(n));
+  return { undocumented, phantom };
+}
+
+function testEnvOverridesMatchDocs() {
+  console.log('CLAUDE_USAGE_* overrides: server.js reads vs README.md documents:');
+
+  const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const readmeSrc = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+
+  console.log('  extraction self-checks (comment / string-literal / real read / bracketed):');
+  checkTrue('extraction ignores a name that only appears inside a block comment',
+    !extractCodeReads('/* process.env.CLAUDE_USAGE_COMMENT_ONLY_TEST */').has('CLAUDE_USAGE_COMMENT_ONLY_TEST'));
+  checkTrue('extraction ignores a bare string literal - not a process.env read',
+    !extractCodeReads("const s = 'CLAUDE_USAGE_STRING_ONLY_TEST';").has('CLAUDE_USAGE_STRING_ONLY_TEST'));
+  checkTrue('extraction finds a genuine process.env.CLAUDE_USAGE_* read',
+    extractCodeReads('const x = process.env.CLAUDE_USAGE_REAL_READ_TEST;').has('CLAUDE_USAGE_REAL_READ_TEST'));
+  checkTrue("extraction finds a bracketed process.env['CLAUDE_USAGE_*'] read",
+    extractCodeReads("const x = process.env['CLAUDE_USAGE_BRACKET_TEST'];").has('CLAUDE_USAGE_BRACKET_TEST'));
+
+  const codeNames = extractCodeReads(serverSrc);
+  const docNames = extractAnyMention(readmeSrc);
+
+  console.log(`  server.js reads (${codeNames.size}): ${[...codeNames].sort().join(', ')}`);
+  console.log(`  README.md mentions (${docNames.size}): ${[...docNames].sort().join(', ')}`);
+
+  console.log('  CODE -> DOCS: every override server.js reads must be documented:');
+  for (const name of [...codeNames].sort()) {
+    check(`  ${name} (read in server.js) is documented in README.md`, docNames.has(name), true);
+  }
+
+  console.log('  DOCS -> CODE: every override README.md documents must actually exist:');
+  for (const name of [...docNames].sort()) {
+    check(`  ${name} (in README.md) is actually read in server.js`,
+      codeNames.has(name) || KNOWN_CROSS_FILE_DOC_NAMES.has(name), true);
+  }
+
+  console.log('  mutation A: a brand-new override added to the code, left undocumented:');
+  const mutatedA = serverSrc + '\nconst NEW = process.env.CLAUDE_USAGE_TOTALLY_NEW_OVERRIDE;\n';
+  const mA = mismatches(extractCodeReads(mutatedA), docNames);
+  checkTrue('mutation A: a new undocumented override IS caught by CODE -> DOCS',
+    mA.undocumented.includes('CLAUDE_USAGE_TOTALLY_NEW_OVERRIDE'));
+
+  console.log('  mutation B: the real historical bug, replayed - a documented override');
+  console.log('  deleted from the live reads, with its comment mention left behind:');
+  /* Renames every literal process.env.CLAUDE_USAGE_CREDENTIALS_FILE read (server.js
+     lines 45 and 1448) to a different identifier. The prose mention at line
+     ~1445 ("an explicit CLAUDE_USAGE_CREDENTIALS_FILE means a test opted in")
+     has no process.env. prefix, so it is untouched by the rename and survives
+     verbatim - reproducing exactly the shape of the real README:128 bug. */
+  const mutatedB = serverSrc.split('process.env.CLAUDE_USAGE_CREDENTIALS_FILE')
+    .join('process.env.CLAUDE_USAGE_CREDENTIALS_FILE_RENAMED_FOR_TEST');
+  const mutatedBCode = extractCodeReads(mutatedB);
+  checkTrue('mutation B: the comment-only mention is NOT treated as a read (extraction is comment-aware)',
+    !mutatedBCode.has('CLAUDE_USAGE_CREDENTIALS_FILE'));
+  const naiveScanOfMutatedB = extractAnyMention(mutatedB);
+  checkTrue('mutation B: a naive anywhere-in-file scan WOULD have been fooled by the surviving comment',
+    naiveScanOfMutatedB.has('CLAUDE_USAGE_CREDENTIALS_FILE'));
+  const mB = mismatches(mutatedBCode, docNames);
+  checkTrue('mutation B: a documented override removed from the code IS caught by DOCS -> CODE',
+    mB.phantom.includes('CLAUDE_USAGE_CREDENTIALS_FILE'));
+
+  console.log('  BLIND SPOT (by construction, not a bug): a name present on both sides is never');
+  console.log('  checked for whether README.md\'s prose about it is still accurate, and a computed');
+  console.log('  process.env[\'CLAUDE_USAGE_\' + x] access would not be matched.');
+}
+
 async function runMalformedRequestSuite() {
   fs.mkdirSync(PROJECTS, { recursive: true });
   const configFile = path.join(ROOT, 'limits.json');
@@ -897,6 +1043,7 @@ async function main() {
   await testCredentialsWatcherRateLimited();
   await testCredentialsWatcherResetsOnGenuineWrite();
   await testSeenCountsSurviveTheCap();
+  testEnvOverridesMatchDocs();
 
   console.log('');
   console.log(failures ? `${failures} FAILED` : 'all passed');

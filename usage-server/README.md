@@ -90,7 +90,12 @@ were all deleted still behaves as before.
 Two labelling limits follow from what is actually on disk. A subtask row is
 named by the **first line of the agent's prompt** — a workflow's `opts.label`
 names the row in `/workflows` but is never written to disk, so it cannot name
-anything here. And a workflow is named from the script file in the session's
+anything here. The consequence for whoever writes the workflow: put the
+distinguishing text first and any shared preamble after, since a fan-out
+whose prompts open with the same boilerplate names every subtask row
+identically — observed as a ten-agent fan-out rendering ten identical rows
+reading "You are auditing the repo at C:\..." because all ten prompts shared
+an opening line. And a workflow is named from the script file in the session's
 `workflows/scripts/`; a run launched from a script kept elsewhere (this repo's
 `test/` directory, say) falls back to its short run id, as in `wf f354826c-6c2`.
 

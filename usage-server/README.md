@@ -524,6 +524,20 @@ that workflow's steps alongside them.
   as a table, and the config actually in force. An addition alongside `/usage`,
   which is unchanged and remains what the widget reads. Self-refreshes every 30s.
 
+**Testing this by hand: don't reach for `Invoke-WebRequest`/`Invoke-RestMethod`.**
+.NET's `Uri` class normalises a bare `%` to `%25` before the request ever
+leaves the machine, so PowerShell's HTTP clients cannot put the malformed
+byte on the wire - `%25` decodes cleanly to a literal `%`, which just falls
+through to "not a date" like any other bad `at=` value. Measured side by
+side against a spare-port instance:
+```
+/usage?at=%          -> 400  {"error":"malformed at= value"}
+/usage?at=%25        -> 200  (normalised - a DIFFERENT request)
+/usage?at=notadate   -> 200  (decodes fine, just is not a date)
+```
+Use something that sends the path byte-for-byte instead, e.g. `curl
+--path-as-is` or Python's `http.client` with `putrequest`.
+
 `test/http.test.js` covers the malformed-request handling above plus the
 `stale`/`unbuilt` `/health` states, spawning three short-lived servers of its
 own. Two more overrides exist purely for that, in the same style as

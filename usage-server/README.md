@@ -123,6 +123,69 @@ feed and fails if the lists never reported them. Allow ~20 seconds for work to
 appear and the same for it to clear — the server re-indexes every 10s and the
 widget polls every 10s, so a run shorter than that can still finish unseen.
 
+## Claude Code's own stats rollup
+
+`GET /usage` also carries a `stats` block: the same history Claude Code's own
+`/stats` screen shows — a per-day activity count, per-day token totals by
+model, lifetime model totals, session/message counts, the longest session on
+record, the first session's date, and message counts by hour of day. Unlike
+everything above, none of this is computed here. Claude Code already
+maintains the rollup at `~/.claude/stats-cache.json` and this only reads it:
+
+```jsonc
+"stats": {
+  "dailyActivity":     [ { "date", "messageCount", "sessionCount", "toolCallCount" }, … ],
+  "dailyModelTokens":  [ { "date", "tokensByModel": { "<model>": tokens } }, … ],
+  "modelUsage":        { "<model>": { "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens", … } },
+  "totalSessions":     296,
+  "totalMessages":     292800,
+  "longestSession":    { "sessionId", "timestamp", "duration", "messageCount" },
+  "firstSessionDate":  "2025-11-19T15:27:20.311Z",
+  "hourCounts":        { "5": 1, "6": 8, … }
+}
+```
+
+`dailyModelTokens` covers fewer days than `dailyActivity` — Claude Code did
+not always track per-model tokens — so the two are not the same length and
+should not be zipped together by index.
+
+**stats-cache.json is an undocumented Claude Code internal, and this matters
+more here than anywhere else in this server.** It already carries its own
+`version` field, already at `5`, meaning its shape has changed five times and
+can change again without warning — from a Claude Code release, not from
+anything this repo controls. A server that served a half-built block from a
+schema it did not recognise would draw a confident, wrong picture on the
+widget, which is worse than showing nothing. So:
+
+- The `version` field is checked against the one value this server was built
+  against (`5`). Anything else — including a version this server has simply
+  never seen — is treated as unavailable, not parsed best-effort.
+- The fields this server actually serves are shape-checked (array where an
+  array is expected, object where an object is expected, and so on). A file
+  that keeps `version: 5` but is missing or reshapes one of them is caught the
+  same way.
+- On any failure — the file absent, unparseable, an unrecognised version, or
+  a shape that fails the check — `stats.unavailable` carries a plain-text
+  reason and the rest of the `/usage` payload is served exactly as if `stats`
+  did not exist. Nothing throws, and a half-built block is never served.
+
+`CLAUDE_USAGE_STATS_FILE` overrides the source path, in the same style as the
+other three overrides above, and is unset in normal use. The file is only
+re-read when its mtime changes, the same idiom `statusline.js` and
+`limits.json` already use — not on every request.
+
+```bash
+node usage-server/test/stats.test.js
+```
+
+covers the degradation, not just the happy path: the file absent, unparseable,
+carrying a `version` this server does not recognise, and — the case a version
+bump alone would not catch — a `version: 5` file missing a field this server
+reads. Every one of those asserts `stats.unavailable` is set *and* that the
+rest of the payload (sessions, workflows, counts, …) is unaffected, plus a
+recovery case (a file that goes bad and comes good again is re-served, not
+stuck on either cached state) and the happy path itself. 44 checks.
+
 ## Anthropic's own figures
 
 The same figures reach this server two ways. They fail in opposite conditions,
@@ -411,15 +474,19 @@ timestamps. If yours resets on another day set `weekday` (0 = Sunday) and
 
 ## Continuous integration
 
-`.github/workflows/tests.yml` runs both hermetic suites on every push and pull
+`.github/workflows/tests.yml` runs the hermetic suites on every push and pull
 request, across Ubuntu and Windows on Node 20 and 22, plus a `node --check` over
 every source file. Ubuntu is there to catch the path and line-ending assumptions
 that are easy to make while developing on Windows. The end-to-end probe is
 deliberately excluded: it needs an agent runner and spends real tokens.
+`stats.test.js` is hermetic in the same way as the other two and should be
+added to that workflow's steps; as of this writing it still needs to be wired
+in there and only runs when invoked directly.
 
 ## Endpoints
 
-- `GET /usage` — the full snapshot
+- `GET /usage` — the full snapshot, including the `stats` block (see
+  [Claude Code's own stats rollup](#claude-codes-own-stats-rollup))
 - `GET /usage?at=<epoch-ms | ISO timestamp>` — the snapshot as it would have
   been at that moment, rebuilt on demand and never cached. Windows are capped at
   the given time, so it does not count usage from after it. Useful for comparing

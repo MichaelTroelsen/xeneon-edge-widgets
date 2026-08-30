@@ -30,6 +30,10 @@ const CLAUDE_DIR = path.join(HOME, '.claude');
 const PROJECTS_DIR = process.env.CLAUDE_USAGE_PROJECTS_DIR ||
   path.join(CLAUDE_DIR, 'projects');
 const CONFIG_PATH = path.join(__dirname, 'limits.json');
+/* Same reasoning as PROJECTS_DIR above: fixtures go through this override so a
+   test never reads (or worse, requires) the developer's real stats-cache.json. */
+const STATS_FILE = process.env.CLAUDE_USAGE_STATS_FILE ||
+  path.join(CLAUDE_DIR, 'stats-cache.json');
 
 const WINDOW_DAYS = 8;                       /* transcripts older than this are ignored */
 const SESSION_BLOCK_MS = 5 * 60 * 60 * 1000; /* the "current session" is a 5-hour block */
@@ -240,6 +244,89 @@ function loadConfig() {
     }
   }
   return config;
+}
+
+/* -------------------------------------------------------------------- stats */
+
+/* Claude Code maintains its own /stats rollup at ~/.claude/stats-cache.json -
+   the same source its own /stats screen reads, so this only serves it, never
+   recomputes it. It is an UNDOCUMENTED internal file already at `version: 5`;
+   the shape has changed five times and can change again without warning. A
+   served block built from a schema this code does not recognise would draw a
+   confident, wrong picture on the widget, so an unrecognised version - or
+   anything that fails the shape check below - is treated as fully
+   unavailable rather than parsed best-effort. Only the fields this server
+   actually serves are checked; a field Claude Code adds elsewhere does not
+   require a matching change here. */
+const STATS_SUPPORTED_VERSION = 5;
+
+let statsCache = null;
+let statsCacheMtime = 0;
+
+function isPlainObject(x) {
+  return x !== null && typeof x === 'object' && !Array.isArray(x);
+}
+
+function validStats(raw) {
+  return isPlainObject(raw) &&
+    raw.version === STATS_SUPPORTED_VERSION &&
+    Array.isArray(raw.dailyActivity) &&
+    Array.isArray(raw.dailyModelTokens) &&
+    isPlainObject(raw.modelUsage) &&
+    typeof raw.totalSessions === 'number' &&
+    typeof raw.totalMessages === 'number' &&
+    typeof raw.firstSessionDate === 'string' &&
+    isPlainObject(raw.hourCounts) &&
+    (raw.longestSession == null || isPlainObject(raw.longestSession));
+}
+
+/* Mirrors loadConfig()'s and statusline.read()'s mtime-cached-read idiom: the
+   file is only re-parsed when it has actually changed, so a rebuild every
+   REFRESH_MS does not mean a re-parse every REFRESH_MS. Never throws - every
+   failure path returns an explicit unavailable reason instead. */
+function readStats() {
+  let stat;
+  try {
+    stat = fs.statSync(STATS_FILE);
+  } catch (err) {
+    return { unavailable: 'stats-cache.json not found at ' + STATS_FILE };
+  }
+
+  if (statsCache && stat.mtimeMs === statsCacheMtime) return statsCache;
+
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+  } catch (err) {
+    const result = { unavailable: 'stats-cache.json could not be parsed: ' + err.message };
+    statsCache = result;
+    statsCacheMtime = stat.mtimeMs;
+    return result;
+  }
+
+  if (!validStats(raw)) {
+    const result = {
+      unavailable: 'stats-cache.json has version ' + JSON.stringify(raw && raw.version) +
+        ', not the supported ' + STATS_SUPPORTED_VERSION + ' (or an unrecognised shape)'
+    };
+    statsCache = result;
+    statsCacheMtime = stat.mtimeMs;
+    return result;
+  }
+
+  const result = {
+    dailyActivity: raw.dailyActivity,
+    dailyModelTokens: raw.dailyModelTokens,
+    modelUsage: raw.modelUsage,
+    totalSessions: raw.totalSessions,
+    totalMessages: raw.totalMessages,
+    longestSession: raw.longestSession || null,
+    firstSessionDate: raw.firstSessionDate,
+    hourCounts: raw.hourCounts
+  };
+  statsCache = result;
+  statsCacheMtime = stat.mtimeMs;
+  return result;
 }
 
 /* ------------------------------------------------------------- file walking */
@@ -915,6 +1002,10 @@ function build(nowOverride) {
       })
     },
     plan: (officialGood && officialGood.planTier) ? planLabelFromTier(officialGood.planTier) : cfg.planLabel,
+    /* Claude Code's own /stats rollup, read but never recomputed - see
+       readStats() above for why an unrecognised shape is withheld rather than
+       best-effort parsed. */
+    stats: readStats(),
     session: {
       /* Weighted totals are measured, and the bar is drawn against the user's
          own busiest recent block. There is deliberately no percentage here:

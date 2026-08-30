@@ -325,6 +325,32 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       view says so in words instead of drawing an empty grid, which would read
       as months of silence rather than as a missing file. The view indicator is
       now four dots.
+- [x] **Layout regression test — the widget's first test suite** (2026-08-30).
+      `test/layout.test.js`, modelled on C64Weather's: renders all four views
+      plus two stats-availability fixtures headless at 840×344 and asserts,
+      from `getBoundingClientRect`, that nothing overflows `.widget-root`,
+      that no all-time-stats headline figure (`.fig .v`) is truncated, and
+      that the stats grid and its "unavailable" note never show together.
+      Reads `VIEWS` and the starting view out of `widget.js` rather than
+      copying them, and hashes the three widget sources before and after to
+      prove a run mutates nothing. Carries two mutation checks.
+
+      The overflow check is scroll-aware: `.cols .col` and `.list ul` are the
+      two selectors ClaudeUsage.css deliberately makes `overflow-y: auto`, so
+      a descendant of either is allowed to run past its own clipped box —
+      that is what a scroller is for — while the scroller's own box is still
+      measured against `.widget-root`. Without that rule the suite opened at
+      73 false failures, every one a descendant of `.cols .col` or `.list
+      ul`; with it, 0.
+
+      One of the two mutation checks was found to be vacuous on the first
+      pass — widening `.meter .name` past `.widget-root` reported no overflow
+      — and diagnosed rather than papered over: not a specificity loss (the
+      injected `!important` rule was winning), but the flex algorithm's
+      default `flex-shrink: 1` quietly shrinking the forced `width: 300%`
+      back down to fit `.meter-top` alongside `.meter .value`. Adding
+      `flex-shrink: 0 !important` to the injected style makes the mutation
+      actually widen the box, and the check now fires.
 - [ ] **If the real formula is ever wanted**, it needs several panel readings at
       known times across one block, then candidate models tested against them —
       cache reads free, per-request cost, non-linear curve, reporting lag. Two

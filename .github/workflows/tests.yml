@@ -59,3 +59,10 @@ jobs:
       # writes its profile to the OS temp directory, never into the checkout.
       - name: c64 layout and scaling
         run: node C64Weather/test/layout.test.js
+      # Same approach as the c64 suite above, for the usage widget: renders its
+      # four views (plus the two stats-availability fixtures) headless at
+      # 840x344 and measures the real boxes. Scroll-aware - .cols .col and
+      # .list ul are deliberately scrolling containers, so a descendant of one
+      # is allowed to extend past it; the scroller's own box is still checked.
+      - name: usage widget layout
+        run: node ClaudeUsage/test/layout.test.js

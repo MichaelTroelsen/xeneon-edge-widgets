@@ -15,7 +15,11 @@
  * So this file measures four things:
  *
  *   OVERFLOW     no element's box extends outside .widget-root, in any of
- *                the four views.
+ *                the four views - except a descendant of one of the two
+ *                deliberately-scrolling containers (.cols .col, .list ul),
+ *                whose content is SUPPOSED to run past its own clipped box.
+ *                The scroller itself is still checked: it has no scrolling
+ *                ancestor of its own, so it is measured like everything else.
  *   ELLIPSIS     no .fig .v (an all-time-stats headline figure) is rendered
  *                narrower than its own text - that column is sized for a
  *                "six-figure message count" (see the comment on .figs in
@@ -387,6 +391,29 @@ window.__FIXTURE__ = __PAYLOAD__;
     var rr = root.getBoundingClientRect();
     out.root = { width: rr.width, height: rr.height };
 
+    /* ClaudeUsage.css puts overflow-y:auto on exactly two selectors (.cols
+       .col and .list ul) to make long tables/lists scroll instead of being
+       trimmed. Content inside one of those is SUPPOSED to extend past its
+       own box - that is what a scroller is - so it must not be measured
+       against .widget-root at all. The scroller element itself still must:
+       walking up from it finds no scrolling ancestor of its own (nothing
+       here nests scrollers), so it is measured normally through the same
+       loop below. This is the "skip descendants of scrollers, assert the
+       scroller itself" choice, not the "measure against the nearest
+       scrolling ancestor's box" one - the widget has no case where a
+       scroller's content has its own overflow limit narrower than
+       .widget-root, so there is nothing for that second box to catch here. */
+    function scrollingAncestor(el) {
+      var p = el.parentElement;
+      while (p) {
+        var pcs = window.getComputedStyle(p);
+        if (pcs.overflowY === 'auto' || pcs.overflowY === 'scroll') return p;
+        if (p === root) break;
+        p = p.parentElement;
+      }
+      return null;
+    }
+
     var all = root.querySelectorAll('*');
     for (var n = 0; n < all.length; n++) {
       var el = all[n];
@@ -398,6 +425,7 @@ window.__FIXTURE__ = __PAYLOAD__;
       if (cs.display === 'none' || cs.visibility === 'hidden') continue;
       var r = el.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) continue;
+      if (scrollingAncestor(el)) continue;
 
       var over = {
         left: rr.left - r.left, top: rr.top - r.top,
@@ -666,12 +694,21 @@ console.log('the checks are not vacuous:');
 {
   /* .meter .name is intentionally ellipsised (a long section label is allowed
      to truncate); forcing it wide and un-clipped is a pure overflow with no
-     ellipsis involved, on the usage view where the meters actually render. */
+     ellipsis involved, on the usage view where the meters actually render.
+     .name is an unshrunk-looking but ordinary flex item (.meter-top is
+     display:flex, and .name gets the initial flex-shrink:1) - probed with a
+     standalone render, width:300% alone measured at 647.6px, not the ~2343px
+     300% implies, because the flex algorithm shrinks it right back down to
+     fit .meter-top's 781px alongside .meter .value. That is not a
+     specificity loss (the injected rule was winning, verified via
+     getComputedStyle), it is flex-shrink quietly absorbing the forced width.
+     flex-shrink:0 is required for the mutation to actually widen the box
+     instead of being shrunk back to fit. */
   const page = writePage('mutation-overflow', VIEWS.indexOf('usage'), FULL, html =>
     html.replace('</head>',
       '<style>.meter .name { max-width: none !important; width: 300% !important; ' +
-      'white-space: nowrap !important; overflow: visible !important; text-overflow: clip !important; }' +
-      '</style></head>'));
+      'flex-shrink: 0 !important; white-space: nowrap !important; overflow: visible !important; ' +
+      'text-overflow: clip !important; }</style></head>'));
   const r = render(page);
   const found = r.error ? [] : overflowsIn(r);
   check('widening .meter .name past .widget-root trips the overflow check',

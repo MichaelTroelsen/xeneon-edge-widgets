@@ -109,19 +109,34 @@ run in a couple of seconds each and need nothing but node. It points the server 
 a fixture tree via `CLAUDE_USAGE_PROJECTS_DIR` (unset in normal use) and asserts
 the cases that were got wrong or could be: a run in flight is reported, a
 finished one is not despite its `wf_*.json` existing, a killed run gone stale is
-not, a partly finished run reports only its unfinished agents, and an errored
-agent counts as finished, plus the session cases: a just-opened session with no
-messages yet is reported, an old idle one is not, and a transcript nested under
-a session directory belongs to a subagent rather than being a session.
-Twenty-five checks. Reverting the live-run lookup fails 9 of them and
-reverting the just-opened-session rule fails 3 more, which is the point of
-having them.
+not, a run whose directory and journal are both an hour stale but whose agent
+transcript is still being appended to is reported anyway (the `/runbatch`/
+`/runqueue` fan-out shape), and so is one where the transcripts are the stale
+side and it is the journal that just moved, a partly finished run reports only
+its unfinished agents, and an errored agent counts as finished. It also checks
+where a subtask's start time comes from: the agent transcript's own first
+record rather than the run directory's mtime, and — for a transcript whose
+first record carries no timestamp at all — the file's birthtime rather than
+its mtime, since mtime moves with every message the agent goes on to write and
+would report a long-running agent as freshly started. Plus the session cases:
+a just-opened session with no messages yet is reported, an old idle one is
+not, and a transcript nested under a session directory belongs to a subagent
+rather than being a session. Reverting the live-run lookup back to trusting
+the run directory's own mtime breaks detection outright for the fan-out and
+freshly-journaled cases, since both are built to look exactly like a dead run
+in the one place a bare directory mtime would check — which is exactly why
+they exist as separate fixtures rather than variations on the plain-stale
+case. Reverting the just-opened-session rule — counting a session with no
+messages yet as absent rather than running — breaks only the checks built on
+that one fixture, leaving every other case here untouched.
 
 `statusline.test.js` covers the other half: the freshness rules (current,
 stale past 10 minutes, withheld past 45, withheld for a future timestamp, a
 malformed file, an absent file, one window present and the other not, no windows
-at all), plus the credential and redaction checks above, and the unhooked-wrapper
-detection. 35 checks.
+at all), plus the credential and redaction checks above, and the
+unhooked-wrapper detection — flagged only when an active session exists
+alongside a missing or long-stale statusline file, since an idle machine with
+no session at all is not a fault and must not be reported as one.
 
 Three environment overrides exist for these tests and are unset in normal use:
 `CLAUDE_USAGE_PROJECTS_DIR`, `CLAUDE_USAGE_STATUSLINE_FILE` and
@@ -201,7 +216,12 @@ bump alone would not catch — a `version: 5` file missing a field this server
 reads. Every one of those asserts `stats.unavailable` is set *and* that the
 rest of the payload (sessions, workflows, counts, …) is unaffected, plus a
 recovery case (a file that goes bad and comes good again is re-served, not
-stuck on either cached state) and the happy path itself. 47 checks.
+stuck on either cached state) and the happy path itself, where every field
+named in the block above is checked to carry through unchanged. None of this
+depends on there being any session or workflow activity at all — the suite
+also proves `stats` is served from a fixture tree with zero sessions, since
+stats-cache.json is independent of the transcript-derived feed and one going
+quiet must not silently take the other down too.
 
 ## Anthropic's own figures
 
@@ -584,6 +604,50 @@ carries a trailing `#N` call counter, incremented on each fetch, so a test
 can tell "the watcher fired again" apart from "the watcher left the last
 result alone" even when both happen within the same millisecond. Both
 overrides are unset in normal use.
+
+`http.test.js` also proves the incremental index survives a **torn append**: a
+transcript is written to by a live session, so a byte-offset read can catch a
+JSON line only half flushed to disk. The suite appends half of a record's
+line, confirms it is correctly not counted yet, appends the rest, and confirms
+it is now counted exactly once; a further whole record with no trailing
+newline at all is checked to count immediately too, since waiting for a
+newline a dead writer might never send would be the same permanent loss in a
+different place. A rebuild pass over an unchanged file in between is checked
+to keep reporting that same uncommitted tail record rather than letting the
+count flicker down and back up.
+
+It separately proves `lastQuota` — the figures behind `session.blocked` and
+`session.resetsAt` — tracks the **most recently seen** `429` rejection, not
+whichever one has the farthest-future `resetsAt`: a five-hour block seen after
+a seven-day block must win even though the seven-day reset is further out, and
+a `quotaLimits` line with no `apiErrorStatus: 429` — a rate-limit mention that
+is not itself a live rejection — must not displace a real one just because it
+arrived later.
+
+And it proves the two "seen" counts (`workflowsSeen`, `subtasksSeen`, behind
+`/usagehtml`'s "Workflows (N active of M seen)") report the true total from
+*before* `collectWorkflows()` slices its lists down to the render caps. The
+suite writes 45 running workflows — past both `MAX_WORKFLOWS` (24) and
+`MAX_SUBTASKS` (40) — and checks the seen counts still read 45 while the
+rendered lists, and `counts.workflows`/`counts.subtasks`, stay capped: a
+diagnostic that tops out at the same cap as the thing it exists to catch would
+be useless exactly when it is needed most.
+
+Finally, `http.test.js` checks this document against the code it describes:
+every `CLAUDE_USAGE_*` name `server.js` actually reads via
+`process.env.CLAUDE_USAGE_*` must appear somewhere in this README, and every
+such name this README mentions must actually be read in `server.js` — both
+directions, so a new override added to the code and left undocumented, and a
+documented override quietly deleted from the code, are each caught by a
+different half of the check. The extraction is comment-aware, so a name
+mentioned only inside a `/* … */` block does not count as a real read — this
+is the exact shape of a bug this repo has already shipped once, where this
+file named an override before `server.js` read it anywhere at all — and the
+suite proves that comment-awareness against itself before trusting it on the
+real files. `CLAUDE_USAGE_STATUSLINE_FILE` is the one deliberate exception: it
+is read inside `statusline.js`, not `server.js`, so this check cannot see that
+read directly and carries the name as a hand-verified allowance instead of
+silently dropping it.
 
 One `CLAUDE_USAGE_*` variable is **not** test-only: `CLAUDE_USAGE_VERBOSE`
 (server.js:1259) prints a line after every successful rebuild giving how long

@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.9.1';
+  var WIDGET_VERSION = '1.10.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -18,10 +18,11 @@
   var timer = null;
   var data = null;
   var lastError = '';
-  var VIEWS = ['usage', 'detail', 'tokens'];
+  var VIEWS = ['usage', 'detail', 'tokens', 'stats'];
   var view = 'usage';   /* tapping the widget cycles through VIEWS */
 
-  var TITLES = { usage: 'Claude Code usage', detail: 'Activity', tokens: 'Tokens' };
+  var TITLES = { usage: 'Claude Code usage', detail: 'Activity', tokens: 'Tokens',
+                 stats: 'All time' };
 
   /* ---------- iCUE property access ---------- */
 
@@ -244,6 +245,188 @@
     return el;
   }
 
+  /* ---------- all-time stats ---------- */
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  /* Days since the epoch, from the YYYY-MM-DD the rollup writes. Parsed by
+     hand rather than through Date(string): the widget's webview is not
+     guaranteed to read a bare date as UTC, and an hour of drift would split
+     a streak. */
+  function dayNumber(iso) {
+    var p = String(iso).split('-');
+    if (p.length !== 3) return NaN;
+    var n = Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return Number.isFinite(n) ? Math.floor(n / 86400000) : NaN;
+  }
+
+  function shortDate(iso) {
+    var p = String(iso).split('-');
+    if (p.length !== 3) return iso;
+    return Number(p[2]) + ' ' + MONTHS[Number(p[1]) - 1];
+  }
+
+  function svg(name, attrs) {
+    var el = document.createElementNS(SVG_NS, name);
+    Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    return el;
+  }
+
+  /* Four filled levels plus an empty one, keyed off the busiest day. The
+     square root pulls the middle of the range apart: message counts are
+     heavily skewed, and a linear scale leaves almost every day on level 1. */
+  function heatLevel(count, max) {
+    if (!count || !max) return 0;
+    return Math.max(1, Math.min(4, Math.ceil(4 * Math.sqrt(count / max))));
+  }
+
+  var HEAT_CELL = 12, HEAT_GAP = 2.4, HEAT_LABEL = 16;
+  var WEEKDAY_LABEL = { 1: 'M', 3: 'W', 5: 'F' };
+
+  /* A column per week, a row per weekday, drawn as SVG so the whole grid
+     scales to whatever width the slot gives it rather than being clipped or
+     wrapped.
+     Laid out by CALENDAR position, not by array position: the rollup writes a
+     row only for a day that had activity, so `days` is sparse. Packing the
+     entries side by side would draw a solid block with no quiet days in it and
+     put every date in the wrong column. */
+  function buildHeatmap(days, max) {
+    var step = HEAT_CELL + HEAT_GAP;
+    var first = dayNumber(days[0].date);
+    var span = dayNumber(days[days.length - 1].date) - first + 1;
+    var counts = {};
+    days.forEach(function (d) { counts[dayNumber(d.date) - first] = d.messageCount; });
+    /* 1970-01-01 was a Thursday, so +4 lands day 0 on a Sunday column. */
+    var offset = (first + 4) % 7;
+    var cols = Math.ceil((offset + span) / 7);
+    var w = HEAT_LABEL + cols * step;
+    var h = 7 * step;
+    var root = svg('svg', {
+      viewBox: '0 0 ' + w.toFixed(1) + ' ' + h.toFixed(1),
+      preserveAspectRatio: 'xMidYMid meet',
+      role: 'img'
+    });
+
+    Object.keys(WEEKDAY_LABEL).forEach(function (row) {
+      var t = svg('text', {
+        x: 0, y: (Number(row) * step + HEAT_CELL * 0.8).toFixed(1),
+        class: 'heat-day', 'font-size': HEAT_CELL * 0.8
+      });
+      t.textContent = WEEKDAY_LABEL[row];
+      root.appendChild(t);
+    });
+
+    for (var i = 0; i < span; i++) {
+      var slot = offset + i;
+      root.appendChild(svg('rect', {
+        x: (HEAT_LABEL + Math.floor(slot / 7) * step).toFixed(1),
+        y: ((slot % 7) * step).toFixed(1),
+        width: HEAT_CELL, height: HEAT_CELL, rx: 2,
+        class: 'cell l' + heatLevel(counts[i], max)
+      }));
+    }
+    return root;
+  }
+
+  function fig(key, value) {
+    var d = document.createElement('div');
+    d.className = 'fig';
+    d.appendChild(cell('span', key, 'k'));
+    d.appendChild(cell('span', value, 'v'));
+    return d;
+  }
+
+  /* Streaks are counted over calendar dates rather than array positions: the
+     rollup only writes a row for a day that had activity, so consecutive
+     entries are not necessarily consecutive days. */
+  function streaks(days, lastDay) {
+    var active = days.filter(function (d) { return d.messageCount > 0; })
+      .map(function (d) { return dayNumber(d.date); })
+      .filter(function (n) { return Number.isFinite(n); })
+      .sort(function (a, b) { return a - b; });
+    if (!active.length) return { current: 0, longest: 0 };
+    var longest = 1, run = 1;
+    for (var i = 1; i < active.length; i++) {
+      run = (active[i] - active[i - 1] === 1) ? run + 1 : 1;
+      if (run > longest) longest = run;
+    }
+    /* Today with nothing logged yet should not break yesterday's streak, so
+       the run counts as current if it reaches either day. */
+    var last = active[active.length - 1];
+    var current = (lastDay - last <= 1) ? run : 0;
+    return { current: current, longest: longest };
+  }
+
+  function topModel(modelUsage) {
+    var names = Object.keys(modelUsage || {});
+    if (!names.length) return null;
+    names.sort(function (a, b) {
+      return (modelUsage[b].outputTokens || 0) - (modelUsage[a].outputTokens || 0);
+    });
+    return names[0];
+  }
+
+  /* All-time token counts run to eleven figures, where compact() would print
+     '44534.5M'. Kept separate from compact() so the token tables, whose windows
+     never reach a billion, are formatted exactly as before. */
+  function big(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    return compact(n);
+  }
+
+  function totalTokens(modelUsage) {
+    var sum = 0;
+    Object.keys(modelUsage || {}).forEach(function (m) {
+      var u = modelUsage[m];
+      sum += (u.inputTokens || 0) + (u.outputTokens || 0) +
+        (u.cacheReadInputTokens || 0) + (u.cacheCreationInputTokens || 0);
+    });
+    return sum;
+  }
+
+  function renderStats(s) {
+    els.heat.textContent = '';
+    els.figs.textContent = '';
+
+    /* Say why there is nothing rather than drawing an empty grid, which would
+       read as months of inactivity instead of a feed that cannot see the
+       rollup. */
+    var days = (s && Array.isArray(s.dailyActivity)) ? s.dailyActivity : null;
+    if (!s || s.unavailable || !days || !days.length) {
+      els.statsNote.textContent = (s && s.unavailable)
+        ? 'No all-time stats: ' + s.unavailable
+        : 'No all-time stats: the feed is not serving a stats block.';
+      els.viewStats.classList.add('is-unavailable');
+      return;
+    }
+    els.viewStats.classList.remove('is-unavailable');
+    els.statsNote.textContent = '';
+
+    var max = 0, busiest = days[0];
+    days.forEach(function (d) {
+      if (d.messageCount > max) { max = d.messageCount; busiest = d; }
+    });
+    var span = dayNumber(days[days.length - 1].date) - dayNumber(days[0].date) + 1;
+    els.heatHead.textContent = 'Activity · ' + span + ' days';
+    els.heat.appendChild(buildHeatmap(days, max));
+
+    var lastDay = dayNumber(s.lastComputedDate || days[days.length - 1].date);
+    var st = streaks(days, lastDay);
+    var activeDays = days.filter(function (d) { return d.messageCount > 0; }).length;
+    var model = topModel(s.modelUsage);
+
+    [
+      ['sessions', num(s.totalSessions)],
+      ['messages', num(s.totalMessages)],
+      ['active days', activeDays + ' of ' + span],
+      ['current streak', st.current + (st.current === 1 ? ' day' : ' days')],
+      ['longest streak', st.longest + (st.longest === 1 ? ' day' : ' days')],
+      ['busiest day', shortDate(busiest.date) + ' · ' + compact(busiest.messageCount)],
+      ['top model', model ? model.replace(/^claude-/, '').replace(/-\d{8}$/, '') : '—'],
+      ['tokens', big(totalTokens(s.modelUsage))]
+    ].forEach(function (r) { els.figs.appendChild(fig(r[0], r[1])); });
+  }
+
   function render() {
     if (!data) return;
 
@@ -375,6 +558,8 @@
       (s.peakWeighted ? ' · peak block ' + compact(s.peakWeighted) : '');
     els.tokWeeklyNote.textContent = 'weighted ' + num(w.usedWeighted);
 
+    renderStats(data.stats);
+
     showState('content');
     markScrollable();
   }
@@ -395,6 +580,7 @@
     els.viewUsage.classList.toggle('is-active', view === 'usage');
     els.viewDetail.classList.toggle('is-active', view === 'detail');
     els.viewTokens.classList.toggle('is-active', view === 'tokens');
+    els.viewStats.classList.toggle('is-active', view === 'stats');
     Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
       d.classList.toggle('is-active', d.getAttribute('data-view') === view);
     });
@@ -490,6 +676,11 @@
     els.dWorkflows = document.getElementById('d-workflows');
     els.dSubtasks = document.getElementById('d-subtasks');
     els.viewTokens = document.querySelector('.view-tokens');
+    els.viewStats = document.querySelector('.view-stats');
+    els.heat = document.getElementById('heat');
+    els.heatHead = document.getElementById('heat-head');
+    els.figs = document.getElementById('figs');
+    els.statsNote = document.getElementById('stats-note');
     els.tokSession = document.getElementById('tok-session');
     els.tokWeekly = document.getElementById('tok-weekly');
     els.mdlSession = document.getElementById('mdl-session');

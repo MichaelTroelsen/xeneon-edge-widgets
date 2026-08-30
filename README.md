@@ -104,8 +104,9 @@ throws on every payload — see `TODO.md`.
 ## Claude Code Usage
 
 Plan usage limits for Claude Code: the 5-hour session window and the weekly
-window with their reset times, plus live lists of the sessions, workflows and
-subtasks that are **running right now**.
+window with their reset times, live lists of the sessions, workflows and
+subtasks that are **running right now**, and an all-time view built from the
+same rollup `/stats` prints.
 
 A widget is a sandboxed web page and cannot read files, so `usage-server/`
 serves what it needs on `127.0.0.1`. No credentials are read and nothing leaves
@@ -159,13 +160,31 @@ the activity tables with their totals (`3 active of 24 seen`) — open
 | `colorTheme` | tabs | `dark` / `light` |
 | `refreshSeconds` | slider 5–120 | 10 |
 
-**Tap the widget** to cycle three views: the usage bars, an activity view, and
-a token breakdown; a third tap returns to the start. The **Tokens** view carries
+**Tap the widget** to cycle four views: the usage bars, an activity view, a
+token breakdown and all-time stats; a fourth tap returns to the start. The
+**Tokens** view carries
 what the bars are drawn from — output, cache creation, cache read and input for
 both windows with each class's share of the total, the weighted figure, and a
 per-model table. On this account cache reads are ~98% of every window, which is
 the single most useful thing the page says. This needs `"interactive": true` in the manifest, without which
 iCUE never forwards touches to the page.
+
+**The All time view** is a contribution heatmap over the whole recorded span
+with eight headline figures beneath it — sessions, messages, active days,
+current and longest streak, busiest day, top model and total tokens. It reads
+the `stats` block the feed serves out of `~/.claude/stats-cache.json`.
+
+The grid is laid out by **calendar date, not by array position**. The rollup
+writes a row only for a day that had activity, so its entries are sparse — 92
+rows across a 284-day span on this account — and packing them side by side
+would draw a solid block with no quiet days in it and put every date in the
+wrong column. Empty days are drawn as empty cells, so the shape you see is the
+real history.
+
+When the feed cannot read the rollup it serves `stats: {unavailable: "<reason>"}`
+and the view prints that reason instead of drawing a grid. An empty heatmap
+would read as months of silence rather than as a missing file, which is the one
+failure this view must not have.
 
 **The activity view shows only what is running** — not a history of what ran. A
 session appears as soon as it is opened, and drops off 15 minutes after it last
@@ -188,11 +207,38 @@ less than 12px and was held under 700ms, so scrolling does not flip the view.
 
 ## Verifying a layout
 
-Headless Chrome's `--window-size` includes window chrome, so `--window-size=840,344`
-lays the page out at **824x249** — 95px shorter than the slot. Screenshots taken
-that way silently test the wrong dimensions.
+Headless Chrome's `--window-size` does not mean the same thing in its two modes,
+and the difference is large enough to invalidate a render silently.
 
-Host the widget in an exactly-sized iframe inside a larger window instead:
+| mode | `--window-size=840,344` gives | `--window-size=856,495` gives |
+|---|---|---|
+| `--dump-dom` | a page laid out at **824x193** | a page laid out at **840x344** |
+| `--screenshot` | an **840x344** page and PNG | an 856x495 page and PNG |
+
+In `--dump-dom` the flag is the window and Chrome subtracts its chrome; the
+figures above were measured on this machine and are version-dependent, so
+re-measure rather than copying them. In `--screenshot` the viewport is resized
+to the full window just before capture — which is why `window.innerWidth` read
+during the page's own load reports the smaller, pre-resize size and disagrees
+with what is actually painted.
+
+So a probe and a screenshot of the same layout need **different** flags. Have
+the probe assert `window.innerWidth`/`innerHeight` are the slot size; a harness
+that measures the wrong viewport reports confidently about a layout that was
+never rendered.
+
+Two more traps in the same place:
+
+- **CSS transitions do not advance under `--virtual-time-budget`**, and
+  `--force-prefers-reduced-motion` does not help. `getComputedStyle` then returns
+  the colour a transitioning property had *before* the change — which made the
+  usage widget's view indicator look stuck on the first dot when it was in fact
+  correct. Inject `* { transition: none !important }` in the harness.
+- An already-running Chrome on the default profile breaks bare `--headless`;
+  always pass `--user-data-dir` pointing somewhere disposable.
+
+Alternatively, host the widget in an exactly-sized iframe inside a larger window,
+which is immune to all of the above:
 
 ```html
 <iframe width="840" height="344" src="ClaudeUsage/index.html"></iframe>

@@ -121,7 +121,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       TabButtonsEditorSetting.qml:33 calls `rowCount()` on a QVariantList, which
       throws for every possible payload — Corsair's bundled widgets included.
 
-## Claude Code Usage — 1.9.1
+## Claude Code Usage — 1.10.0
 
 ### Done
 
@@ -139,8 +139,8 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       `generatedAt`, and turns amber after three missed refresh cycles so a dead
       feed is distinguishable from live numbers that are not moving.
 - [x] **Tap to switch views** — usage bars, activity (sessions, workflows,
-      subtasks), and a token breakdown behind the two bars (1.9.0), cycling
-      through a three-dot indicator.
+      subtasks), a token breakdown behind the two bars (1.9.0), and all-time
+      stats (1.10.0), cycling through a four-dot indicator.
 - [x] **Scrollable lists**, replacing the row trimming that made anything past
       the first handful unreachable. Headings carry totals, a fade marks an
       overflowing list, and scroll position survives a refresh.
@@ -205,6 +205,35 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ### Open
 
+- [ ] **Code review of `usage-server/server.js`.** It has grown to 1138 lines
+      and 35 top-level functions by accretion, one feature at a time, and has
+      never been read end to end. Specific things to look at rather than a
+      general skim:
+
+      - **Eleven module-level mutable variables** in a long-running process.
+        That is where staleness lives, and this project has already been bitten
+        twice by exactly that shape: a cached snapshot that still said "not
+        fetched yet" because `CLAUDE_USAGE_NO_REMOTE` was set after the first
+        `rebuild()`, and `wf_*.json` being read as live state when it is only
+        written once a run *ends*. Ask of each: who writes it, what invalidates
+        it, and what a reader sees mid-rebuild.
+      - **The four long functions** — `build()` 114 lines, `rebuild()` 86,
+        `collectWorkflows()` 83, `collectLiveRuns()` 78. Length is not itself a
+        defect; the question is whether any of them does two things that could
+        fail independently.
+      - **Coverage shape.** 100 checks across three suites, but they all drive
+        the server through HTTP against fixture trees. The collectors have no
+        direct coverage, so a wrong answer inside one is only visible if it
+        changes the payload.
+      - **The incremental index.** A file is re-parsed from a byte offset; what
+        happens if a transcript is truncated or rewritten rather than appended?
+
+      Worth doing as a falsification pass rather than a tidy-up: the useful
+      output is a list of things that are wrong, each with the input that
+      demonstrates it, not a refactor. Nothing here is a known bug — this is
+      the one substantial file in the repo that has never had a second pair of
+      eyes on it as a whole.
+
 - [x] **Show sessions from the other machine (`tdzlaptop`) — DECIDED AGAINST**
       (2026-08-29). Asked whether the Activity lists should show tdzlaptop's
       sessions too; the answer was to leave it local. The usage bars already
@@ -256,8 +285,19 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 - [x] **Third view: the token breakdown** (1.9.0). Cycling past the usage bars
       and activity lists reaches a per-window token and per-model breakdown
       (`renderTokens`/`renderModels` in `widget.js`), with the countdown to
-      reset and the weighted-usage note moved in alongside it. The view
-      indicator is now three dots, not two.
+      reset and the weighted-usage note moved in alongside it.
+
+- [x] **Fourth view: all-time stats** (1.10.0). A contribution heatmap over the
+      whole recorded span plus eight headline figures — sessions, messages,
+      active days, current and longest streak, busiest day, top model and total
+      tokens — read from the `stats` block `/usage` now serves out of
+      `~/.claude/stats-cache.json`, the same rollup `/stats` prints. The grid is
+      laid out by CALENDAR date rather than by array position: the rollup writes
+      a row only for a day that had activity, so its entries are sparse (92 rows
+      across a 284-day span here). When the feed reports `stats.unavailable` the
+      view says so in words instead of drawing an empty grid, which would read
+      as months of silence rather than as a missing file. The view indicator is
+      now four dots.
 - [ ] **If the real formula is ever wanted**, it needs several panel readings at
       known times across one block, then candidate models tested against them —
       cache reads free, per-request cost, non-linear curve, reporting lag. Two

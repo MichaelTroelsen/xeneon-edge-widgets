@@ -29,7 +29,7 @@
         <span class="title" id="title">Claude Code usage</span>
         <span class="plan" id="plan"></span>
         <span class="updated" id="updated"></span>
-        <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i><i class="dot" data-view="tokens"></i></span>
+        <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i><i class="dot" data-view="tokens"></i><i class="dot" data-view="stats"></i></span>
         <span class="live" id="live">LIVE</span>
         <span class="version" id="version"></span>
       </header>
@@ -105,6 +105,26 @@
             <ul id="d-subtasks"></ul>
           </div>
         </section>
+      </div>
+
+      <!-- All-time figures, from the stats block the feed reads out of
+           ~/.claude/stats-cache.json - the same rollup /stats prints. The
+           note replaces the whole view when that block is unavailable, so an
+           empty grid can never be mistaken for a quiet few months. -->
+      <div class="view view-stats">
+        <section class="stats">
+          <div class="heat-wrap">
+            <h2 id="heat-head">Activity</h2>
+            <div class="heat" id="heat"></div>
+            <div class="heat-key">
+              <span>less</span>
+              <i class="sw l0"></i><i class="sw l1"></i><i class="sw l2"></i><i class="sw l3"></i><i class="sw l4"></i>
+              <span>more</span>
+            </div>
+          </div>
+          <div class="figs" id="figs"></div>
+        </section>
+        <div class="stats-note" id="stats-note"></div>
       </div>
     </div>
 

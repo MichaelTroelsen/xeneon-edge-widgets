@@ -62,7 +62,9 @@ const { spawn } = require('child_process');
    41798/41799/41800 belong to statusline/live-detection/stats.test.js. 41801
    is this suite's main server; 41802/41803 are two more spawned further down
    for the /health failure-state tests, each in its own process so a rebuild
-   failure in one never touches the others. */
+   failure in one never touches the others. 41804/41805 are two more for the
+   credentials-watcher tests, same reasoning: each scenario primes a specific
+   officialRateLimited state and must not leak into the other's process. */
 const PORT = 41801;
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-http-test-'));
 const PROJECTS = path.join(ROOT, 'projects');
@@ -473,11 +475,208 @@ async function testTornAppend() {
   }
 }
 
+/* ------------------------------------------------------------------------
+ * The credentials watcher: a write must not wipe backoff EARNED by rate
+ * limiting, and one rotation must not run its handler twice.
+ *
+ * watchCredentials() is normally only reached when CLAUDE_USAGE_NO_REMOTE is
+ * unset - every suite in this repo sets it, since without it a spawned test
+ * server makes a real request to an endpoint that is already rate-limited.
+ * That makes the watcher unreachable under test by construction unless
+ * something changes. server.js now honours CLAUDE_USAGE_CREDENTIALS_FILE
+ * (already carried by statusline.test.js's spawn, previously inert) to point
+ * the watcher at a fixture instead of the real ~/.claude, and its fetch step
+ * (fetchOfficialResult()) stays hermetic under CLAUDE_USAGE_NO_REMOTE no
+ * matter what triggers it - the boot call, the backoff timer, or the
+ * watcher - resolving to a canned result instead of official.fetchOfficial().
+ * CLAUDE_USAGE_FAKE_OFFICIAL_ERROR controls what that canned result says, so
+ * a test can drive officialRateLimited into either state without ever
+ * touching the network or a real credentials file. Each canned result also
+ * carries a trailing "#N" call counter, so a test can tell "the watcher
+ * fired again" apart from "the watcher left the last result alone" even
+ * when both happen inside the same millisecond.
+ *
+ * Neither scenario below can go through official.js's real fetch, so this
+ * cannot prove the exact HTTP 429/401 strings official.js emits still match
+ * the /HTTP 429/ and /HTTP 401/ regexes server.js and official.js both use -
+ * that coupling is exercised by reading official.js's own source (see the
+ * task record) and is unchanged by this fix. What these prove is the
+ * decision server.js makes once it has a result: reset+refetch immediately
+ * for anything that is not a 429, and leave a 429 backoff alone. */
+
+/* Replays official.js's own writeCredentials() write pattern: write a
+   .tmp-<pid> file, then renameSync it onto the target, inside the directory
+   server.js is watching. Measured directly against fs.watch on this
+   platform (see the task record): this produces TWO fs.watch events whose
+   filename passes server.js's '.credentials.json' filter for one logical
+   rotation - which is exactly why watchCredentials() cannot treat "an event
+   fired" as "a rotation happened" without deduping first. */
+function rotateCredentials(file, tag) {
+  const tmp = file + '.tmp-' + process.pid + '-' + tag;
+  fs.writeFileSync(tmp, JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-' + tag } }, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+async function officialError(port) {
+  const r = await get('/usage?at=' + Date.now(), port);
+  return JSON.parse(r.body).official.error;
+}
+
+function waitForOfficialError(pattern, port, totalMs) {
+  return waitUntil(async () => {
+    const err = await officialError(port);
+    return pattern.test(err || '') ? err : null;
+  }, totalMs, 100);
+}
+
+/* Waits for official.error to become anything other than `baseline`, without
+   asserting what it becomes. Used before checking a SETTLED value rather than
+   matching an exact transient one: when a rotation double-fires (the dedup
+   bug this suite guards against), the #1 result can be overwritten by #2
+   within a millisecond - fast enough that a poll for the literal "#1" string
+   can race past it and never observe it, timing the whole test out instead
+   of failing the one assertion that actually distinguishes correct from
+   buggy. Waiting for "not baseline any more", then settling before reading
+   the final value, is robust to that race either way. */
+function waitForOfficialErrorChange(baseline, port, totalMs) {
+  return waitUntil(async () => {
+    const err = await officialError(port);
+    return err !== baseline ? err : null;
+  }, totalMs, 50);
+}
+
+/* The bug: after two hours of 429s, officialFailures is 4 and the earned
+   wait is min(15min*4, 60min) = 60min. Claude Code rewrites the same
+   credentials file on its own cadence regardless of this server's backoff -
+   the fix is that such a write must not clear officialFailures or fire an
+   immediate extra request into a rate limit that is already live. */
+async function testCredentialsWatcherRateLimited() {
+  console.log('credentials watcher - a write during an earned 429 backoff must not reset it:');
+  const port = 41804;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-http-test-cred429-'));
+  const configFile = path.join(root, 'limits.json');
+  writeConfig(configFile, VALID_CONFIG);
+  const projects = path.join(root, 'projects');
+  fs.mkdirSync(projects, { recursive: true });
+  const credentialsFile = path.join(root, '.credentials.json');
+  fs.writeFileSync(credentialsFile, JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-boot' } }), 'utf8');
+
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+    env: Object.assign({}, process.env, {
+      CLAUDE_USAGE_PROJECTS_DIR: projects,
+      CLAUDE_USAGE_STATUSLINE_FILE: path.join(root, 'no-statusline.json'),
+      CLAUDE_USAGE_STATS_FILE: path.join(root, 'stats-cache.json'),
+      CLAUDE_USAGE_CONFIG_PATH: configFile,
+      CLAUDE_USAGE_CREDENTIALS_FILE: credentialsFile,
+      CLAUDE_USAGE_NO_REMOTE: '1',
+      CLAUDE_USAGE_FAKE_OFFICIAL_ERROR: 'HTTP 429 too many requests',
+      PORT: String(port)
+    }),
+    stdio: ['ignore', 'ignore', 'inherit']
+  });
+
+  try {
+    await waitUntil(async () => {
+      const r = await get('/health', port);
+      return r.status === 200 ? true : null;
+    }, 8000, 200);
+
+    /* officialRateLimited starts false, so this first rotation takes the
+       reset+refresh path - and the canned fetch it runs is the 429 that
+       earns the backoff the next rotation must not clear. */
+    rotateCredentials(credentialsFile, 'prime');
+    const afterPrime = await waitForOfficialError(/#1$/, port, 5000);
+    check('priming rotation earns the 429 backoff', afterPrime, 'HTTP 429 too many requests #1');
+
+    /* This is the bug scenario: a credentials write while officialRateLimited
+       is true. Long enough to catch a #2 if the guard is missing - the
+       platform's two watch events per rotation fire within the same
+       millisecond (measured), so any leak shows up almost immediately. */
+    rotateCredentials(credentialsFile, 'duringBackoff');
+    await new Promise(r => setTimeout(r, 800));
+    const after = await officialError(port);
+    check('a write during the earned 429 backoff does not clear it', after, afterPrime);
+    checkTrue('...and does not fire a second fetch', !/#2/.test(after || ''));
+
+    checkTrue('server process is still alive', child.exitCode === null);
+  } finally {
+    child.kill();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/* The behaviour the watcher exists to serve, which the discriminator above
+   must not break: a dead token (401) gets a new one written to the same
+   file, and the next request should use it now rather than wait out minutes
+   of backoff. Also covers the dedup: official.js's write pattern fires two
+   matching fs.watch events per rotation (see rotateCredentials above), and
+   without the mtime check in watchCredentials() this runs the reset/refetch
+   twice per rotation instead of once. */
+async function testCredentialsWatcherResetsOnGenuineWrite() {
+  console.log('credentials watcher - a genuine write (the 401-then-new-token case) still resets and refetches once per rotation:');
+  const port = 41805;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-http-test-cred401-'));
+  const configFile = path.join(root, 'limits.json');
+  writeConfig(configFile, VALID_CONFIG);
+  const projects = path.join(root, 'projects');
+  fs.mkdirSync(projects, { recursive: true });
+  const credentialsFile = path.join(root, '.credentials.json');
+  fs.writeFileSync(credentialsFile, JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-boot' } }), 'utf8');
+
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+    env: Object.assign({}, process.env, {
+      CLAUDE_USAGE_PROJECTS_DIR: projects,
+      CLAUDE_USAGE_STATUSLINE_FILE: path.join(root, 'no-statusline.json'),
+      CLAUDE_USAGE_STATS_FILE: path.join(root, 'stats-cache.json'),
+      CLAUDE_USAGE_CONFIG_PATH: configFile,
+      CLAUDE_USAGE_CREDENTIALS_FILE: credentialsFile,
+      CLAUDE_USAGE_NO_REMOTE: '1',
+      CLAUDE_USAGE_FAKE_OFFICIAL_ERROR: 'HTTP 401 unauthorized',
+      PORT: String(port)
+    }),
+    stdio: ['ignore', 'ignore', 'inherit']
+  });
+
+  try {
+    await waitUntil(async () => {
+      const r = await get('/health', port);
+      return r.status === 200 ? true : null;
+    }, 8000, 200);
+
+    const boot = await officialError(port);
+
+    rotateCredentials(credentialsFile, 'r1');
+    await waitForOfficialErrorChange(boot, port, 5000);
+    /* Settle before reading: a doubled fetch from the same rotation (the bug
+       this half guards against) would land within the same millisecond - see
+       waitForOfficialErrorChange's comment. The exact final value is the real
+       assertion, not how fast it arrived. */
+    await new Promise(r => setTimeout(r, 800));
+    let err = await officialError(port);
+    check('rotation 1 triggers exactly one immediate refetch, and settles there',
+      err, 'HTTP 401 unauthorized #1');
+
+    rotateCredentials(credentialsFile, 'r2');
+    await waitForOfficialErrorChange(err, port, 5000);
+    await new Promise(r => setTimeout(r, 800));
+    err = await officialError(port);
+    check('a second, later rotation still resets and refetches once (the case this watcher exists to serve), and settles there - not #3 or #4 from doubled events',
+      err, 'HTTP 401 unauthorized #2');
+
+    checkTrue('server process is still alive', child.exitCode === null);
+  } finally {
+    child.kill();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await runMalformedRequestSuite();
   await testNeverBuilt();
   await testStaleAfterHealthy();
   await testTornAppend();
+  await testCredentialsWatcherRateLimited();
+  await testCredentialsWatcherResetsOnGenuineWrite();
 
   console.log('');
   console.log(failures ? `${failures} FAILED` : 'all passed');

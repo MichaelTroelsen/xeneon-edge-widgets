@@ -38,6 +38,12 @@ const CONFIG_PATH = process.env.CLAUDE_USAGE_CONFIG_PATH ||
    test never reads (or worse, requires) the developer's real stats-cache.json. */
 const STATS_FILE = process.env.CLAUDE_USAGE_STATS_FILE ||
   path.join(CLAUDE_DIR, 'stats-cache.json');
+/* Same reasoning as PROJECTS_DIR above, and the one watchCredentials() needs:
+   a fixture path lets a test exercise the credentials watcher itself (the
+   directory it watches and the filename it filters on) without ever pointing
+   at the real ~/.claude/.credentials.json. Unset in normal use. */
+const CREDENTIALS_FILE = process.env.CLAUDE_USAGE_CREDENTIALS_FILE ||
+  path.join(CLAUDE_DIR, '.credentials.json');
 
 const WINDOW_DAYS = 8;                       /* transcripts older than this are ignored */
 const SESSION_BLOCK_MS = 5 * 60 * 60 * 1000; /* the "current session" is a 5-hour block */
@@ -126,6 +132,11 @@ let officialGood = null;   /* last successful reading, kept across failures */
 let officialInFlight = false;
 let officialFailures = 0;
 let officialTimer = null;
+/* Whether the CURRENT officialFailures count was earned by a 429 rather than
+   some other failure (401, network error, ...). watchCredentials() below
+   reads this to decide whether a credentials write is evidence worth acting
+   on immediately, or noise during a backoff that must run its course. */
+let officialRateLimited = false;
 
 /* Retrying a dead token every minute is how a 401 turns into a 429 — which is
    exactly what happened. Failures back off exponentially to half an hour;
@@ -150,16 +161,38 @@ function scheduleOfficial(rateLimited, retryAfterMs) {
   if (officialTimer.unref) officialTimer.unref();
 }
 
+/* A test server must not poll Anthropic (see the CLAUDE_USAGE_NO_REMOTE guard
+   at the bottom of this file), and that must hold no matter what triggers a
+   refresh - the boot call, the backoff timer, or watchCredentials() below.
+   Checking it here rather than only at the caller means a credentials-watch
+   test can exercise the reset/discriminator logic below via a canned result
+   instead of a real request to the already-rate-limited endpoint. Unset in
+   normal use, where this is exactly official.fetchOfficial(). */
+let fakeOfficialCalls = 0;   /* test-only: lets a test tell distinct fake fetches apart */
+function fetchOfficialResult() {
+  if (process.env.CLAUDE_USAGE_NO_REMOTE) {
+    fakeOfficialCalls++;
+    return Promise.resolve({
+      ok: false,
+      fetchedAt: Date.now(),
+      error: (process.env.CLAUDE_USAGE_FAKE_OFFICIAL_ERROR || 'remote polling disabled (CLAUDE_USAGE_NO_REMOTE)') +
+        ' #' + fakeOfficialCalls
+    });
+  }
+  return official.fetchOfficial();
+}
+
 function refreshOfficial() {
   if (officialInFlight) return;
   officialInFlight = true;
   let rateLimited = false;
   let retryAfterMs = null;
-  official.fetchOfficial()
+  fetchOfficialResult()
     .then(result => {
       officialState = result;
       officialFailures = result.ok ? 0 : officialFailures + 1;
       rateLimited = !result.ok && /HTTP 429/.test(result.error || '');
+      officialRateLimited = rateLimited;
       retryAfterMs = result.retryAfterMs || null;
       /* Keep the last good reading. Utilisation only climbs within a window and
          the reset times are absolute, so a few-minute-old figure is far better
@@ -169,6 +202,7 @@ function refreshOfficial() {
     .catch(err => {
       officialState = { ok: false, error: String(err && err.message || err), fetchedAt: Date.now() };
       officialFailures++;
+      officialRateLimited = false;
     })
     .then(() => {
       officialInFlight = false;
@@ -222,12 +256,45 @@ function withHint(official, hint) {
   });
 }
 
+/* Resume offset for the credentials watcher's own dedup, not readIncrement's -
+   this just remembers the mtime of the last write this function acted on. */
+let lastCredentialsMtime = null;
+
 /* The credentials file being rewritten is the signal that a retry is worth
-   making immediately, rather than waiting out a long backoff. */
+   making immediately, rather than waiting out a long backoff - but only for
+   the 401 case this exists to serve: a dead token got a new one, so the next
+   request should use it now rather than waiting out minutes of backoff.
+   A 429 is not that. It means the caller (not the credential) is the
+   problem, and Claude Code rewrites this same file on its own cadence
+   whether or not this server is in a 429 backoff - officialRateLimited (set
+   in refreshOfficial() above from the same 429 check official.js and this
+   file already use elsewhere) is what tells the two apart. Clearing the
+   count and firing an immediate request during an earned 429 backoff would
+   send exactly the extra request that turned a 401 into a 429 in the first
+   place - see OFFICIAL_RATE_LIMIT_MS above. Left untouched, the backoff
+   still recovers on its own once the window passes.
+
+   Separately: official.js's own write pattern (write .tmp-<pid>, renameSync
+   onto the target) fires TWO fs.watch events that pass the filename filter
+   below for one logical rotation (measured on this platform - see the task
+   record). Comparing the file's mtime collapses that pair into one action;
+   without it a single rotation would run this handler, and any immediate
+   refetch it triggers, twice. */
 function watchCredentials() {
+  const dir = path.dirname(CREDENTIALS_FILE);
+  const base = path.basename(CREDENTIALS_FILE);
   try {
-    fs.watch(path.join(HOME, '.claude'), (event, filename) => {
-      if (filename !== '.credentials.json') return;
+    fs.watch(dir, (event, filename) => {
+      if (filename !== base) return;
+      let mtime;
+      try {
+        mtime = fs.statSync(CREDENTIALS_FILE).mtimeMs;
+      } catch (err) {
+        return; /* mid-rename or briefly absent; the settled event covers it */
+      }
+      if (mtime === lastCredentialsMtime) return;
+      lastCredentialsMtime = mtime;
+      if (officialRateLimited) return;
       officialFailures = 0;
       refreshOfficial();
     }).unref();
@@ -1355,6 +1422,12 @@ process.on('uncaughtException', (err) => {
    nothing. Unset in normal use. */
 if (process.env.CLAUDE_USAGE_NO_REMOTE) {
   officialState = { ok: false, fetchedAt: Date.now(), error: 'remote polling disabled (CLAUDE_USAGE_NO_REMOTE)' };
+  /* Still lets a test reach watchCredentials() itself - fetchOfficialResult()
+     above already keeps every fetch it triggers hermetic under NO_REMOTE, and
+     an explicit CLAUDE_USAGE_CREDENTIALS_FILE means a test opted in and is
+     pointing it at a fixture, never the real ~/.claude. Without that opt-in
+     (every other suite) this is unreached, exactly as before. */
+  if (process.env.CLAUDE_USAGE_CREDENTIALS_FILE) watchCredentials();
 } else {
   refreshOfficial();   /* schedules its own next run, with backoff on failure */
   watchCredentials();

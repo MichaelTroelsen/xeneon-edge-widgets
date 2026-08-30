@@ -506,14 +506,22 @@ function parseLines(text, cfg, records, meta) {
     } catch (err) {
       continue; /* a partially flushed final line */
     }
-    if (obj.quotaLimits && obj.quotaLimits.resetsAt) {
-      const at = obj.quotaLimits.resetsAt * 1000;
-      if (!lastQuota || at > lastQuota.resetsAt) {
+    /* apiErrorStatus sits alongside quotaLimits as a sibling field on a real
+       429 line, not inside it - every quotaLimits record seen in the wild so
+       far carries it (see the task note). Without this check any line that
+       merely mentions quotaLimits would qualify, contradicting this
+       variable's own name and the comment below. */
+    if (obj.quotaLimits && obj.quotaLimits.resetsAt && obj.apiErrorStatus === 429) {
+      const seenAt = Date.parse(obj.timestamp) || Date.now();
+      /* The MOST RECENT record wins, not whichever has the farthest-future
+         resetsAt. Comparing on resetsAt let a seven_day 429 (reset days out)
+         permanently outrank every five_hour 429 seen after it, forever. */
+      if (!lastQuota || seenAt > lastQuota.seenAt) {
         lastQuota = {
-          resetsAt: at,
+          resetsAt: obj.quotaLimits.resetsAt * 1000,
           type: obj.quotaLimits.rateLimitType || null,
           status: obj.quotaLimits.status || null,
-          seenAt: Date.parse(obj.timestamp) || Date.now()
+          seenAt
         };
       }
     }
@@ -843,7 +851,17 @@ function collectWorkflows() {
 
   workflows.sort((a, b) => b.startedAt - a.startedAt);
   subtasks.sort((a, b) => b.startedAt - a.startedAt);
-  return { workflows: workflows.slice(0, MAX_WORKFLOWS), subtasks: subtasks.slice(0, MAX_SUBTASKS) };
+  /* workflowsSeen/subtasksSeen must be the pre-slice totals: they exist so
+     anyone diagnosing why a list is empty (or capped) can tell the two apart.
+     Counting workflows.length/subtasks.length AFTER the slice below reports a
+     number that can never exceed the cap, which hides truncation from the
+     person reading it. */
+  return {
+    workflows: workflows.slice(0, MAX_WORKFLOWS),
+    subtasks: subtasks.slice(0, MAX_SUBTASKS),
+    workflowsSeen: workflows.length,
+    subtasksSeen: subtasks.length
+  };
 }
 
 /* ------------------------------------------------------------- live runs */
@@ -1132,7 +1150,7 @@ function build(nowOverride) {
   const weeklyEnd = Math.min(week.end, now);
   const weeklyUsed = sumWeighted(records, week.start, weeklyEnd, null);
 
-  const { workflows, subtasks } = collectWorkflows();
+  const { workflows, subtasks, workflowsSeen, subtasksSeen } = collectWorkflows();
   const queued = collectQueuedTasks();
   /* If Claude Code is being used right now, the statusline should be writing.
      When it is not, the likely cause is that statusLine.command no longer runs
@@ -1221,8 +1239,8 @@ function build(nowOverride) {
       /* Totals behind the live view, for /usagehtml and for anyone diagnosing
          why a list is empty. */
       sessionsSeen: sessions.length,
-      workflowsSeen: workflows.length,
-      subtasksSeen: subtasks.length,
+      workflowsSeen: workflowsSeen,
+      subtasksSeen: subtasksSeen,
       queued: queued.length,
       messages: records.length
     }

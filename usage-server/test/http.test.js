@@ -64,7 +64,10 @@ const { spawn } = require('child_process');
    for the /health failure-state tests, each in its own process so a rebuild
    failure in one never touches the others. 41804/41805 are two more for the
    credentials-watcher tests, same reasoning: each scenario primes a specific
-   officialRateLimited state and must not leak into the other's process. */
+   officialRateLimited state and must not leak into the other's process.
+   41811 is the torn-append test further down. 41812/41813/41814 are the
+   lastQuota tests, one server each for the same reason as the others. 41815
+   is the workflowsSeen/subtasksSeen cap test further down. */
 const PORT = 41801;
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-http-test-'));
 const PROJECTS = path.join(ROOT, 'projects');
@@ -476,6 +479,142 @@ async function testTornAppend() {
 }
 
 /* ------------------------------------------------------------------------
+ * lastQuota: "most recent 429 quotaLimits record seen", not "farthest-future
+ * resetsAt seen". The old predicate (`at > lastQuota.resetsAt`) kept whichever
+ * record had the largest resetsAt forever - a seven_day 429 (reset days out)
+ * permanently outranked every five_hour 429 seen after it, so session.blocked
+ * and session.resetsAt went stale for the rest of the process's life. There
+ * was also no check that a quotaLimits-bearing line was actually a 429 at
+ * all: `obj.apiErrorStatus === 429` is the sibling field every real 429 line
+ * in the wild carries (confirmed against ~/.claude/projects at the time of
+ * this fix - see the task record), so its absence is the signal that a line
+ * merely mentions quotaLimits without being a live rejection.
+ *
+ * No suite fixture wrote a quotaLimits record before this - these are the
+ * first. A seven_day record has never been observed in real transcripts (all
+ * evidence so far is five_hour/rejected), so it is synthesized here per the
+ * task note; the five_hour/rejected shape mirrors the real thing exactly.
+ *
+ * Three cases, each isolating one thing:
+ *   - testQuotaTaskRepro: the literal scenario from the task record (a
+ *     seven_day/allowed record seen long ago, then a five_hour/rejected one
+ *     seen recently) - an end-to-end regression check, but on its own it does
+ *     NOT discriminate either defect in isolation (the seven_day record here
+ *     carries no apiErrorStatus, so the 429 gate alone already excludes it
+ *     regardless of the predicate).
+ *   - testQuotaMostRecentWins: two GENUINE 429s (both carry apiErrorStatus)
+ *     of different types and resetsAt, isolating the predicate alone.
+ *   - testQuotaRequires429: a genuine 429 followed by a LATER quotaLimits
+ *     line with no apiErrorStatus, isolating the 429 gate alone (the
+ *     seenAt-based predicate would otherwise let the later, non-429 line
+ *     win on recency).
+ * ---------------------------------------------------------------------- */
+function quotaLine(tsMs, type, status, resetsAtMs, withApiError) {
+  const obj = {
+    type: 'assistant',
+    timestamp: new Date(tsMs).toISOString(),
+    message: { model: 'claude-sonnet-5', content: [{ type: 'text', text: 'rate limited' }] },
+    quotaLimits: {
+      status: status,
+      resetsAt: Math.floor(resetsAtMs / 1000),
+      unifiedRateLimitFallbackAvailable: false,
+      rateLimitType: type,
+      overageStatus: status,
+      overageDisabledReason: 'org_level_disabled',
+      upgradePaths: ['upgrade_plan'],
+      isUsingOverage: false
+    }
+  };
+  if (withApiError) {
+    obj.error = 'rate_limit';
+    obj.isApiErrorMessage = true;
+    obj.apiErrorStatus = 429;
+  }
+  return JSON.stringify(obj);
+}
+
+async function runQuotaScenario(port, lines) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-http-test-quota-'));
+  const configFile = path.join(root, 'limits.json');
+  writeConfig(configFile, VALID_CONFIG);
+  const projects = path.join(root, 'projects');
+  const transcript = path.join(projects, 'proj-quota', '33333333-0000-4000-8000-000000000003.jsonl');
+  fs.mkdirSync(path.dirname(transcript), { recursive: true });
+  fs.writeFileSync(transcript, lines.join('\n') + '\n', 'utf8');
+
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+    env: Object.assign({}, process.env, {
+      CLAUDE_USAGE_PROJECTS_DIR: projects,
+      CLAUDE_USAGE_STATUSLINE_FILE: path.join(root, 'no-statusline.json'),
+      CLAUDE_USAGE_STATS_FILE: path.join(root, 'stats-cache.json'),
+      CLAUDE_USAGE_CONFIG_PATH: configFile,
+      CLAUDE_USAGE_NO_REMOTE: '1',
+      CLAUDE_USAGE_REFRESH_MS: '60000',
+      PORT: String(port)
+    }),
+    stdio: ['ignore', 'ignore', 'inherit']
+  });
+
+  try {
+    await waitUntil(async () => {
+      const r = await get('/health', port);
+      return r.status === 200 && JSON.parse(r.body).state === 'healthy';
+    }, 8000, 200);
+    const r = await get('/usage?at=' + Date.now(), port);
+    if (r.status !== 200) throw new Error('/usage answered ' + r.status);
+    return JSON.parse(r.body).session;
+  } finally {
+    child.kill();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testQuotaTaskRepro() {
+  console.log('lastQuota - the exact task repro (a stale weekly record must not suppress a fresh five-hour 429):');
+  const port = 41812;
+  const now = Date.now();
+  const blockAnchor = now - 2 * 3600000;
+  const fiveHourResetsAt = now + 3600000;
+  const session = await runQuotaScenario(port, [
+    assistantLine(blockAnchor, 10),
+    quotaLine(now - 110 * 60000, 'seven_day', 'allowed', now + 5 * 86400000, false),
+    quotaLine(now - 1 * 60000, 'five_hour', 'rejected', fiveHourResetsAt, true)
+  ]);
+  check('blocked is true - the fresh five-hour 429 is not masked by the stale weekly record', session.blocked, true);
+  check('resetsAt is the five-hour reset, not block.end', session.resetsAt, Math.floor(fiveHourResetsAt / 1000) * 1000);
+}
+
+async function testQuotaMostRecentWins() {
+  console.log('lastQuota - picks the MOST RECENTLY SEEN 429, not the one with the farthest-future resetsAt:');
+  const port = 41813;
+  const now = Date.now();
+  const blockAnchor = now - 2 * 3600000;
+  const fiveHourResetsAt = now + 3600000;
+  const session = await runQuotaScenario(port, [
+    assistantLine(blockAnchor, 10),
+    quotaLine(now - 110 * 60000, 'seven_day', 'rejected', now + 5 * 86400000, true),
+    quotaLine(now - 1 * 60000, 'five_hour', 'rejected', fiveHourResetsAt, true)
+  ]);
+  check('resetsAt tracks the more recently seen five-hour 429, not the farther-future weekly one',
+    session.resetsAt, Math.floor(fiveHourResetsAt / 1000) * 1000);
+}
+
+async function testQuotaRequires429() {
+  console.log('lastQuota - a quotaLimits line with no apiErrorStatus:429 is not a real 429 and must not displace one:');
+  const port = 41814;
+  const now = Date.now();
+  const blockAnchor = now - 2 * 3600000;
+  const realResetsAt = now + 3600000;
+  const session = await runQuotaScenario(port, [
+    assistantLine(blockAnchor, 10),
+    quotaLine(now - 30 * 60000, 'five_hour', 'rejected', realResetsAt, true),
+    quotaLine(now - 5 * 60000, 'five_hour', 'allowed', now + 2 * 3600000, false)
+  ]);
+  check('blocked stays true - the later non-429 line does not overwrite the real one', session.blocked, true);
+  check('resetsAt stays the real 429\'s reset, not the later non-429 line\'s', session.resetsAt, Math.floor(realResetsAt / 1000) * 1000);
+}
+
+/* ------------------------------------------------------------------------
  * The credentials watcher: a write must not wipe backoff EARNED by rate
  * limiting, and one rotation must not run its handler twice.
  *
@@ -670,13 +809,94 @@ async function testCredentialsWatcherResetsOnGenuineWrite() {
   }
 }
 
+/* collectWorkflows() in server.js slices its workflows/subtasks arrays down
+ * to MAX_WORKFLOWS (24) / MAX_SUBTASKS (40) before returning them, because
+ * the rendered lists must stay bounded. workflowsSeen/subtasksSeen exist so
+ * a person looking at usagehtml.js's "Workflows (N active of M seen)" can
+ * tell a genuinely-empty machine from a truncated list. Counting
+ * workflows.length/subtasks.length AFTER that slice (the bug this guards
+ * against) reports a number that can never exceed the cap, which is exactly
+ * the case where the diagnostic is needed most. This writes comfortably more
+ * than either cap and checks the Seen counts report the true, unclamped
+ * total while the rendered lists (and their own counts.workflows /
+ * counts.subtasks) stay capped. */
+async function testSeenCountsSurviveTheCap() {
+  console.log('workflowsSeen/subtasksSeen report the true pre-slice total, not the capped rendered list:');
+  const port = 41815;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-http-test-seencap-'));
+  const configFile = path.join(root, 'limits.json');
+  writeConfig(configFile, VALID_CONFIG);
+  const projects = path.join(root, 'projects');
+  const wfDir = path.join(projects, 'C--fixture-seencap', 'sess-seencap', 'workflows');
+  fs.mkdirSync(wfDir, { recursive: true });
+
+  const TOTAL = 45; /* > MAX_WORKFLOWS (24) and > MAX_SUBTASKS (40) both */
+  for (let i = 0; i < TOTAL; i++) {
+    const id = 'wf_seencap' + String(i).padStart(3, '0');
+    fs.writeFileSync(path.join(wfDir, id + '.json'), JSON.stringify({
+      runId: id,
+      workflowName: 'seencap-fixture',
+      status: 'running', /* not in FINISHED_WORKFLOW -> counts as active */
+      startTime: Date.now() - i * 1000,
+      agentCount: 1,
+      workflowProgress: [
+        { type: 'workflow_agent', label: 'agent' + i, state: 'running' /* not in FINISHED_TASK -> active */ }
+      ]
+    }), 'utf8');
+  }
+
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+    env: Object.assign({}, process.env, {
+      CLAUDE_USAGE_PROJECTS_DIR: projects,
+      CLAUDE_USAGE_STATUSLINE_FILE: path.join(root, 'no-statusline.json'),
+      CLAUDE_USAGE_STATS_FILE: path.join(root, 'stats-cache.json'),
+      CLAUDE_USAGE_CONFIG_PATH: configFile,
+      CLAUDE_USAGE_NO_REMOTE: '1',
+      PORT: String(port)
+    }),
+    stdio: ['ignore', 'ignore', 'inherit']
+  });
+
+  try {
+    await waitUntil(async () => {
+      const r = await get('/health', port);
+      return r.status === 200 ? true : null;
+    }, 8000, 200);
+
+    const r = await get('/usage', port);
+    check('/usage answers 200 for the seencap fixture', r.status, 200);
+    const body = JSON.parse(r.body);
+    const c = body.counts || {};
+
+    check('workflowsSeen reports the true pre-slice total (45), not the MAX_WORKFLOWS cap (24)',
+      c.workflowsSeen, TOTAL);
+    check('subtasksSeen reports the true pre-slice total (45), not the MAX_SUBTASKS cap (40)',
+      c.subtasksSeen, TOTAL);
+    check('the rendered workflow list itself still stays capped at MAX_WORKFLOWS',
+      (body.workflows || []).length, 24);
+    check('the rendered subtask list itself still stays capped at MAX_SUBTASKS',
+      (body.subtasks || []).length, 40);
+    check('counts.workflows (active, rendered) is likewise capped at 24', c.workflows, 24);
+    check('counts.subtasks (active, rendered) is likewise capped at 40', c.subtasks, 40);
+
+    checkTrue('server process is still alive', child.exitCode === null);
+  } finally {
+    child.kill();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await runMalformedRequestSuite();
   await testNeverBuilt();
   await testStaleAfterHealthy();
   await testTornAppend();
+  await testQuotaTaskRepro();
+  await testQuotaMostRecentWins();
+  await testQuotaRequires429();
   await testCredentialsWatcherRateLimited();
   await testCredentialsWatcherResetsOnGenuineWrite();
+  await testSeenCountsSurviveTheCap();
 
   console.log('');
   console.log(failures ? `${failures} FAILED` : 'all passed');

@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.10.0';
+  var WIDGET_VERSION = '1.11.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
@@ -18,11 +18,11 @@
   var timer = null;
   var data = null;
   var lastError = '';
-  var VIEWS = ['usage', 'detail', 'tokens', 'stats'];
+  var VIEWS = ['usage', 'detail', 'tokens', 'stats', 'models'];
   var view = 'usage';   /* tapping the widget cycles through VIEWS */
 
   var TITLES = { usage: 'Claude Code usage', detail: 'Activity', tokens: 'Tokens',
-                 stats: 'All time' };
+                 stats: 'All time', models: 'Tokens by model' };
 
   /* ---------- iCUE property access ---------- */
 
@@ -427,6 +427,109 @@
     ].forEach(function (r) { els.figs.appendChild(fig(r[0], r[1])); });
   }
 
+  /* ---------- tokens by model ---------- */
+
+  /* Up to five model families have appeared in this data. Ordered by total
+     tokens descending and assigned from this palette, so the biggest
+     contributor is always the same colour from one render to the next -
+     a legend that reshuffles is worse than no legend. */
+  var MODEL_COLOURS = ['m0', 'm1', 'm2', 'm3', 'm4'];
+
+  function shortModel(name) {
+    return String(name).replace(/^claude-/, '').replace(/-\d{8}$/, '');
+  }
+
+  var CHART_H = 100;      /* user units; the SVG scales to its box */
+  var BAR_GAP = 0.18;     /* fraction of a column left as gutter */
+
+  /* Laid out by CALENDAR date like the heatmap, and for the same reason:
+     dailyModelTokens is SPARSE - 34 rows across a 39-day span here - so
+     indexing by array position puts every bar on the wrong day. A day with no
+     row is a real gap and is drawn as one. */
+  function buildModelChart(days, models) {
+    var first = dayNumber(days[0].date);
+    var span = dayNumber(days[days.length - 1].date) - first + 1;
+    var byDay = {};
+    var max = 0;
+    days.forEach(function (d) {
+      var total = 0;
+      Object.keys(d.tokensByModel).forEach(function (m) { total += d.tokensByModel[m]; });
+      byDay[dayNumber(d.date) - first] = d.tokensByModel;
+      if (total > max) max = total;
+    });
+
+    var w = span;
+    var root = svg('svg', {
+      viewBox: '0 0 ' + w + ' ' + CHART_H,
+      preserveAspectRatio: 'none',
+      role: 'img'
+    });
+    if (!max) return root;
+
+    for (var i = 0; i < span; i++) {
+      var row = byDay[i];
+      if (!row) continue;              /* a real gap, drawn as one */
+      var y = CHART_H;
+      /* Stacked in the legend's order so a colour sits in the same place in
+         every column. */
+      models.forEach(function (m, mi) {
+        var v = row[m];
+        if (!v) return;
+        var h = (v / max) * CHART_H;
+        y -= h;
+        root.appendChild(svg('rect', {
+          x: (i + BAR_GAP / 2).toFixed(3), y: y.toFixed(3),
+          width: (1 - BAR_GAP).toFixed(3), height: h.toFixed(3),
+          class: 'bar ' + MODEL_COLOURS[mi % MODEL_COLOURS.length]
+        }));
+      });
+    }
+    return root;
+  }
+
+  function renderModelChart(s) {
+    els.modelChart.textContent = '';
+    els.modelLegend.textContent = '';
+
+    var days = (s && Array.isArray(s.dailyModelTokens)) ? s.dailyModelTokens : null;
+    if (!s || s.unavailable || !days || !days.length) {
+      els.modelsNote.textContent = (s && s.unavailable)
+        ? 'No per-model history: ' + s.unavailable
+        : 'No per-model history: the feed is not serving a stats block.';
+      els.viewModels.classList.add('is-unavailable');
+      return;
+    }
+    els.viewModels.classList.remove('is-unavailable');
+    els.modelsNote.textContent = '';
+
+    /* Totals decide both the stacking order and the legend order. */
+    var totals = {};
+    days.forEach(function (d) {
+      Object.keys(d.tokensByModel).forEach(function (m) {
+        totals[m] = (totals[m] || 0) + d.tokensByModel[m];
+      });
+    });
+    var models = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; });
+
+    var span = dayNumber(days[days.length - 1].date) - dayNumber(days[0].date) + 1;
+    /* The header already says "Tokens by model", so the heading spends its
+       width on the range instead of repeating it. */
+    els.modelsHead.textContent = shortDate(days[0].date) + ' – ' +
+      shortDate(days[days.length - 1].date) + ' · ' + span + ' days';
+    els.modelChart.appendChild(buildModelChart(days, models));
+
+    models.forEach(function (m, i) {
+      var row = document.createElement('span');
+      row.className = 'lg';
+      var sw = document.createElement('i');
+      sw.className = 'sw ' + MODEL_COLOURS[i % MODEL_COLOURS.length];
+      row.appendChild(sw);
+      row.appendChild(cell('span', shortModel(m), 'n'));
+      row.appendChild(cell('span', big(totals[m]), 'v'));
+      els.modelLegend.appendChild(row);
+    });
+  }
+
   function render() {
     if (!data) return;
 
@@ -559,6 +662,7 @@
     els.tokWeeklyNote.textContent = 'weighted ' + num(w.usedWeighted);
 
     renderStats(data.stats);
+    renderModelChart(data.stats);
 
     showState('content');
     markScrollable();
@@ -581,6 +685,7 @@
     els.viewDetail.classList.toggle('is-active', view === 'detail');
     els.viewTokens.classList.toggle('is-active', view === 'tokens');
     els.viewStats.classList.toggle('is-active', view === 'stats');
+    els.viewModels.classList.toggle('is-active', view === 'models');
     Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
       d.classList.toggle('is-active', d.getAttribute('data-view') === view);
     });
@@ -681,6 +786,11 @@
     els.heatHead = document.getElementById('heat-head');
     els.figs = document.getElementById('figs');
     els.statsNote = document.getElementById('stats-note');
+    els.viewModels = document.querySelector('.view-models');
+    els.modelsHead = document.getElementById('models-head');
+    els.modelChart = document.getElementById('model-chart');
+    els.modelLegend = document.getElementById('model-legend');
+    els.modelsNote = document.getElementById('models-note');
     els.tokSession = document.getElementById('tok-session');
     els.tokWeekly = document.getElementById('tok-weekly');
     els.mdlSession = document.getElementById('mdl-session');

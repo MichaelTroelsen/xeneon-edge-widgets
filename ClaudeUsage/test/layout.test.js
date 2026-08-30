@@ -124,7 +124,7 @@ const VIEWS = extractArray(widgetSrc, 'VIEWS');
 const START_VIEW = extractString(widgetSrc, 'view');
 
 console.log('metrics:');
-check('VIEWS was read out of widget.js', VIEWS, ['usage', 'detail', 'tokens', 'stats']);
+check('VIEWS was read out of widget.js', VIEWS, ['usage', 'detail', 'tokens', 'stats', 'models']);
 check('the widget starts on the "usage" view', START_VIEW, 'usage');
 if (failures) {
   console.log('\nthe source constants could not be read; every tap count below would be aimed at the wrong view');

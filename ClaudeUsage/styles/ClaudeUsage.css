@@ -48,6 +48,14 @@
   --heat-2: #355a9c;
   --heat-3: #4876cc;
   --heat-4: #6a99f5;
+
+  /* Categorical, not a ramp: these name different models, so they must be
+     told apart rather than ordered. Assigned by total tokens descending. */
+  --m0: #6a99f5;
+  --m1: #57c785;
+  --m2: #e0a458;
+  --m3: #b98ae0;
+  --m4: #e0685f;
 }
 
 :root[data-theme="light"] {
@@ -66,6 +74,12 @@
   --heat-2: #85aae9;
   --heat-3: #4a7ede;
   --heat-4: #1a56db;
+
+  --m0: #1a56db;
+  --m1: #16a34a;
+  --m2: #b45309;
+  --m3: #7c3aed;
+  --m4: #b91c1c;
 }
 
 html { overflow: hidden; }
@@ -690,3 +704,74 @@ body {
 }
 .view-stats.is-unavailable .stats { display: none; }
 .view-stats.is-unavailable .stats-note { display: block; }
+
+/* ---------- tokens by model ---------- */
+
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 2);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.models h2 {
+  margin: 0;
+  font-size: var(--font-section);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* preserveAspectRatio="none" on the SVG: the bars are a quantity against a
+   day, not a shape, so stretching them to the box is correct and keeps every
+   column the same width whatever the span. */
+.chart {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.chart svg { width: 100%; height: 100%; }
+.bar.m0 { fill: var(--m0); }
+.bar.m1 { fill: var(--m1); }
+.bar.m2 { fill: var(--m2); }
+.bar.m3 { fill: var(--m3); }
+.bar.m4 { fill: var(--m4); }
+
+.legend {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--layout-unit) * 1) calc(var(--layout-unit) * 4);
+  font-size: var(--font-meta);
+}
+.legend .lg {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 1);
+  min-width: 0;
+}
+.legend .sw {
+  width: calc(var(--layout-unit) * 2.2);
+  height: calc(var(--layout-unit) * 2.2);
+  border-radius: calc(var(--layout-unit) * 0.5);
+  flex: 0 0 auto;
+}
+.legend .sw.m0 { background: var(--m0); }
+.legend .sw.m1 { background: var(--m1); }
+.legend .sw.m2 { background: var(--m2); }
+.legend .sw.m3 { background: var(--m3); }
+.legend .sw.m4 { background: var(--m4); }
+.legend .n { color: var(--text); white-space: nowrap; }
+.legend .v { color: var(--muted); white-space: nowrap; }
+
+.models-note {
+  display: none;
+  font-size: var(--font-caption);
+  color: var(--muted);
+  align-self: center;
+  margin: auto;
+  padding: 0 calc(var(--layout-unit) * 6);
+  text-align: center;
+}
+.view-models.is-unavailable .models { display: none; }
+.view-models.is-unavailable .models-note { display: block; }

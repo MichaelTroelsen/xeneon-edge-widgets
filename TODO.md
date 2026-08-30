@@ -121,7 +121,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       TabButtonsEditorSetting.qml:33 calls `rowCount()` on a QVariantList, which
       throws for every possible payload — Corsair's bundled widgets included.
 
-## Claude Code Usage — 1.10.0
+## Claude Code Usage — 1.11.0
 
 ### Done
 
@@ -140,7 +140,8 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       feed is distinguishable from live numbers that are not moving.
 - [x] **Tap to switch views** — usage bars, activity (sessions, workflows,
       subtasks), a token breakdown behind the two bars (1.9.0), and all-time
-      stats (1.10.0), cycling through a four-dot indicator.
+      stats (1.10.0), and tokens by model (1.11.0), cycling through a
+      five-dot indicator.
 - [x] **Scrollable lists**, replacing the row trimming that made anything past
       the first handful unreachable. Headings carry totals, a fade marks an
       overflowing list, and scroll position survives a refresh.
@@ -313,6 +314,32 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       and activity lists reaches a per-window token and per-model breakdown
       (`renderTokens`/`renderModels` in `widget.js`), with the countdown to
       reset and the weighted-usage note moved in alongside it.
+
+- [x] **Fifth view: tokens by model** (1.11.0). A stacked bar per calendar day
+      from `stats.dailyModelTokens`, ordered and coloured by each model's total
+      so a colour means the same model in every column, with a legend carrying
+      those totals. A SEPARATE view rather than an addition to All time, and
+      that was settled by measurement rather than taste: the layout suite puts
+      All time's tightest fit at +7.2px of headroom at 840x344, so there was no
+      room in it.
+
+      Two properties of this data drove the implementation. It is SPARSE BY
+      DATE — 34 rows across a 39-day span — so the chart is laid out by
+      calendar position exactly as the heatmap is, and a day with no row is
+      drawn as a real gap rather than closed up; indexing by array position
+      would put every bar on the wrong day, which is the defect that shipped
+      once already in the heatmap. And it covers a DIFFERENT, shorter span than
+      `dailyActivity` (2026-07-22 onward, not 2025-11-19), so it has its own
+      axis and its own heading rather than borrowing All time's.
+
+      The scale is LINEAR despite per-day totals spanning 43x, because the bars
+      are stacked: segments have to sum to the column, and a log axis breaks
+      that. A quiet day genuinely was 2% of a loud one.
+
+      `stats.unavailable` replaces the view with the reason, as All time does.
+      The four existing views are pixel-identical outside the header — checked
+      by pinning WIDGET_VERSION and diffing, zero body pixels changed. The
+      layout suite pins five views now and renders all of them.
 
 - [x] **Fourth view: all-time stats** (1.10.0). A contribution heatmap over the
       whole recorded span plus eight headline figures — sessions, messages,

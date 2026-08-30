@@ -29,7 +29,7 @@
         <span class="title" id="title">Claude Code usage</span>
         <span class="plan" id="plan"></span>
         <span class="updated" id="updated"></span>
-        <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i><i class="dot" data-view="tokens"></i><i class="dot" data-view="stats"></i></span>
+        <span class="dots" aria-hidden="true"><i class="dot" data-view="usage"></i><i class="dot" data-view="detail"></i><i class="dot" data-view="tokens"></i><i class="dot" data-view="stats"></i><i class="dot" data-view="models"></i></span>
         <span class="live" id="live">LIVE</span>
         <span class="version" id="version"></span>
       </header>
@@ -125,6 +125,18 @@
           <div class="figs" id="figs"></div>
         </section>
         <div class="stats-note" id="stats-note"></div>
+      </div>
+
+      <!-- Per-model tokens over time, from stats.dailyModelTokens. A separate
+           view rather than an addition to All time: that view measures at
+           +7.2px of headroom at 840x344, so there is no room in it. -->
+      <div class="view view-models">
+        <section class="models">
+          <h2 id="models-head">Tokens by model</h2>
+          <div class="chart" id="model-chart"></div>
+          <div class="legend" id="model-legend"></div>
+        </section>
+        <div class="models-note" id="models-note"></div>
       </div>
     </div>
 

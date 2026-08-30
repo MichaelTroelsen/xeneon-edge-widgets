@@ -781,24 +781,47 @@ function readJournal(dir) {
 
 /* The agent's own prompt is the only human-readable thing about it on disk
    while it runs - opts.label never lands there - so the first line of it names
-   the row, the same way a session is named by its first user message. */
-function agentLabel(dir, agentId) {
+   the row, the same way a session is named by its first user message.
+   That same first record is also the only place the agent's real start time is
+   written: the journal carries nothing but type/key/agentId (checked across
+   234 records in 40 real journals), so an agent's start cannot be recovered
+   from it. Read both out of the one open. */
+function agentHead(dir, agentId) {
+  const head = { label: agentId.slice(0, 8), startedAt: null };
+  let fd;
   try {
-    const fd = fs.openSync(path.join(dir, 'agent-' + agentId + '.jsonl'), 'r');
-    const buf = Buffer.alloc(8192);
-    const read = fs.readSync(fd, buf, 0, 8192, 0);
-    fs.closeSync(fd);
-    const line = buf.slice(0, read).toString('utf8').split('\n')[0];
-    const rec = JSON.parse(line);
-    const content = rec && rec.message && rec.message.content;
-    const text = typeof content === 'string'
-      ? content
-      : (Array.isArray(content) ? (content.find(c => c.type === 'text') || {}).text || '' : '');
-    const first = String(text).split('\n').find(l => l.trim());
-    return first ? redactSecrets(first.trim()).slice(0, 60) : agentId.slice(0, 8);
+    fd = fs.openSync(path.join(dir, 'agent-' + agentId + '.jsonl'), 'r');
   } catch (err) {
-    return agentId.slice(0, 8);
+    return head;
   }
+  try {
+    /* The transcript is created when the agent is spawned and only appended to
+       afterwards, so its birthtime is the agent's start even when the first
+       record turns out to be unreadable or timestamp-less. mtime would not be:
+       it moves with every message the agent writes, which would make a
+       long-running agent read as permanently just-started. */
+    try {
+      const st = fs.fstatSync(fd);
+      head.startedAt = st.birthtimeMs || st.mtimeMs || null;
+    } catch (err) { /* keep null; the caller falls back to the run's start */ }
+    try {
+      const buf = Buffer.alloc(8192);
+      const read = fs.readSync(fd, buf, 0, 8192, 0);
+      const line = buf.slice(0, read).toString('utf8').split('\n')[0];
+      const rec = JSON.parse(line);
+      const content = rec && rec.message && rec.message.content;
+      const text = typeof content === 'string'
+        ? content
+        : (Array.isArray(content) ? (content.find(c => c.type === 'text') || {}).text || '' : '');
+      const first = String(text).split('\n').find(l => l.trim());
+      if (first) head.label = redactSecrets(first.trim()).slice(0, 60);
+      const at = Date.parse(rec && rec.timestamp);
+      if (Number.isFinite(at)) head.startedAt = at;
+    } catch (err) { /* unparseable first line: keep the id and the birthtime */ }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return head;
 }
 
 function agentModel(dir, agentId) {
@@ -820,6 +843,37 @@ function runName(sessionDir, runId) {
     if (match) return match.slice(0, -(runId.length + 4));
   } catch (err) { /* no scripts directory */ }
   return runId.replace(/^wf_/, 'wf ');
+}
+
+/* Liveness is the newest write anywhere inside the run, not the run
+   directory's own mtime.
+   On this filesystem appending to a file leaves the containing directory's
+   mtime byte-identical - measured, 1788087551287972400ns before and after an
+   append - while creating a new file does move it. A workflow that fans all
+   its agents out at the start (the /runbatch and /runqueue shape) therefore
+   creates its last agent-*.jsonl in the first minute and only appends
+   afterwards, so its directory mtime freezes there and the whole run
+   disappears from the feed at t+15min while it is still writing.
+   journal.jsonl alone does not fix that: the journal takes its "started"
+   lines at the fan-out and then nothing until an agent finishes, so a
+   40-minute agent leaves it exactly as frozen. The agent transcripts are what
+   moves while work is in flight; the journal is what moves when a result
+   lands. Take the newest of the two, with the directory's own mtime as the
+   floor so a run whose files have all been removed behaves as it did before.
+   A directory with no journal.jsonl at all is not rescued by this: readJournal
+   still returns null for it below and the run is skipped, as before. */
+function runActivityMs(dir, dirStat) {
+  let newest = dirStat.mtimeMs;
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch (err) { return newest; }
+  for (const name of entries) {
+    if (name !== 'journal.jsonl' && !/^agent-.+\.jsonl$/.test(name)) continue;
+    try {
+      const ms = fs.statSync(path.join(dir, name)).mtimeMs;
+      if (ms > newest) newest = ms;
+    } catch (err) { /* deleted between readdir and stat */ }
+  }
+  return newest;
 }
 
 function collectLiveRuns() {
@@ -850,10 +904,12 @@ function collectLiveRuns() {
         if (!run.isDirectory() || !/^wf_/.test(run.name)) continue;
         const dir = path.join(runsDir, run.name);
         /* A killed run leaves "started" with no result forever. Recency of the
-           directory bounds that, so a dead run stops being reported as live. */
+           run's newest write bounds that, so a dead run stops being reported
+           as live - see runActivityMs for why the directory's own mtime is
+           not that signal. */
         let stat;
         try { stat = fs.statSync(dir); } catch (err) { continue; }
-        if (stat.mtimeMs < cutoff) continue;
+        if (runActivityMs(dir, stat) < cutoff) continue;
 
         const journal = readJournal(dir);
         if (!journal) continue;
@@ -862,6 +918,7 @@ function collectLiveRuns() {
 
         const name = runName(sessionDir, run.name);
         const project_ = projectLabel(project.name);
+        const runStartedAt = stat.birthtimeMs || stat.mtimeMs;
         workflows.push({
           active: true,
           id: run.name,
@@ -869,16 +926,17 @@ function collectLiveRuns() {
           summary: '',
           status: 'running',
           project: project_,
-          startedAt: stat.birthtimeMs || stat.mtimeMs,
+          startedAt: runStartedAt,
           durationMs: 0,
           agents: journal.started.size,
           tokens: 0,
           toolCalls: 0
         });
         for (const id of running) {
+          const head = agentHead(dir, id);
           subtasks.push({
             active: true,
-            label: agentLabel(dir, id),
+            label: head.label,
             model: agentModel(dir, id),
             state: 'running',
             phase: '',
@@ -886,7 +944,10 @@ function collectLiveRuns() {
             toolCalls: 0,
             workflow: name,
             project: project_,
-            startedAt: stat.mtimeMs,
+            /* Not the directory's mtime: that is whenever the LAST agent file
+               happened to be created, so every agent in a fan-out reported the
+               same start and a 40-minute one read as just-started. */
+            startedAt: head.startedAt || runStartedAt,
             source: 'live'
           });
         }

@@ -11,6 +11,10 @@
  *   - a run in flight            -> must appear (this is the bug that shipped)
  *   - a finished run             -> must not appear, though its file exists
  *   - a killed run, gone stale   -> must not appear, despite unfinished agents
+ *   - a long fan-out run         -> must appear, though its directory AND its
+ *                                   journal have been stale for an hour: only
+ *                                   its agent transcripts are still moving
+ *   - an idle-transcript run     -> must appear on a fresh journal alone
  *   - a partly finished run      -> only the unfinished agents appear
  *   - a run with an errored agent-> error counts as finished
  *
@@ -43,10 +47,16 @@ function writeRun(opts) {
     if (agent.finished) {
       journal.push(JSON.stringify({ type: agent.finished, agentId: agent.id, result: 'x' }));
     }
-    /* The label comes from the first line of the agent's first message. */
+    /* The label comes from the first line of the agent's first message, and
+       the agent's real start time from that same record's timestamp - the
+       only place on disk that carries it, since journal records hold nothing
+       but type/key/agentId. agent.startedAt omitted reproduces a transcript
+       without one, which must still yield a usable number. */
+    const first = { type: 'user', message: { role: 'user', content: agent.prompt } };
+    if (agent.startedAt) first.timestamp = new Date(agent.startedAt).toISOString();
     fs.writeFileSync(
       path.join(runDir, 'agent-' + agent.id + '.jsonl'),
-      JSON.stringify({ type: 'user', message: { role: 'user', content: agent.prompt } }) + '\n',
+      JSON.stringify(first) + '\n',
       'utf8'
     );
     fs.writeFileSync(
@@ -71,10 +81,29 @@ function writeRun(opts) {
     }), 'utf8');
   }
 
-  if (opts.ageMs) {
-    const when = new Date(Date.now() - opts.ageMs);
-    fs.utimesSync(runDir, when, when);
+  /* Ageing is per-artefact on purpose. An old run DIRECTORY is not evidence
+     of a dead run: on this filesystem appending to a file leaves the
+     containing directory's mtime byte-identical (measured), so a healthy run
+     that created all its agent transcripts up front and has appended to them
+     ever since has exactly the same old directory mtime as a killed one.
+     Only `ageMs` - which ages the directory AND everything in it - describes
+     a run that has genuinely stopped writing. */
+  const age = (file, ms) => {
+    const when = new Date(Date.now() - ms);
+    fs.utimesSync(file, when, when);
+  };
+  const agentFiles = [];
+  for (const agent of opts.agents) {
+    agentFiles.push(path.join(runDir, 'agent-' + agent.id + '.jsonl'));
+    agentFiles.push(path.join(runDir, 'agent-' + agent.id + '.meta.json'));
   }
+  const journalAge = opts.journalAgeMs || opts.ageMs;
+  const agentAge = opts.agentAgeMs || opts.ageMs;
+  if (journalAge) age(path.join(runDir, 'journal.jsonl'), journalAge);
+  if (agentAge) for (const f of agentFiles) age(f, agentAge);
+  /* Last: on some filesystems touching a child would otherwise bump it. */
+  const dirAge = opts.dirAgeMs || opts.ageMs;
+  if (dirAge) age(runDir, dirAge);
   return runDir;
 }
 
@@ -133,6 +162,9 @@ async function waitForServer(child) {
 
 /* -------------------------------------------------------------------- run */
 
+/* Rounded to the second so the ISO string round-trips exactly. */
+const AGENT_START = Math.floor((Date.now() - 40 * 60 * 1000) / 1000) * 1000;
+
 let failures = 0;
 function check(name, actual, expected) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
@@ -157,8 +189,30 @@ async function main() {
   });
   writeRun({
     project: 'C--fixture-stale', session: 'sess-stale', runId: 'wf_stale001',
-    ageMs: 60 * 60 * 1000,   /* an hour old, past the 15-minute liveness bound */
+    /* An hour old in every artefact - directory, journal and transcripts -
+       and still no result: nothing in this run has been written to for an
+       hour, which is the only honest signal that it died. */
+    ageMs: 60 * 60 * 1000,
     agents: [{ id: 'ccc1', prompt: 'killed mid-flight' }]
+  });
+  /* The /runbatch and /runqueue shape: every agent transcript is created in
+     the first minute and only appended to afterwards, so the directory mtime
+     freezes at the fan-out and the journal gets no further line until an
+     agent finishes. Both are an hour stale on a run that is still writing. */
+  writeRun({
+    project: 'C--fixture-fanout', session: 'sess-fanout', runId: 'wf_fanout01',
+    dirAgeMs: 60 * 60 * 1000,
+    journalAgeMs: 60 * 60 * 1000,
+    agents: [{ id: 'fff1', prompt: 'fanout-live: appending for 40 minutes',
+               startedAt: AGENT_START }]
+  });
+  /* The other rescue: transcripts idle (a long tool call), journal just
+     touched because a sibling agent's result landed. */
+  writeRun({
+    project: 'C--fixture-freshjr', session: 'sess-freshjr', runId: 'wf_freshjr1',
+    dirAgeMs: 60 * 60 * 1000,
+    agentAgeMs: 60 * 60 * 1000,
+    agents: [{ id: 'ggg1', prompt: 'freshjr-live: journal moved last' }]
   });
   writeRun({
     project: 'C--fixture-partial', session: 'sess-partial', runId: 'wf_part0001',
@@ -211,16 +265,43 @@ async function main() {
       taskLabels.includes('live-one: still going'), true);
     check('a finished run is not reported', wfNames.includes('wf_done0001'), false);
     check('a stale killed run is not reported', wfNames.includes('wf_stale001'), false);
+    check('a run whose directory and journal are both stale but whose agent is still writing is reported',
+      wfNames.includes('wf_fanout01'), true);
+    check('its agent is reported', taskLabels.filter(l => l.startsWith('fanout-')),
+      ['fanout-live: appending for 40 minutes']);
+    check('a run whose transcripts are stale but whose journal just moved is reported',
+      wfNames.includes('wf_freshjr1'), true);
+    check('its agent is reported', taskLabels.filter(l => l.startsWith('freshjr-')),
+      ['freshjr-live: journal moved last']);
     check('a partly finished run is reported', wfNames.includes('wf_part0001'), true);
     check('only its unfinished agent is reported',
       taskLabels.filter(l => l.startsWith('partial-')), ['partial-live: this one has not']);
     check('an errored agent counts as finished', wfNames.includes('wf_err00001'), false);
-    check('workflow count matches', feed.counts.workflows, 2);
-    check('subtask count matches', feed.counts.subtasks, 3);
+    check('workflow count matches', feed.counts.workflows, 4);
+    check('subtask count matches', feed.counts.subtasks, 5);
     check('every reported subtask says running',
       [...new Set(feed.subtasks.map(t => t.state))], ['running']);
     check('the model comes from meta.json',
       [...new Set(feed.subtasks.map(t => t.model))], ['haiku']);
+
+    console.log('subtask start time:');
+    /* A subtask that took its start from the run directory's mtime read as
+       just-started forever, because that mtime is whenever the last agent
+       file happened to be created. The transcript's own first record is the
+       only thing on disk that says when the agent actually began. */
+    const fanout = feed.subtasks.find(t => t.label.startsWith('fanout-')) || {};
+    check('comes from the agent transcript, not the directory',
+      fanout.startedAt, AGENT_START);
+    /* This fixture's transcript carries no timestamp and has had its mtime
+       pushed an hour back. The fallback must be the file's BIRTHtime - when
+       the agent was spawned, minutes ago - because mtime moves with every
+       message an agent writes and would report a long agent as just-started
+       (or, as here, a just-started one as an hour old). */
+    const freshjr = feed.subtasks.find(t => t.label.startsWith('freshjr-')) || {};
+    check('a transcript with no timestamp still yields a real number',
+      Number.isFinite(freshjr.startedAt) && freshjr.startedAt > 0, true);
+    check('and that number is the transcript\'s birthtime, not its mtime',
+      Number.isFinite(freshjr.startedAt) && (Date.now() - freshjr.startedAt) < 5 * 60 * 1000, true);
 
     console.log('sessions:');
     const sessionIds = feed.sessions.map(s => s.id).sort();

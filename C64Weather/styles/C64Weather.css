@@ -27,10 +27,20 @@
   --space-pad: calc(var(--layout-unit) * 5);
   --border-width: calc(var(--layout-unit) * 4);
 
+  /* The small text was the complaint, not the big number. Pointed out on the
+     device: the boot and load lines, the low|high range under the sprite, the
+     sunrise/sunset/wind column, and the city. Three of those four are
+     --font-boot and the fourth is --font-label, so those two carry the
+     increase (+53% and +50%) and --font-hero stays where it was - the
+     temperature was never hard to read, and holding it back leaves the room
+     for everything else. */
   --font-hero: calc(var(--layout-unit) * 22);
+  /* Declared, but consumed by no rule in this stylesheet - left at its
+     original value rather than scaled with the others, since changing a token
+     nothing reads would only make the next reader look for the effect. */
   --font-secondary: calc(var(--layout-unit) * 7);
-  --font-label: calc(var(--layout-unit) * 4);
-  --font-boot: calc(var(--layout-unit) * 3.4);
+  --font-label: calc(var(--layout-unit) * 6);
+  --font-boot: calc(var(--layout-unit) * 5.2);
 }
 
 html { overflow: hidden; }

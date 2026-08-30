@@ -322,6 +322,23 @@ clean.
 - **`opened` may legitimately name an id that exists nowhere yet** - that is its
   entire purpose. A plan that demands every entry already be a known task is
   wrong, and one did; the shape check `^[a-z0-9-]+$` is the real invariant.
+  Put that pattern **in the fan-out's tool-call schema itself**
+  (`{type: 'array', items: {type: 'string', pattern: '^[a-z0-9-]+$'}}`), not in
+  a filter the orchestrator runs afterward. `sanitise-opened-arrays-in-runs-log`
+  cleaned eleven paths out of the run log one morning; hours later, on the very
+  same day, a fanned-out agent returned eight more - absolute Windows paths to
+  `widget.js`, a CSS file, `index.html` and others - kept out of the log only
+  because the orchestrator happened to filter them by hand at write time. The
+  schema those agents were given had no `pattern`, so a path was a
+  well-formed answer and the model had no reason not to give one; a schema
+  with the pattern makes an invalid `opened` entry fail at the tool-call
+  layer, so the AGENT retries instead of the orchestrator cleaning up after
+  it - a workflow script written fresh per invocation has nothing durable
+  telling it to include the constraint unless this file says so. The pattern
+  does not make `opened` trustworthy, only well-shaped: it forbids a path but
+  cannot tell a real task id from a plausible-looking slug that names
+  nothing, so the entries still want checking against the plan before they
+  are believed.
 - **A starvation pattern:** `/runqueue` fills the delegable fan-out first, so a
   `main`-mode task that reads a file the fan-out writes is never scheduled. One
   task was refused four cycles running for exactly that.

@@ -1,53 +1,37 @@
 # Handoff - Xeneon Edge widgets
 
-Written 2026-08-30 at HEAD `76be7d8`, with the tree CLEAN and everything pushed.
-Replaces the version written at `d313631`.
+Written 2026-08-30 at HEAD `7084246`, with the tree CLEAN and everything pushed.
+Replaces the version written at `eb90dc3`, every item of which is now closed.
 
 Repo: `C:\Users\mit\claude\icue` -> https://github.com/MichaelTroelsen/xeneon-edge-widgets
 (public, `main`). Two iCUE HTML widgets for a Corsair Xeneon Edge, plus a local
 feed server that supplies one of them.
 
-**Versions, all measured rather than remembered:**
+**Versions, measured at the time of writing rather than remembered:**
 
 | | repo | installed on the device |
 |---|---|---|
 | C64 Weather | 1.5.4 | 1.5.4 - matches, do not re-add |
-| Claude Code Usage | **1.11.0** | **1.10.0** - one behind, missing the fifth view |
+| Claude Code Usage | **1.12.0** | **1.11.0** - one behind, has no self-paging lists |
 
-**This file is written LAST on purpose.** It went stale within the hour three
-times earlier in the session because it was written mid-drain. The convention
-that came out of that: write the handoff after the work is committed, never
-during. This revision was written at a clean tree.
+**This file is written LAST, at a clean tree, after everything else is
+committed.** It went stale within the hour three times in one session by being
+written mid-drain, and the previous revision still claimed the device was on
+1.10.0 against a repo at 1.11.0 when both figures had moved. If you are reading
+this and the tree is dirty, the file is already older than the work.
 
 <original_task>
 The session opened with **"read what next"**. Everything after came from the
-user's own follow-ups, in order:
+user's own follow-ups:
 
-1. "please list the themes and the roms missing. Please make it so when you
-   click on the c64 weather it changes them."
-2. Seven reference images (PET/BBC/CPC/Spectrum startup screens, the Amiga
-   Kickstart screen, photographs of a CPC 464, a ZX Spectrum, a CBM 8032), plus
-   "picture of BBC Micro machine." as a request for me to supply one.
-3. "Everytime you switch theme to a new machine it should boot in 2 sec and
-   then show the weather screen?"
-4. "can you make the font size larger (+1) on the C64 widget?", narrowed by
-   three device photographs and "this is the text that is to small it needs to
-   be bigger.", then "The tempuratur size is fine."
-5. "please check all themes" / "any suggested improvements"
-6. **"can you make stats like this be added? to the claude code widget?"** with
-   two `/stats` screenshots - the Overview heatmap and the Models chart. THIS IS
-   THE LARGEST SINGLE THREAD OF THE SESSION and it is now COMPLETE: the heatmap
-   shipped as the widget's fourth view (`200916e`) and the Models chart as its
-   fifth (`76be7d8`).
-7. "add code review of server js to the todo list." - which became a
-   falsification pass that found seven defects, four of them now fixed.
-8. "please restart the service." - the usage feed.
-9. Repeated "commit and push" and "update docs." instructions, and a long run of
-   the `/whattask` -> `/runqueue` -> `/runtask` task pipeline.
-
-SCOPE NOTE: items 1-5 are the weather widget and are all finished and shipped.
-Items 6-7 are the usage widget and its server, and are where the remaining work
-is.
+1. **"widget reloaded. no drag."** - a two-line report that settled a question
+   this repo had carried for weeks and invalidated a design assumption in the
+   usage widget. This is the most consequential thing in the session.
+2. A choice between three remedies for the consequence, answered
+   **"Auto-page on a timer"**.
+3. Repeated `/loop 4 /runtask next` drains against the task plan, with
+   **"commit and push"** standing between iterations.
+4. Two `/whattask` regenerations.
 </original_task>
 
 <work_completed>
@@ -56,444 +40,318 @@ is.
 
 | SHA | What |
 |---|---|
-| `76be7d8` | A fifth view: tokens by model (ClaudeUsage 1.11.0) |
-| `fdc13ba` | The README described the liveness bug as the design |
-| `04f183d` | A record torn across a read boundary is no longer lost |
-| `8b09af4` | The usage widget's layout suite passes, and its checks are not vacuous |
-| `bf35c36` | WIP: the first test in the usage widget, which EXITS 1 |
-| `c40979a` | Warn that PowerShell cannot reproduce a malformed-URL bug |
-| `2bb38f6` | A run is live if anything inside it moved, not if its directory did |
-| `d313631` | Handoff: the server.js review is the backlog now |
-| `2d6b5e9` | /health tells you which of three things is wrong |
-| `bc407e1` | Record what the server.js review actually found |
-| `5d05fe1` | One bad query string no longer kills the feed |
-| `d42b3bf` | Run the stats suite in CI |
-| `ad9592a` | Handoff: catch up with the stats work |
-| `200916e` | A fourth view for the usage widget: all time (1.10.0) |
-| `5cc7e20` | Serve Claude Code's own stats rollup from the feed |
-| `74ab741` | A test that looks at the widget, and the defects it found |
+| `7084246` | A check that the env overrides and the docs agree, and the gap it found |
+| `642f80a` | Document the two overrides that made the credentials watcher testable |
+| `2fac14b` | A second stale check-count, and the reason there will be a third |
+| `92087d7` | The last two review findings, and the review is complete |
+| `0a09297` | A credentials write no longer clears a backoff the rate limit earned |
+| `3503452` | Lists nobody can scroll now page themselves |
 
-Earlier in the session and already described in the previous handoff:
-`fb8520c`, `3dc0c4b`, `f0c4a29`, `0541d0f`, `acfeee4`, `1710ee2`.
+## THE FINDING THAT MATTERS MOST
 
-## The /stats request, start to finish
+**The iCUE webview does NOT forward touch drags.** Settled on the device at
+1.11.0 on 2026-08-30 by a human with a finger on the glass. A drag across an
+activity list does not scroll it; the list stays put.
 
-**The server half** (`5cc7e20`). `GET /usage` gained a `stats` block read from
-`~/.claude/stats-cache.json` through a new `CLAUDE_USAGE_STATS_FILE` override,
-mtime-cached, gated on `version === 5`. Absent / unparseable / wrong-version each
-return `stats: {unavailable: "<reason>"}` with the rest of the payload intact.
-`usage-server/test/stats.test.js` is new (47 checks).
+- **Taps ARE forwarded.** `TAP_SLOP_PX` (12) and `TAP_MAX_MS` (700) are correct
+  and were NOT changed. The specific bug the test was written to catch - a drag
+  misreading as a tap and flipping the view - **does not exist**. The view
+  stayed put.
+- What it falsified instead was a premise stated in `widget.js`'s own comment:
+  *"lists scroll rather than being trimmed to fit, so nothing is unreachable."*
+  On this device nothing scrolls by hand. Measured at a true 840x344, the
+  Activity view showed **7 of up to 40 rows** per column and stranded the other
+  33 behind a fade that promised content nobody could reach.
 
-Crucially this needed NO backfill: the rollup already holds the whole thing, and
-its `totalSessions` (296) matches what `/stats` itself prints, which is what
-confirms it is the same source.
+**Do not design anything for this device that depends on reaching a scrollable
+region by hand, and do not re-ask this question.**
 
-**The fourth view, All time** (`200916e`). A contribution heatmap over the whole
-recorded span plus eight headline figures - sessions, messages, active days,
-current and longest streak, busiest day, top model, total tokens.
+## The remedy: self-paging lists (`3503452`, widget 1.12.0)
 
-**The fifth view, Tokens by model** (`76be7d8`). One stacked bar per calendar day
-from `stats.dailyModelTokens`, models ordered by total descending and coloured
-from a fixed five-entry categorical palette so a colour means the same model in
-every column. Legend carries each model's total.
+An overflowing region advances one page every 5s and wraps. A region that fits
+never moves. Driven off **computed overflow**, not a list of ids, so the Tokens
+view's two columns page on the same mechanism without being named - they
+overflow by 24px each, which only the measurement found.
 
-## THE SINGLE MOST IMPORTANT THING IN THIS FILE
+Page boundaries snap to **row** boundaries. The rows do not divide the box
+evenly (7.2 of them fit), so paging by a flat box-height step would slice a row
+in half at every boundary. The fade now means "there is more below THIS PAGE"
+and goes out on the last one; a dot per page rides in the heading, costing no
+vertical space.
 
-**`stats.dailyActivity` and `stats.dailyModelTokens` are BOTH SPARSE BY DATE.**
-The rollup writes a row only for a day that had activity:
+Layout suite 27 -> 51 checks, asserting per list that every one of its 40 rows
+becomes fully readable, that the last page reaches the bottom, that the fade is
+off there, and that the lit dot is the page actually shown.
 
-- `dailyActivity`: 92 rows across a **284-day** span (2025-11-19 -> 2026-08-29)
-- `dailyModelTokens`: 34 rows across a **39-day** span (2026-07-22 -> 2026-08-29)
+## The server.js review is CLOSED: seven findings, seven fixed
 
-Anything that indexes these by ARRAY POSITION puts every date in the wrong place.
-That defect shipped once in the heatmap and was caught only by looking at the
-render - the "busiest day" read `26 Dec` inside what the heading called a 92-day
-window. Both views now lay out by calendar position and draw empty days as real
-gaps. The gap in the Tokens-by-model chart around early August is that working.
+Four landed before this session (`5d05fe1`, `2d6b5e9`, `2bb38f6`, `04f183d`).
+This session took the last three:
 
-They also cover DIFFERENT spans, so the chart has its own axis and heading and is
-NOT plotted against the heatmap's or zero-filled to match.
+- **Finding 5 (`0a09297`)** - a credentials write wiped rate-limit backoff, and
+  each rotation fired it twice. `officialRateLimited` now comes from the same
+  `/HTTP 429/` test already feeding `scheduleOfficial`; an mtime compare
+  collapses the doubled `fs.watch` events. The 401-then-new-token path is
+  unchanged and asserted.
+- **Finding 6 (`92087d7`)** - `lastQuota` kept the farthest-future reset rather
+  than the most recent. Predicate now compares `seenAt`, and admission requires
+  `apiErrorStatus === 429`. **STILL LATENT**: 15 `quotaLimits` records in the
+  corpus, all `five_hour`/`rejected`, still **zero** `seven_day`. Both fixtures
+  are synthetic. The 429 gate is a **narrowing** - a genuine 429 without that
+  field would now be ignored, under-reporting `blocked` rather than over.
+- **Finding 7 (`92087d7`)** - `workflowsSeen`/`subtasksSeen` were counted after
+  the cap, so the truncation diagnostic reported exactly the number that hides
+  truncation. Counts now come out of `collectWorkflows()` pre-slice.
 
-## The server.js code review
+Six further candidates were falsified and are recorded as negative results.
 
-Read-only falsification pass over 1138 lines / 35 functions / 11 module-level
-mutable variables. **Seven findings, four now fixed.** Detail lives in
-`.claude/tasks/runs.jsonl` under `server-js-code-review`; a one-line-each summary
-is in `TODO.md` around line 208.
+## Tests, all measured at HEAD
 
-FIXED:
-1. **(critical, `5d05fe1`)** `GET /usage?at=%` threw `URIError` uncaught out of
-   the HTTP handler and killed the process. `start-hidden.vbs` is fire-and-forget
-   with no restart supervision, so the feed and BOTH widgets stayed dead until
-   the next logon. Now 400 for a malformed escape, 500 for our own bugs after
-   checking `res.headersSent`, with an `uncaughtException` net behind both.
-4. **(high, `2d6b5e9`)** A failed rebuild was invisible: `/usage` served the
-   four-byte body `null` with 200 while `/health` reported `ok:true`. `/health`
-   now reports three states.
-2. **(high, `2bb38f6`)** Liveness was judged on the run DIRECTORY's mtime, which
-   NTFS does not move on an append - so a fanned-out workflow vanished from the
-   widget at 15 minutes while still running.
-3. **(high, `04f183d`)** A record torn across a read boundary was lost for the
-   life of the process.
+| suite | checks |
+|---|---|
+| `usage-server/test/http.test.js` | **94** (49 -> 56 -> 61 -> 69 -> 94 this session) |
+| `usage-server/test/stats.test.js` | 47 |
+| `usage-server/test/statusline.test.js` | 35 |
+| `usage-server/test/live-detection.test.js` | 25 |
+| `ClaudeUsage/test/layout.test.js` | **51** (was 27) |
+| `C64Weather/test/theme.test.js` | 54 |
+| `C64Weather/test/font.test.js` | 26 |
+| `C64Weather/test/layout.test.js` | renders 7 themes, measures every box |
 
-STILL OPEN: findings 5, 6 and 7 - see `<work_remaining>`.
-
-FALSIFIED, and worth as much as the findings. Six candidates were investigated
-and killed, including the one `TODO.md:208` itself asked about: **"a reader sees
-a half-built snapshot mid-rebuild" is FALSE**, because `build()` is entirely
-synchronous and cannot be observed torn. The danger there is a FROZEN snapshot,
-which is finding 4. Also false: `/usagehtml` crashing on a null snapshot,
-`MAX_WORKFLOWS` truncating a live workflow, `officialInFlight` sticking true, and
-a redaction gap that has no served path.
-
-## Tests: from three suites to six, all in CI
-
-| suite | checks | notes |
-|---|---|---|
-| `usage-server/test/http.test.js` | 49 | NEW this session |
-| `usage-server/test/live-detection.test.js` | 25 | was 18 |
-| `usage-server/test/statusline.test.js` | 35 | |
-| `usage-server/test/stats.test.js` | 47 | NEW this session |
-| `ClaudeUsage/test/layout.test.js` | 27 | NEW - the widget's FIRST test of any kind |
-| `C64Weather/test/layout.test.js` | - | renders 7 themes, measures every box |
-| `C64Weather/test/font.test.js` | 26 | |
-| `C64Weather/test/theme.test.js` | 54 | |
-
-All wired into `.github/workflows/tests.yml`, green on ubuntu/windows x node
-20/22.
-
-## The three-state /health contract
-
-`healthy` (ok:true), `stale` (ok:true - a snapshot exists but rebuilds are
-failing) and `unbuilt` (ok:false - nothing ever built). `/usage` answers 503
-naming the failure rather than `200 null` in that last case.
-
-**`stale` deliberately keeps `ok:true`.** The feed is still serving real data,
-just ageing, and `generatedAt` pins to the last GOOD build so the staleness is
-visible. A monitor that wants to act on it watches `state !== "healthy"`. Paging
-someone at 3am because a working feed stopped rebuilding would be its own bug.
-That reasoning is in a code comment and in `usage-server/README.md`, not only
-here.
-
-## Two new test-only env overrides
-
-`CLAUDE_USAGE_CONFIG_PATH` (points `limits.json` at a fixture - it had NO
-override before, so the stale/unbuilt states could not be tested without writing
-the real file) and `CLAUDE_USAGE_REFRESH_MS` (shortens the rebuild cadence so a
-test waits milliseconds rather than 10s). Both unset in normal use, both
-documented, both in the style of the existing `CLAUDE_USAGE_PROJECTS_DIR` /
-`STATS_FILE` / `STATUSLINE_FILE` family.
-
-## The feed was restarted twice
-
-Now pid **58812**, started 2026-08-30 12:49, running the build with both server
-fixes. `/health` reads `{"ok":true,"state":"healthy","error":null}`.
-
-**`Stop-ScheduledTask` does NOT work for this.** The `ClaudeUsageFeed` task
-executes `wscript.exe` running `start-hidden.vbs`, which spawns node and exits -
-so the task reads `State=Ready` even while the feed is up, and stopping it never
-touches the node process. Kill by pid, then `Start-ScheduledTask`.
+All wired into `.github/workflows/tests.yml`, each as its own step.
 </work_completed>
 
 <work_remaining>
 
-Everything open is in `.claude/tasks/whattask.json`, keyed to HEAD `76be7d8`
-(current as of writing). **7 open, 39 closed. 5 of 7 ready.**
+**Everything open is in `.claude/tasks/whattask.json`, keyed to `642f80a`
+(one commit behind HEAD, docs-only drift). THREE tasks, ALL blocked on the
+human.** There is no ready agent work left in the plan.
 
-## The three remaining server.js findings
+- **`reload-widgets-for-1-12-0`** (requires-user). The device reads 1.11.0
+  against a repo at 1.12.0, so it does NOT have the self-paging lists. Re-add
+  ONLY Claude Code Usage; C64 Weather matches at 1.5.4 and re-adding it costs a
+  properties reset for no gain. Confirm from the RENDERED page - iCUE's page
+  cache means the installed folder is not proof. Expect a third GUID folder;
+  two already exist from earlier re-adds and are harmless.
+- **`verify-paging-on-device`** (requires-user, depends on the above). **This
+  one matters more than it looks.** Every claim about the pager was measured in
+  headless Chrome, and this device has already diverged from a browser once -
+  that divergence is why the feature exists. The pager moves `scrollTop`
+  programmatically; nothing yet proves the webview honours a programmatic
+  scroll on an `overflow-y: auto` element when it refuses a touch drag. If it
+  does not, the lists sit frozen on page 1 with the dots advancing underneath
+  them, **which looks like working software from a distance**. Check that the
+  ROWS change, not just the dots. Fallback if they do not: page by translating
+  the list content rather than by `scrollTop`.
+- **`replace-prose-check-counts-in-usage-server-readme`** (requires-user). An
+  editorial call: keep the prose check-counts and keep correcting them, or drop
+  them for language about each suite's shape. Evidence for dropping is in the
+  task and below.
 
-All three write `usage-server/server.js`, so they SERIALISE - one per cycle, and
-that is arithmetic from `touches` rather than a scheduling preference.
-
-- **`fix-official-backoff-reset-on-credentials-write`** (sonnet, high, finding 5).
-  The credentials watcher resets `officialFailures = 0` on ANY write to
-  `.credentials.json`, with no 429-vs-401 distinction, and each token rotation
-  fires it TWICE (verified: the write-tmp-then-rename pattern produces two events
-  passing the filename filter). After two hours of 429s the backoff would be 60
-  min; a rotation drops it to 15, a 4x rate increase against the endpoint whose
-  own comment says "retrying a dead token every minute is how a 401 turns into a
-  429 - which is exactly what happened". THE HARD PART IS TESTABILITY:
-  `watchCredentials()` is only reached when `CLAUDE_USAGE_NO_REMOTE` is unset and
-  every suite sets it, so it is unreachable under test by construction. A third
-  env override in the existing family may be the honest way in.
-- **`fix-lastquota-most-recent-not-max-resetsat`** (sonnet, medium, finding 6).
-  `lastQuota` keeps the farthest-future reset forever rather than the most recent
-  record. **LATENT, NOT FIRING** - every `quotaLimits` record observed in the wild
-  is `five_hour`, and it needs a `seven_day` one to trigger. Re-check that first;
-  the corpus has grown. Second, separate defect in the same lines: there is no
-  429 check at all, contradicting the variable's own name.
-- **`fix-seen-counts-taken-after-slice`** (sonnet, low, finding 7).
-  `workflowsSeen`/`subtasksSeen` are counted from the already-sliced arrays, so
-  the truncation diagnostic can never report truncation. Certain from the code.
-
-## Everything else
-
-- **`audit-check-counts-in-usage-server-readme`** (sonnet, low, PARALLEL - the
-  only task with no contention). Prose check-counts in the README go stale every
-  time a suite grows; two have been caught one at a time already. Also asks
-  whether prose counts are worth keeping at all.
-- **`sanitise-opened-arrays-in-runs-log`** (sonnet, low, MUST RUN ALONE). Several
-  `runs.jsonl` records put FILE PATHS in their `opened` array instead of task ids.
-  It rewrites the append-only log that every runner - including an orchestrator at
-  join time - appends to, so it cannot share a cycle with anything.
-- **`verify-touch-drag`** (requires-user). **The device precondition is GONE.**
-  It reads 1.10.0, so it HAS the tap handler, four cycling views and the
-  scrolling lists this question is about. The only blocker left is a finger on
-  the glass: drag-scroll an activity list and confirm the view does NOT change.
-  Lists scroll AND tap switches view, both gated on the same 12px slop and 700ms
-  hold, so a webview delivering pointerdown/pointerup with no intermediate
-  positions reads every scroll as a tap.
-- **`reload-widgets-for-1-11-0`** (requires-user). The device is one version
-  behind. Re-add ONLY Claude Code Usage; C64 Weather is 1.5.4 on both and
-  re-adding it would cost a properties reset for no gain. Confirm from the
-  RENDERED page, not the installed folder - iCUE's page cache means the folder is
-  not proof. Re-adding resets widget properties and mints a new GUID; that cost
-  is known and was accepted once already.
 </work_remaining>
 
 <attempted_approaches>
 
-## Dead ends and corrections - do not repeat these
+## Traps that cost real time - do not repeat these
 
-**The heredoc / `python -c` trap - EIGHT sightings.** A backslash escape or a
-Windows path inside a heredoc'd or `python -c` string gets mangled. The eighth
-sighting was while editing THIS FILE to record the seventh: `C:\Users` inside a
-heredoc'd Python string died on `truncated \UXXXXXXXX escape`. **Use a scratch
-`.py` file run by path, or the file-editing tools.**
+**The heredoc / `python -c` trap - EIGHT sightings and still live.** A backslash
+escape or Windows path inside a heredoc'd or `python -c` string gets mangled.
+It bit again this session inside a `sed` expression: a `|` delimiter collided
+with the `||` in the JavaScript being matched, the command errored, and the
+chained `grep` short-circuited so **no test ran while the output still looked
+like a completed mutation check**. Caught only because the expected FAIL line
+was missing. **Use a scratch `.py`/`.js` file run by path, or the file-editing
+tools; and pick a `sed` delimiter that cannot appear in the pattern.**
 
-**Three times a plan's stated mechanism was WRONG and measuring first saved it:**
+**"It parses equal" is weaker than "the bytes are untouched."** Sanitising the
+append-only run log, the first pass re-serialised each record with
+`json.dumps`. Every field compared equal and the field-equality check PASSED -
+but a byte diff showed an escaped `\u2014` had been silently re-encoded as a
+literal UTF-8 em dash. Same value, different bytes, on a file whose entire worth
+is that earlier records are immutable. **On an append-only log, verify at the
+byte level.** Redone as a targeted substring replacement: exactly the two
+intended lines changed, the other 44 byte-identical.
 
-1. I wrote, twice, that an agent's real start time "is already parsed and
-   discarded - `readJournal` keeps the whole `started` record but the caller takes
-   only `.keys()`". FALSE. Journal records carry NO timestamp - measured across
-   234 records in 40 real journals, `started` has only
-   `['agentId','key','type']`. The only on-disk source is the first record of
-   `agent-<id>.jsonl`.
-2. The "obvious" fix for the liveness bug - stat `journal.jsonl` instead of the
-   directory - does NOT work. The journal takes its `started` lines at fan-out and
-   then nothing until a result lands, so a 40-minute agent leaves it as frozen as
-   the directory. The agent TRANSCRIPTS are what move mid-run.
-3. The vacuity check that would not fire was NOT the specificity loss I guessed
-   (that failure has happened in this repo before, which is why it was the obvious
-   hypothesis). `getComputedStyle` falsified it: the injected `!important` rule
-   does win. The real cause was `flex-shrink: 1` collapsing the injected 300%
-   width back to fit - measured 647.6px, not the ~2343px implied.
+**A green test can hide a broken mechanism, and so can a broken mutation.** A
+mutation that makes the harness TIME OUT looks nothing like a mutation that
+fires, and one did exactly that this session when a test polled for a transient
+value that was overwritten within the same millisecond. Fixed by waiting for a
+change from a known baseline, then asserting the settled value. **A mutation
+that does not fire cleanly is a missing test, not reassurance.**
 
-**A green test can hide a broken mechanism.** A malformed CSS comment (a closing
-`*/`, more prose, then another `*/`) silently ate a whole rule in
-`C64Weather.css`. Every suite passed because they measure the RESULT and the
-result happened to be right. Convention that came out of it: when a fix IS a CSS
-rule, confirm with `getComputedStyle` that the rule is applied.
+**A screenshot can be painted from a layout that was never current.** The first
+renders of the pager showed headings cut to "SESSIO..." and a 168px indicator,
+which read as a design failure. It was the `--screenshot` viewport trap this
+repo's own README documents: the paint came from the PRE-resize layout. The
+README's iframe-slot recipe sidesteps it entirely and is what to use.
 
-**A near-repeat of that, caught before rendering:** writing CSS tokens with a
-nested Python `.replace()` produced the literal line
-`--heat-2: #35five".replace(...)` in the stylesheet. Found by reading the file
-back rather than trusting the write.
+**Agent-reported numbers do not survive re-running, often enough that re-running
+is the rule.** Most recently a delegated run reported "58 checks, 9 new" against
+a measured 56 and 7. **Re-run every number a decision rests on.** Note also that
+the *previous* handoff carried a statistic ("wrong in three of five runs") that
+this one cannot verify and has therefore not repeated - carried statistics
+inflate; carry the rule, not the tally.
 
-**Two vacuous checks shipped before they were caught:** an alternation grep
-without `-E` (searches for literal pipe characters, returns 0 whatever the file
-holds), and a mutation check that did not fire. **A mutation that does not fire
-is a MISSING TEST, not a passing one.**
+**Measuring first has now corrected a stated mechanism five times.** Two from
+this session: the page dots made a heading WRAP, taking one column's box from
+232px to 210px - a whole row lost to the indicator meant to help (a loose text
+node is an anonymous flex item that will not shrink; it needed a real element);
+and `README:128` documented `CLAUDE_USAGE_CREDENTIALS_FILE` while `server.js`
+never read it, proved by `git show 0a09297~1:usage-server/server.js | grep -c
+CLAUDE_USAGE_CREDENTIALS_FILE` returning **0**.
 
-**A CI clause that no runner can satisfy, TWICE.** I wrote "green on all four
-matrix jobs" into two tasks' verify strings and ran them under commands whose
-contract is that they never commit or push. Both recorded `partial` for a clause
-that was structurally unsatisfiable. Every task in the current plan now says
-local pass plus the step present in `tests.yml` is the bar.
-
-**A committed test that exits 1.** `bf35c36` deliberately committed
-`ClaudeUsage/test/layout.test.js` red, after a session limit killed the agent
-~700 lines in, because losing the harness would have cost more. It was NOT wired
-into CI, so nothing broke, and `8b09af4` fixed it. Recorded because a red test in
-a tree is a trap for anyone who runs it.
-
-**PowerShell cannot reproduce a malformed-URL bug at all.** `Invoke-WebRequest
-'.../usage?at=%'` returns 200 with a full payload, which reads as "the crash fix
-is not there". .NET's `Uri` class normalises the bare `%` to `%25` before the
-request leaves. Documented in `usage-server/README.md`; use `curl --path-as-is`
-or a raw `http.client` connection.
-
-**`node -e "require('.../server.js')"` is NOT a safe syntax check.** server.js
-binds its port at require time, so it tries to take 41777 - the live feed. Use
-`node --check`.
-
-**A backgrounded `node ... &` is not killed by `kill %1` from a later Bash call.**
-Each invocation is a fresh shell with no job-control memory. A stray server kept
-its port and made a mutation check pass against the WRONG binary. Use
-`netstat -ano | grep <port>` then `taskkill //F //PID <pid>`.
+**A commit message once claimed a wiring that did not exist.** `99e4489` said
+`CLAUDE_USAGE_CREDENTIALS_FILE` was wired up; `server.js` did not read it until
+`0a09297`, hours ago. Commit messages in this repo are unusually detailed, which
+makes them worth reading - and worth checking.
 
 ## Alternatives considered and rejected
 
+- **Trimming the lists to what fits with a "+33 more" row**, instead of paging.
+  Rejected by the human in favour of paging, which reaches every row.
+- **Tap zones to page a column.** Viable, since taps ARE forwarded, but it
+  overloads the single established gesture.
 - **Log scale for the Tokens-by-model chart.** Rejected: the bars are STACKED,
-  so segments have to sum to their column, and a log axis breaks that arithmetic.
-  Per-day totals span 43x and a quiet day genuinely was 2% of a loud one.
-- **Adding the Models chart to the All time view** rather than a fifth view.
-  Rejected by measurement: the layout suite puts All time's tightest fit at
-  +7.2px of headroom at 840x344.
-- **Measuring overflow against the nearest scrolling ancestor's box** in the
-  layout suite. The alternative - skip descendants of scrollers, assert the
-  scroller itself - was chosen because nothing in this widget nests scrollers.
+  so segments must sum to their column.
 </attempted_approaches>
 
 <critical_context>
 
 ## Environment
 
-- Windows 11, Git Bash AND PowerShell both available. Prefer PowerShell for
-  anything touching processes or scheduled tasks.
+- Windows 11, Git Bash AND PowerShell. Prefer PowerShell for processes and
+  scheduled tasks.
 - Device: Xeneon Edge on `\\.\DISPLAY2`, 2560x720 at X=-1881, Y=1440. Widget
   slots are **840x344**. Capture with `System.Drawing` `CopyFromScreen`.
 - `icuewidget validate|package` at `C:\Program Files\Corsair\iCUE Widget CLI\`.
-- Installed widgets live under
-  `C:\Users\mit\AppData\Roaming\Corsair\CUE5\html_widgets\<guid>\`.
+- Installed widgets: `C:\Users\mit\AppData\Roaming\Corsair\CUE5\html_widgets\<guid>\`.
 - The feed is the `ClaudeUsageFeed` scheduled task -> `wscript.exe` ->
   `usage-server/start-hidden.vbs` -> `node server.js` on **127.0.0.1:41777**.
 
-## Headless Chrome - all four calibrations, hard-won
-
-These are written up in `README.md`'s "Verifying a layout" section too.
+## Headless Chrome - four calibrations, all still true
 
 1. **`--window-size` means DIFFERENT things in the two modes.** Under
-   `--dump-dom` it is the window and Chrome subtracts chrome: `840,344` lays out
-   at **824x193**, and `856,495` is needed for a true **840x344**. Under
-   `--screenshot` the viewport is resized to the full window just before capture,
-   so `840,344` is what gives an 840x344 page. A probe and a screenshot of the
-   same layout need DIFFERENT flags.
-2. **`window.innerWidth` read during load is the PRE-resize size** and disagrees
-   with what is painted. Measuring it early is how the wrong figure got into the
-   README originally (it said 824x249; it is 824x193).
+   `--dump-dom` it is the window and Chrome subtracts its own chrome:
+   `856,495` is what yields a true **840x344**. Under `--screenshot` the
+   viewport is resized to the full window just before capture.
+2. **`window.innerWidth` read during load is the PRE-resize size.** This is not
+   theoretical - it produced a screenshot this session that looked like a
+   layout bug and was not.
 3. **CSS transitions do not advance under `--virtual-time-budget`**, and
-   `--force-prefers-reduced-motion` does NOT fix it. `getComputedStyle` returns
-   the pre-change colour - this made the view indicator look stuck on the first
-   dot when it was correct. Inject `* { transition: none !important }`.
-4. **`--user-data-dir` under a scratch directory is mandatory** - a running
-   Chrome on the default profile breaks bare `--headless`.
+   `--force-prefers-reduced-motion` does not fix it. Inject
+   `* { transition: none !important }`.
+4. **`--user-data-dir` under a scratch directory is mandatory.**
 
-Also: `file:///$PWD/...` fails with `ERR_FILE_NOT_FOUND` because Git Bash's `pwd`
-returns a POSIX mount path. Hardcode the Windows path.
+**The recipe that sidesteps 1 and 2 entirely**, and the one to reach for: host
+the widget in an exactly-sized `<iframe width="840" height="344">` inside a
+larger window and screenshot that. Documented in `README.md`.
 
-## server.js: the one invariant a future edit must respect
+Also: `file:///$PWD/...` fails under Git Bash (POSIX mount path). Hardcode the
+Windows path. And a page written OUTSIDE the widget directory needs a `<base
+href>` or its relative `<script src>` 404s - **a script that fails to LOAD does
+not reach a window `error` listener**, so the harness looks healthy and silently
+measures a page where the widget never ran.
 
-`readIncrement`'s state now carries `size` (the stat size) AND `cursor` (the
-resume offset, just past the last consumed newline), and **they deliberately
-differ while a torn tail exists**. Anything that treats `state.size` as "how far
-we have read" silently reintroduces the record-loss bug `04f183d` fixed. The
-resume offset is `cursor`.
+## Invariants a future edit must respect
 
-## Line numbers in older records are WRONG
-
-`usage-server/server.js` has grown 1138 -> 1277 -> 1338 -> **1376** lines across
-four commits this session. Every citation in the review record has moved at least
-once. The current plan re-anchors them, but **locate by CONTENT** (grep the quoted
-expression) rather than trusting any line number.
-
-## The task pipeline
-
-`.claude/tasks/` holds `whattask.json` (the plan, keyed to a HEAD sha),
-`runs.jsonl` (append-only, **39 lines**, last-line-per-id wins), `decisions.jsonl`
-(**5 lines**, outranks the plan) and `serial.lock` (currently **0 bytes** - nothing
-held) with a `serial.lock.d` mutex.
-
-**Contention is computed from `touches`, never from `lane`.** A READER conflicts
-with a WRITER. Two floors the arithmetic cannot see: a resource that is exclusive
-by nature (the device, a single dev port), and a task whose `needs_main_reason`
-says it must run alone.
-
-**A lock-release bug worth not repeating:** matching records on
-`pid == os.getpid()` fails, because claim and release run as separate short-lived
-processes. Match on task id + host, then prove the claiming pid is dead.
-
-**A starvation pattern worth knowing.** `/runqueue` step 4 fills the delegable
-fan-out first, then takes a main task that conflicts with nothing in it. A
-`main`-mode task that reads a file the delegable tasks write is therefore starved
-FOREVER. `usage-widget-model-token-chart` was refused four cycles running for
-exactly that reason and only ran when I deliberately left the fan-out empty. Its
-`r:usage-server/server.js` was a WEAK dependency - it read the server only to
-check a payload shape the live feed already serves.
-
-## Decisions already taken - DO NOT RE-ASK
-
-Recorded in `.claude/tasks/decisions.jsonl`:
-
-- **ROM font bitmaps in this public repo: REFUSED** (2026-08-29). Six rights
-  holders against a public repo for a cosmetic gain. `PETSCII.setFont(mode,
-  glyphs, mixedCase)` stays as the hook if that ever changes. Research kept
-  anyway: the BBC's font is VERIFIED at `&C000` in the OS ROM, 8 bytes per
-  character, 768 bytes for chars 32-127 (tobylobster MOS 1.20 disassembly,
-  stardot). The CPC's offset remains unverified.
-- **tdzlaptop sessions in the activity lists: DECLINED** (2026-08-29). The usage
-  bars already cover the laptop because five-hour and weekly utilisation are
-  server-side account figures counting every client. Only the lists are
-  machine-bound, and their value is that an empty list means nothing is running
-  HERE.
-- **Machine art placement: "Beside the text" + "Use Wikimedia photos"**, since
-  superseded by measurement - the art moved BOTTOM-right because the boot lines
-  are top-anchored and centring the art was what caused the text to scale down.
+- **`readIncrement`'s `size` vs `cursor`.** State carries `size` (the stat size)
+  AND `cursor` (the resume offset, just past the last consumed newline), and
+  they **deliberately differ while a torn tail exists**. Anything treating
+  `state.size` as "how far we have read" reintroduces the record-loss bug
+  `04f183d` fixed. The resume offset is `cursor`.
+- **BOTH stats arrays are SPARSE BY DATE.** `dailyActivity` and
+  `dailyModelTokens` each carry a row only for a day with activity, and they
+  cover DIFFERENT spans. Anything indexing them by array POSITION puts every
+  date in the wrong place. That defect shipped once in the heatmap and was
+  caught only by looking at a render.
+- **`server.js` line numbers in old records are WRONG.** The file has drifted
+  every time it is touched, and a cited line has been stale four consecutive
+  times. **Locate by content.**
 
 ## Verification conventions this repo has earned
 
-- **If the claim is visual, look at the picture.** Several defects passed every
-  structural check and were caught only by rendering and reading the image.
-- **Mutation-check every new assertion**, and treat a mutation that does not fire
-  as a missing test rather than reassurance.
-- **Re-run reported numbers, never copy them.** Agent-reported counts have been
-  wrong in three of five runs; one reported 58 against a measured 47.
-- **Confirm a CSS rule is APPLIED** with `getComputedStyle`, not just that the
-  page looks right.
-- **An agent that hits an undeclared path should STOP and report**, not take it.
-  That has now gone right four times.
+- **If the claim is visual, look at the picture.**
+- **Mutation-check every new assertion**, and prefer making the mutation a
+  PERMANENT self-check rather than a one-off - `http.test.js`'s env-override
+  checks do this, so they cannot rot into vacuous ones unnoticed.
+- **Re-run reported numbers, never copy them.**
+- **Confirm a CSS rule is APPLIED** with `getComputedStyle`.
+- **`node --check`, never `node -e "require('.../server.js')"`** - server.js
+  binds 41777 at require time and the live feed holds it.
+- **An agent that hits an undeclared path should STOP and report.** That has now
+  gone right every time it has come up.
+
+## The task pipeline
+
+`.claude/tasks/` holds `whattask.json` (keyed to a HEAD sha), `runs.jsonl`
+(append-only, **50 lines**, last-line-per-id wins), `decisions.jsonl` (**6
+lines**, outranks the plan) and `serial.lock` (a JSON array of holder records)
+with a `serial.lock.d` mutex. **The whole `/.claude/` tree is gitignored**, so
+none of it is committed and a task that only writes there leaves the git tree
+clean.
+
+- **Contention is computed from `touches`, never from `lane`.** A READER
+  conflicts with a WRITER.
+- **Claim and release under the mutex, against a registry re-read from disk.**
+- **Record a pid that outlives the task.** `$PPID` under Git Bash returns **1**,
+  which is not a real Windows process, so the record would be reaped as an
+  orphan while the task still ran. Walk the process tree for the `claude.exe`
+  pid instead.
+- **`opened` may legitimately name an id that exists nowhere yet** - that is its
+  entire purpose. A plan that demands every entry already be a known task is
+  wrong, and one did; the shape check `^[a-z0-9-]+$` is the real invariant.
+- **A starvation pattern:** `/runqueue` fills the delegable fan-out first, so a
+  `main`-mode task that reads a file the fan-out writes is never scheduled. One
+  task was refused four cycles running for exactly that.
+
+## Decisions already taken - DO NOT RE-ASK
+
+In `.claude/tasks/decisions.jsonl`:
+
+- **Touch drags: the webview does not forward them** (2026-08-30). Settled at
+  the hardware. See the top of this file.
+- **ROM font bitmaps in this public repo: REFUSED** (2026-08-29). Six rights
+  holders against a public repo for a cosmetic gain. `PETSCII.setFont()` stays
+  as the hook if that ever changes. The BBC's font is VERIFIED at `&C000` in the
+  OS ROM, 8 bytes/char, 768 bytes for chars 32-127; the CPC's offset remains
+  unverified.
+- **tdzlaptop sessions in the activity lists: DECLINED** (2026-08-29). The usage
+  bars already cover the laptop; the lists' value is that an empty list means
+  nothing is running HERE.
 </critical_context>
 
 <current_state>
 
-## Everything is committed and pushed
-
-- HEAD `76be7d8` == `origin/main`. **Working tree CLEAN.**
-- CI green on all four matrix jobs at `76be7d8`; six suites run there.
-- `.claude/tasks/serial.lock` is 0 bytes - no locks held, no cycle in flight.
-- `.claude/tasks/whattask.json` is keyed to `76be7d8` and is CURRENT.
-
-## The feed is healthy and current
-
-pid **58812**, started 2026-08-30 12:49, running the build with both server
-fixes. `/health` -> `{"ok":true,"state":"healthy","generatedAt":1788091380165,
-"error":null}`. It serves the `stats` block; `totalSessions` 296 matches
-`~/.claude/stats-cache.json`.
-
-## The device is one version behind
-
-C64 Weather 1.5.4 matches the repo. Claude Code Usage reads **1.10.0** against a
-repo at 1.11.0 - it has the All time view but not Tokens by model. Both GUIDs are
-newer than the ones the previous handoff recorded, so a re-add has happened since
-that file was written.
+- HEAD `7084246` == `origin/main`. **Working tree CLEAN.**
+- `.claude/tasks/serial.lock` is an empty array - no locks held, no cycle in flight.
+- The feed is **healthy**: pid **58812**, `/health` reads
+  `{"ok":true,"state":"healthy","error":null}` with `generatedAt` 16:11 today.
+- All eight suites pass at HEAD, counts as tabled above.
 
 ## Deliverable status
 
 | | |
 |---|---|
 | C64 Weather (themes, boot, machine art, fonts) | COMPLETE and on the device |
-| Usage widget: All time view | COMPLETE, on the device |
-| Usage widget: Tokens by model | COMPLETE in repo, NOT yet on the device |
+| Usage widget: five views | COMPLETE, on the device at 1.11.0 |
+| Usage widget: self-paging lists | COMPLETE in repo (1.12.0), **NOT on the device** |
+| server.js review | **COMPLETE - 7 findings, 7 fixed** |
 | Feed `stats` block | COMPLETE and live |
-| server.js review | COMPLETE - 7 findings, 4 fixed, 3 open |
-| Test coverage | 6 suites in CI, up from 3 |
 
 ## Open questions
 
-- **Does the iCUE webview forward touch DRAGS?** Unanswered and now answerable -
-  the device has everything needed. This is `verify-touch-drag`.
-- **Are prose check-counts in `usage-server/README.md` worth keeping?** Two have
-  gone stale and been fixed one at a time. `audit-check-counts-in-usage-server-readme`
-  asks for a recommendation, not just a third correction.
-- **Should `start-hidden.vbs` gain restart supervision?** The `uncaughtException`
-  handler added in `5d05fe1` is a mitigation, not a replacement, and it is the
-  right trade ONLY because nothing restarts this process. If a supervisor ever
-  appears, revisit it - a process staying up in an unknown state is worse than one
-  restarting clean. Not currently a task.
+- **Does the webview honour a PROGRAMMATIC scroll?** Unanswered, and the pager
+  depends on it. See `verify-paging-on-device`.
+- **Should prose check-counts survive in `usage-server/README.md`?** Two drifts
+  caught in two commits, and the suite that changes most (`http.test.js`, 49 ->
+  94 in one session) never had a count at all. Recommendation on file: drop
+  them.
+- **Should `start-hidden.vbs` gain restart supervision?** The
+  `uncaughtException` handler is a mitigation and is the right trade ONLY
+  because nothing restarts this process. Revisit if a supervisor appears.
 
 ## Nothing is temporary or half-applied
 
-No workarounds are in place, no files are staged, no scratch artefacts were left
-in the repo. Everything under
-`C:\Users\mit\AppData\Local\Temp\claude\...\scratchpad\` is disposable.
+No workarounds, nothing staged, no scratch artefacts in the repo. Everything
+under the session scratchpad is disposable.
 </current_state>

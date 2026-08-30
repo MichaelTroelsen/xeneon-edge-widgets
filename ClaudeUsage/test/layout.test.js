@@ -541,6 +541,12 @@ window.__FIXTURE__ = __PAYLOAD__;
       whyWrap: edgesOf('#why-wrap')
     };
 
+    var errorHintEl = document.getElementById('error-hint');
+    var errorStateEl = document.querySelector('.error-state');
+    out.errorHintText = errorHintEl ? errorHintEl.textContent : null;
+    out.errorStateVisible = errorStateEl ?
+      window.getComputedStyle(errorStateEl).display !== 'none' : null;
+
     var activeView = document.querySelector('.view.is-active');
     out.activeViewClasses = activeView ? activeView.getAttribute('class') : null;
     var activeDot = document.querySelector('.dots .dot.is-active');
@@ -589,6 +595,24 @@ function writePage(name, taps, fixture, mutate) {
   const p = path.join(PAGES, name + '.html');
   fs.writeFileSync(p, html);
   return p;
+}
+
+/* Same page, but the stubbed fetch answers a non-2xx with a JSON body
+   carrying an `error` string - the three-state /health contract's boot-order
+   case (server up, no snapshot yet / every rebuild failed). Used to prove the
+   widget surfaces THAT string rather than its fixed "start the server" hint. */
+const FETCH_STUB_OK = 'ok: true, status: 200,\n      json: function () { return Promise.resolve(window.__FIXTURE__); }';
+function writeErrorBodyPage(name, status, errorText, srcMutate) {
+  const stub = 'ok: false, status: ' + status +
+    ',\n      json: function () { return Promise.resolve(' + JSON.stringify({ error: errorText }) + '); }';
+  const htmlMutate = html => {
+    if (!html.includes(FETCH_STUB_OK)) {
+      fail(`${name}: the fetch stub text moved, so the error-body substitution matched nothing`);
+    }
+    return html.replace(FETCH_STUB_OK, stub);
+  };
+  if (srcMutate) return writePageWithMutatedScript(name, 0, FULL, srcMutate, htmlMutate);
+  return writePage(name, 0, FULL, htmlMutate);
 }
 
 /* Same page, but with widget.js INLINED and its source put through srcMutate
@@ -723,6 +747,37 @@ WHY_STATES.forEach(({ name, fixture }) => {
   results.push(r);
   if (r.error) fail(`${name}: ${r.error}`);
 });
+
+/* The feed's own error, boot-order case: server up, no snapshot / every
+   rebuild failed, answered as a 503 with { error: '...' }. The rendered hint
+   must contain that text and must NOT contain the fixed "Start it with"
+   advice - the server IS running, so that advice is wrong. */
+const FEED_ERROR_TEXT = 'no snapshot has ever been built: rebuild threw TypeError at line 12';
+const feedErrorPage = writeErrorBodyPage('feed-error-body', 503, FEED_ERROR_TEXT);
+const feedErrorResult = render(feedErrorPage);
+if (feedErrorResult.error) fail(`feed-error-body: ${feedErrorResult.error}`);
+check('a 503 with an error body is shown as error-state',
+  feedErrorResult.errorStateVisible, true);
+check('the rendered hint contains the feed\'s own error text',
+  (feedErrorResult.errorHintText || '').includes(FEED_ERROR_TEXT), true);
+check('the rendered hint does NOT carry the fixed start-the-server advice',
+  (feedErrorResult.errorHintText || '').includes('Start it with'), false);
+
+/* Mutation check: restore the discard ("if (!res.ok) throw new Error('HTTP '
+   + res.status)", the pre-fix line) and confirm the same fixture now DOES
+   show the fixed hint and DOES NOT show the feed's own text - i.e. this
+   assertion actually fires rather than passing vacuously. */
+const mutatedFeedErrorPage = writeErrorBodyPage('feed-error-body-mutated', 503, FEED_ERROR_TEXT, src => {
+  const needle = "if (!res.ok) {\n          /* The feed answers a non-2xx with a JSON body carrying the real\n             cause (the three-state /health contract) - read it before\n             throwing, rather than discarding the body and falling back to\n             a fixed \"start the server\" hint that is wrong when the server\n             IS running but has no snapshot yet, or every rebuild failed. */\n          return res.json().catch(function () { return null; }).then(function (body) {\n            var err = new Error('HTTP ' + res.status);\n            if (body && typeof body.error === 'string' && body.error) {\n              err.message = body.error;\n              err.fromResponseBody = true;\n            }\n            throw err;\n          });\n        }";
+  return src.replace(needle, "if (!res.ok) throw new Error('HTTP ' + res.status);");
+});
+const mutatedResult = render(mutatedFeedErrorPage);
+if (mutatedResult.error) fail(`feed-error-body-mutated: ${mutatedResult.error}`);
+const mutationCaught =
+  !(mutatedResult.errorHintText || '').includes(FEED_ERROR_TEXT) &&
+  (mutatedResult.errorHintText || '').includes('Start it with');
+check('mutation check: restoring the body-discard brings back the fixed hint (the new assertions above would have failed against it)',
+  mutationCaught, true);
 
 const ok = results.filter(r => !r.error);
 check('every render came back', ok.length, results.length);

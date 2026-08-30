@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.13.1';
+  var WIDGET_VERSION = '1.13.2';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -964,7 +964,21 @@
     fetch(url, controller ? { signal: controller.signal, cache: 'no-store' } : { cache: 'no-store' })
       .then(function (res) {
         clearTimeout(timeout);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (!res.ok) {
+          /* The feed answers a non-2xx with a JSON body carrying the real
+             cause (the three-state /health contract) - read it before
+             throwing, rather than discarding the body and falling back to
+             a fixed "start the server" hint that is wrong when the server
+             IS running but has no snapshot yet, or every rebuild failed. */
+          return res.json().catch(function () { return null; }).then(function (body) {
+            var err = new Error('HTTP ' + res.status);
+            if (body && typeof body.error === 'string' && body.error) {
+              err.message = body.error;
+              err.fromResponseBody = true;
+            }
+            throw err;
+          });
+        }
         return res.json();
       })
       .then(function (json) {
@@ -979,7 +993,9 @@
         if (data) {
           render();
         } else {
-          els.errorHint.textContent = 'Start it with: node usage-server/server.js — ' + url + ' (' + lastError + ')';
+          els.errorHint.textContent = (err && err.fromResponseBody)
+            ? lastError
+            : 'Start it with: node usage-server/server.js — ' + url + ' (' + lastError + ')';
           showState('error-state');
         }
       });

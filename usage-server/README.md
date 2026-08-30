@@ -479,9 +479,8 @@ request, across Ubuntu and Windows on Node 20 and 22, plus a `node --check` over
 every source file. Ubuntu is there to catch the path and line-ending assumptions
 that are easy to make while developing on Windows. The end-to-end probe is
 deliberately excluded: it needs an agent runner and spends real tokens.
-`stats.test.js` is hermetic in the same way as the other two and should be
-added to that workflow's steps; as of this writing it still needs to be wired
-in there and only runs when invoked directly.
+`stats.test.js` is hermetic in the same way as the other two and is wired into
+that workflow's steps alongside them.
 
 ## Endpoints
 

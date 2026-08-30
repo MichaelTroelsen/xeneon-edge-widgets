@@ -69,7 +69,23 @@ subagents/workflows/wf_<runId>/
 
 An agent with a `started` line and no `result` is running, and a run with any
 such agent is running. A killed run would otherwise advertise itself as live
-forever, so the directory must also have been touched within 15 minutes.
+forever, so liveness also requires a write within 15 minutes — but that write
+can't be judged from the run directory's own mtime, and it isn't the journal
+either.
+
+On this filesystem, appending to a file leaves its containing directory's
+mtime byte-identical; only creating a new file moves it. A workflow that fans
+all its agents out at the start (the `/runbatch` and `/runqueue` shape)
+creates its last `agent-*.jsonl` in the first minute and only appends after
+that, so the directory's mtime freezes there and the whole run would vanish
+from the feed at t+15min while it was still writing. `journal.jsonl` doesn't
+save this either: it takes its `started` lines at fan-out and then writes
+nothing until a result lands, so a long-running agent leaves it exactly as
+frozen as the directory. The agent transcripts are what move while work is
+actually in flight — the journal only moves when a result arrives — so
+liveness is the newest write anywhere inside the run, `journal.jsonl` or any
+`agent-*.jsonl`, floored at the directory's own mtime so a run whose files
+were all deleted still behaves as before.
 
 Two labelling limits follow from what is actually on disk. A subtask row is
 named by the **first line of the agent's prompt** — a workflow's `opts.label`
@@ -96,9 +112,10 @@ finished one is not despite its `wf_*.json` existing, a killed run gone stale is
 not, a partly finished run reports only its unfinished agents, and an errored
 agent counts as finished, plus the session cases: a just-opened session with no
 messages yet is reported, an old idle one is not, and a transcript nested under
-a session directory belongs to a subagent rather than being a session. Seventeen
-checks. Reverting the live-run lookup fails 9 of them and reverting the
-just-opened-session rule fails 3 more, which is the point of having them.
+a session directory belongs to a subagent rather than being a session.
+Twenty-five checks. Reverting the live-run lookup fails 9 of them and
+reverting the just-opened-session rule fails 3 more, which is the point of
+having them.
 
 `statusline.test.js` covers the other half: the freshness rules (current,
 stale past 10 minutes, withheld past 45, withheld for a future timestamp, a

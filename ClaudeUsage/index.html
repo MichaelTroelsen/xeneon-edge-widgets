@@ -69,6 +69,20 @@
           </div>
         </section>
       </div>
+
+      <!-- WHY this reading is not Anthropic's own. The badge above says WHICH
+           mode is on screen; until now the reason lived only in the badge's
+           title attribute, and the Xeneon Edge has no cursor, so on the device
+           it could never be read at all. It is real text in the page instead.
+           Empty and display:none whenever the reading is fully live, so the
+           normal layout is byte-for-byte what it was.
+           Its own wrapper on purpose: the pager looks for an <h2> in the
+           scroller's PARENT to hang page dots on, and .view-usage already
+           contains the Workflows/Subtasks headings - parented straight to the
+           view, this strip's dots would land on the Workflows heading. -->
+      <div class="why-wrap" id="why-wrap">
+        <div class="why" id="why"></div>
+      </div>
       </div>
 
       <div class="view view-tokens">

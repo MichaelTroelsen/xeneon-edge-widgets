@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.12.0';
+  var WIDGET_VERSION = '1.13.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -533,6 +533,48 @@
     });
   }
 
+  /* Longest run of characters allowed in one <span>. Nothing to do with
+     readability: it keeps every span narrower than the strip, so a span is
+     never split across two lines and its offsetTop is therefore exactly the
+     line it sits on - which is what the pager below reads. */
+  var WHY_CHUNK = 24;
+
+  /* Puts the reason into the page as real text, one <span> per word.
+     Word spans rather than one text node because pageOffsets() snaps a page to
+     CHILD boundaries: a single text node is one unsplittable child, so an
+     overflowing message would page to offset 0 for ever and everything past
+     the first line would be as unreachable as the tooltip was. Inline spans
+     put a child boundary on every line.
+     Long tokens (a Windows path, a URL) are cut into WHY_CHUNK pieces joined
+     by U+200B, which is a line-break opportunity BETWEEN spans - unlike
+     overflow-wrap:anywhere, which would break INSIDE one and put a line the
+     pager can never land on in the middle of it.
+     The spans are left as plain inline. inline-block was tried, on the theory
+     that an inline span's offsetHeight is its font content box rather than its
+     line box; MEASURED at 840x344, both report offsetHeight 17 against a 17px
+     line, and both give the same page offsets 0/17/33 - so the extra rule
+     bought nothing and no mutation could make it matter. */
+  function setWhy(text) {
+    if (!els.why || !els.viewUsage) return;
+    els.viewUsage.classList.toggle('has-why', !!text);
+    if (els.why.getAttribute('data-why') === (text || '')) return;
+    els.why.setAttribute('data-why', text || '');
+    while (els.why.firstChild) els.why.removeChild(els.why.firstChild);
+    if (!text) return;
+
+    var words = text.split(/\s+/);
+    for (var i = 0; i < words.length; i++) {
+      if (i) els.why.appendChild(document.createTextNode(' '));
+      for (var at = 0; at < words[i].length; at += WHY_CHUNK) {
+        if (at) els.why.appendChild(document.createTextNode('\u200b'));
+        var piece = document.createElement('span');
+        piece.className = 'w';
+        piece.textContent = words[i].substr(at, WHY_CHUNK);
+        els.why.appendChild(piece);
+      }
+    }
+  }
+
   function render() {
     if (!data) return;
 
@@ -564,16 +606,28 @@
     els.live.className = live
       ? (official.stale ? 'live is-stale' : (partial ? 'live is-partial' : 'live'))
       : 'live is-local';
-    els.live.title = live
+    /* The reason, computed once. It used to exist only as els.live.title, and
+       a title renders on HOVER - the Xeneon Edge has no cursor, so on the
+       device the reason was unreadable in every fallback state while the badge
+       beside it said something had gone wrong. The badge conveyed the STATE
+       and nothing conveyed the EXPLANATION.
+       Empty string means "fully live": nothing to explain, and the strip below
+       stays out of the layout entirely. The title is still set - it costs
+       nothing and a desktop reader can still hover it. */
+    var reason = live
       ? (official.stale
           ? ('Anthropic figures from ' + formatStamp(official.staleSince).replace('Updated ', '') +
              ', not refreshed since: ' + (official.error || 'unknown'))
           : (partial
               ? ('Only one of the two windows has an Anthropic figure right now (via ' +
                  (official.source || 'OAuth') + '); the other meter shows measured tokens')
-              : ('Utilisation read from Anthropic via ' + (official.source || 'OAuth'))))
+              : ''))
       : ('Anthropic figures unavailable: ' + (official.error || 'unknown') +
          ' — showing locally measured tokens');
+
+    els.live.title = reason ||
+      ('Utilisation read from Anthropic via ' + (official.source || 'OAuth'));
+    setWhy(reason);
 
     /* A live reading can be missing one window: Claude Code drops a window from
        rate_limits once its resets_at passes, and does not restore it until the
@@ -914,6 +968,8 @@
   function cacheElements() {
     els.title = document.getElementById('title');
     els.viewUsage = document.querySelector('.view-usage');
+    els.whyWrap = document.getElementById('why-wrap');
+    els.why = document.getElementById('why');
     els.viewDetail = document.querySelector('.view-detail');
     els.dSessions = document.getElementById('d-sessions');
     els.dWorkflows = document.getElementById('d-workflows');

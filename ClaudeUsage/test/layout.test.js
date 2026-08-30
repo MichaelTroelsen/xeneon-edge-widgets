@@ -329,6 +329,44 @@ function missingStatsFixture() {
   return f;
 }
 
+/* ------------------------------------------- the reading is not Anthropic's own
+
+   The three fallback states. The widget badges all three (LOCAL / LIVE· /
+   LIVE¹) and used to put the REASON in the badge's title attribute only - and
+   a title needs a cursor to hover, which the Xeneon Edge does not have, so on
+   the device the reason could not be read in any of them. The checks below
+   measure the reason as RENDERED TEXT, never as an attribute.
+
+   The error string is a real one in shape: usage-server/official.js joins each
+   credential's failure with ' | ' (fetchOfficial) and server.js appends the
+   statusline hint with ' · ' (withHint), so a genuine one runs to a couple of
+   hundred characters and cannot be made to fit one line of an 840px slot. That
+   is the point: the fix has to make a LONG reason readable, not a short one. */
+const LONG_ERROR =
+  'credentials file: access token expired 2026-08-30T09:14:02.000Z (HTTP 401 Unauthorized)' +
+  ' | CLAUDE_CODE_OAUTH_TOKEN: HTTP 429 Too Many Requests' +
+  ' · a Claude Code session is active but statusline-tee.json does not exist -' +
+  ' statusline-tee.js is probably not wired into statusLine.command';
+
+function localFixture() {
+  const f = fullStatsFixture();
+  f.official = { ok: false, error: LONG_ERROR };
+  return f;
+}
+function staleFixture() {
+  const f = fullStatsFixture();
+  f.official = Object.assign({}, f.official, {
+    ok: false, stale: true, staleSince: f.generatedAt - 15 * 60000, error: LONG_ERROR
+  });
+  return f;
+}
+function partialFixture() {
+  const f = fullStatsFixture();
+  f.official = Object.assign({}, f.official);
+  delete f.official.sevenDay;
+  return f;
+}
+
 /* --------------------------------------------------------------- the harness */
 
 /* Runs before scripts/widget.js (inserted ahead of its <script> tag), so
@@ -451,6 +489,58 @@ window.__FIXTURE__ = __PAYLOAD__;
       }
     }
 
+    /* Why-this-is-not-live. Captured as three separate things on purpose:
+       what the badge SAYS (the state, which was never the problem), what the
+       badge's title holds (the desktop-only affordance, which must not be
+       regressed but proves nothing about the device), and what is actually
+       RENDERED - text in the page, in a box with a size, inside .widget-root.
+       Only the third of those can be read on a screen with no cursor. */
+    var badge = document.getElementById('live');
+    out.badgeText = badge ? badge.textContent : null;
+    out.badgeTitle = badge ? badge.getAttribute('title') : null;
+    var why = document.getElementById('why');
+    var whyWrap = document.getElementById('why-wrap');
+    if (why && whyWrap) {
+      var wcs = window.getComputedStyle(whyWrap);
+      var wr = why.getBoundingClientRect();
+      out.why = {
+        /* U+200B is inserted between the pieces of an over-long token so the
+           line can break BETWEEN spans and never inside one; it is not part of
+           the message, so it comes out before anything is compared. */
+        text: why.textContent.replace(/\\u200b/g, ''),
+        spans: why.children.length,
+        wrapDisplay: wcs.display,
+        clientHeight: why.clientHeight,
+        scrollHeight: why.scrollHeight,
+        onScreen: wcs.display !== 'none' && wcs.visibility !== 'hidden' &&
+          why.clientHeight > 0 && wr.width > 0 &&
+          wr.top >= rr.top - 0.5 && wr.bottom <= rr.bottom + 0.5 &&
+          wr.left >= rr.left - 0.5 && wr.right <= rr.right + 0.5
+      };
+    } else {
+      out.why = null;
+    }
+
+    /* The strip is not free: it takes its line out of the usage view's body,
+       and the meters are what is left. .widget-root has 21.5px of padding, so
+       a meter squeezed out of its own box does NOT reach outside the widget
+       and the overflow check above cannot see it - these three edges can.
+       MEASURED at 840x344 in the LOCAL state: the weekly note ends at 293.3,
+       .meters ends at 303.3, the strip starts at 305.8. */
+    function edgesOf(sel) {
+      var e = document.querySelector(sel);
+      if (!e) return null;
+      var cs2 = window.getComputedStyle(e);
+      if (cs2.display === 'none') return null;
+      var b = e.getBoundingClientRect();
+      return { top: +b.top.toFixed(1), bottom: +b.bottom.toFixed(1) };
+    }
+    out.usage = {
+      meters: edgesOf('.view-usage .meters'),
+      weeklyNote: edgesOf('#weekly-note'),
+      whyWrap: edgesOf('#why-wrap')
+    };
+
     var activeView = document.querySelector('.view.is-active');
     out.activeViewClasses = activeView ? activeView.getAttribute('class') : null;
     var activeDot = document.querySelector('.dots .dot.is-active');
@@ -499,6 +589,29 @@ function writePage(name, taps, fixture, mutate) {
   const p = path.join(PAGES, name + '.html');
   fs.writeFileSync(p, html);
   return p;
+}
+
+/* Same page, but with widget.js INLINED and its source put through srcMutate
+   first. A CSS override can only break how a thing looks; some of the
+   mutations below have to break what the widget DOES - "set the title but
+   never put the reason in the page" is the exact pre-fix behaviour and cannot
+   be expressed as a stylesheet. Reads its copy out of the temp tree and writes
+   only into the temp tree; the hash check at the end of this file proves the
+   repo's own widget.js was never touched. */
+function writePageWithMutatedScript(name, taps, fixture, srcMutate, htmlMutate) {
+  const src = fs.readFileSync(path.join(PAGES, 'scripts', 'widget.js'), 'utf8');
+  const mutated = srcMutate(src);
+  if (mutated === src) {
+    fail(`${name}: the source mutation matched nothing, so it would have tested a clean build`);
+  }
+  /* Function form: a `$` in the widget's source would otherwise be read as a
+     replacement pattern by String.replace. */
+  const inlined = '<script type="text/javascript">' +
+    mutated.replace(/<\/script/gi, '<\\/script') + '</scr' + 'ipt>';
+  return writePage(name, taps, fixture, html => {
+    const withScript = html.replace(SCRIPT_TAG, () => inlined);
+    return htmlMutate ? htmlMutate(withScript) : withScript;
+  });
 }
 
 let winW = WIDTH, winH = HEIGHT;
@@ -592,9 +705,27 @@ VIEWS.forEach((name, idx) => {
   results.push(r);
   if (r.error) fail(`${name}: ${r.error}`);
 });
+/* The four states of the live/local badge, all on the usage view (0 taps) -
+   the view that carries the meters whose meaning changes. They join `results`
+   so the overflow and headroom measurements below cover them too: the reason
+   strip is the newest thing competing for the tightest slot in the widget. */
+const WHY_STATES = [
+  { name: 'why-live', fixture: FULL },
+  { name: 'why-local', fixture: localFixture() },
+  { name: 'why-stale', fixture: staleFixture() },
+  { name: 'why-partial', fixture: partialFixture() }
+];
+WHY_STATES.forEach(({ name, fixture }) => {
+  const page = writePage(name, VIEWS.indexOf('usage'), fixture);
+  const r = render(page);
+  r.name = name;
+  r.wantView = 'usage';
+  results.push(r);
+  if (r.error) fail(`${name}: ${r.error}`);
+});
 
 const ok = results.filter(r => !r.error);
-check('all six renders came back', ok.length, results.length);
+check('every render came back', ok.length, results.length);
 if (!ok.length) {
   console.log('\nnothing rendered, so nothing below was tested');
   console.log(`${failures} FAILED`);
@@ -685,6 +816,89 @@ console.log('stats availability — the grid and the reason never show together:
     check(`${name}: the note is shown`, r.statsNoteDisplay, 'block');
     check(`${name}: the note names a reason`, typeof r.statsNoteText === 'string' &&
       r.statsNoteText.indexOf('No all-time stats') === 0, true);
+  }
+}
+
+/* ------------------------------------- why a reading is not Anthropic's own
+
+   THE DEVICE HAS NO CURSOR. Confirmed with the touch-drag finding on the
+   Xeneon Edge on 2026-08-30: the webview forwards taps, there is no pointer,
+   and :hover never fires - so a `title` attribute renders for nobody. The
+   badge already carried the STATE (LIVE / LIVE· / LIVE¹ / LOCAL); the REASON
+   lived only in that title and was therefore unreadable on the hardware in
+   every one of the three fallback states.
+
+   So every check here is against RENDERED TEXT in a box with a size, inside
+   .widget-root. `badgeTitle` is asserted separately and only to prove the
+   desktop affordance was not thrown away - it is never accepted as the
+   reason being conveyed. */
+
+console.log('the reason a reading is not live is on screen, not in a tooltip:');
+{
+  const byName = {};
+  ok.forEach(r => { byName[r.name] = r; });
+
+  const EXPECT = {
+    'why-live': { badge: 'LIVE', shown: false, must: null },
+    'why-local': { badge: 'LOCAL', shown: true, must: LONG_ERROR },
+    'why-stale': { badge: 'LIVE·', shown: true, must: LONG_ERROR },
+    'why-partial': { badge: 'LIVE¹', shown: true, must: 'the other meter shows measured tokens' }
+  };
+
+  Object.keys(EXPECT).forEach(name => {
+    const r = byName[name];
+    const e = EXPECT[name];
+    if (!r) { fail(`${name} did not render, so its fallback state was not checked`); return; }
+    check(`${name}: the badge says ${e.badge}`, r.badgeText, e.badge);
+
+    if (!e.shown) {
+      /* Fully live: there is nothing to explain, and the strip must be out of
+         the layout entirely rather than an empty box taking a line. */
+      check(`${name}: no reason strip is rendered`,
+        r.why ? { display: r.why.wrapDisplay, height: r.why.clientHeight, text: r.why.text } : null,
+        { display: 'none', height: 0, text: '' });
+      check(`${name}: the badge still carries a title for a desktop reader`,
+        typeof r.badgeTitle === 'string' && r.badgeTitle.length > 0, true);
+      return;
+    }
+
+    check(`${name}: the reason is IN THE DOM as text, not only in an attribute`,
+      r.why ? r.why.text.indexOf(e.must) !== -1 : 'no #why element at all', true);
+    check(`${name}: that text is actually visible - a real box, on screen, inside .widget-root`,
+      r.why ? r.why.onScreen : false, true);
+    /* A strip that renders but shows none of the message is the tooltip bug
+       again in a different shape. */
+    check(`${name}: at least one whole line of it is showing`,
+      !!(r.why && r.why.clientHeight > 0 && r.why.scrollHeight >= r.why.clientHeight), true);
+    check(`${name}: the badge's title still holds the same reason for a desktop reader`,
+      typeof r.badgeTitle === 'string' && r.badgeTitle.indexOf(e.must) !== -1, true);
+    if (r.why) {
+      console.log(`        ${name}: ${r.why.clientHeight}px box, ${r.why.scrollHeight}px of text, ` +
+        `${r.why.spans} spans — "${r.why.text.slice(0, 64)}${r.why.text.length > 64 ? '…' : ''}"`);
+    }
+  });
+
+  /* The one fact that makes the strip worth building rather than truncating:
+     a real error does not fit, so the paging section below has work to do. */
+  const local = byName['why-local'];
+  check('a realistic reason genuinely overflows one line, so paging is required',
+    local && local.why ? local.why.scrollHeight > local.why.clientHeight : false, true);
+
+  /* And the line it takes must come out of slack, not out of a meter. */
+  const squeezed = WHY_STATES.map(s => byName[s.name]).filter(Boolean).filter(r => {
+    const u = r.usage;
+    if (!u || !u.meters || !u.weeklyNote) return false;
+    if (u.weeklyNote.bottom > u.meters.bottom + 0.5) return true;
+    return !!(u.whyWrap && u.weeklyNote.bottom > u.whyWrap.top + 0.5);
+  }).map(r => `${r.name}: weekly note ends ${r.usage.weeklyNote.bottom}, ` +
+    `.meters ends ${r.usage.meters.bottom}` +
+    (r.usage.whyWrap ? `, the strip starts ${r.usage.whyWrap.top}` : ''));
+  check('the strip is not paid for by squeezing a meter out of its own box', squeezed, []);
+  const shownLocal = byName['why-local'];
+  if (shownLocal && shownLocal.usage.whyWrap) {
+    console.log(`        why-local: weekly note ends ${shownLocal.usage.weeklyNote.bottom}, ` +
+      `.meters ends ${shownLocal.usage.meters.bottom}, ` +
+      `the strip runs ${shownLocal.usage.whyWrap.top}–${shownLocal.usage.whyWrap.bottom}`);
   }
 }
 
@@ -829,13 +1043,17 @@ const SAMPLER = `<script>
 })();
 </script>`;
 
-function writePagingPage(name, taps, fixture, mutate) {
-  return writePage(name, taps, fixture, html => {
+function writePagingPage(name, taps, fixture, mutate, srcMutate) {
+  const inject = html => {
     const withSampler = html.replace('</head>', SAMPLER
       .replace('__SAMPLE_COUNT__', String(SAMPLE_COUNT))
       .replace('__SAMPLE_STEP__', String(SAMPLE_STEP)) + '</head>');
     return mutate ? mutate(withSampler) : withSampler;
-  });
+  };
+  /* srcMutate breaks what the widget DOES rather than how it looks - see
+     writePageWithMutatedScript. Still temp-tree only. */
+  if (!srcMutate) return writePage(name, taps, fixture, inject);
+  return writePageWithMutatedScript(name, taps, fixture, srcMutate, inject);
 }
 
 function renderPaging(page) {
@@ -978,6 +1196,117 @@ console.log('the paging checks are not vacuous:');
   check('a heading allowed to wrap trips the equal-box-height check',
     r.error ? `render failed: ${r.error}` : (heights.length > 1 && !heights.every(h => h === heights[0])), true);
   if (heights.length) console.log(`        boxes ${heights.join(', ')}px`);
+}
+
+/* ------------------------------------- the reason is readable IN FULL, not just
+   its first line
+
+   Same argument as the activity lists above: no drags, so "the rest is there,
+   scroll to it" is not a defence. A reason that only ever shows its first line
+   loses the actual cause - which for these errors is at the END of the string
+   (official.js joins the credential failures with ' | ' and server.js appends
+   the statusline hint with ' · '). The strip is a scroller like the lists, so
+   the widget's own pager drives it and the same sampler measures it. */
+
+console.log('paging — the whole reason becomes readable without a drag:');
+{
+  const r = renderPaging(writePagingPage('why-paging-local', VIEWS.indexOf('usage'), localFixture()));
+  check('the usage view sampled itself with a fallback reason on screen',
+    r.error ? r.error : true, true);
+  if (!r.error) {
+    const strips = byScroller(r.samples);
+    const w = strips['why'];
+    check('the reason strip was found paging itself', !!w, true);
+    if (w) {
+      /* Every child span is a word (or a piece of an over-long token), so
+         "every span became fully visible" is "every word of the reason can be
+         read on the device". */
+      const missing = [];
+      for (let i = 0; i < w.rows; i++) if (!w.seen.has(i)) missing.push(i);
+      check(`why: every one of its ${w.rows} words became fully readable`,
+        missing.length ? `never fully visible: ${missing.join(',')}` : true, true);
+      check('why: the last page reaches the end of the reason', w.reachedBottom, true);
+      check('why: the "more below" marker is off once the end is reached', w.fadeAtBottom, false);
+      console.log(`        ${w.clientHeight}px box, ${w.maxScroll}px of scroll, ` +
+        `${Array.from(w.offsets).sort((a, b) => a - b).join('/')} page offsets`);
+    }
+  }
+}
+
+console.log('the reason checks are not vacuous:');
+{
+  /* The pre-fix behaviour, exactly: compute the reason, set it as the badge's
+     title, and put nothing in the page. A source mutation rather than a
+     stylesheet one because that is a behaviour, not an appearance - and the
+     title check must go on passing while the DOM check fails, which is the
+     whole point of the DONE criterion. */
+  const page = writePageWithMutatedScript('mutation-why-title-only', VIEWS.indexOf('usage'),
+    localFixture(), src => src.replace('setWhy(reason);', 'setWhy(\'\');'));
+  const r = render(page);
+  const inDom = r.error ? null : (r.why ? r.why.text.indexOf(LONG_ERROR) !== -1 : false);
+  const inTitle = r.error ? null : (typeof r.badgeTitle === 'string' && r.badgeTitle.indexOf(LONG_ERROR) !== -1);
+  check('putting the reason only in the title trips the in-the-DOM check',
+    r.error ? `render failed: ${r.error}` : inDom === false, true);
+  check('...while the title itself still holds it, so the DOM check is the one doing the work',
+    r.error ? `render failed: ${r.error}` : inTitle === true, true);
+  if (!r.error) console.log(`        badge "${r.badgeText}", strip text ${JSON.stringify(r.why && r.why.text)}`);
+}
+{
+  /* Rendered but not visible: the strip exists with its text, and a reader on
+     the device still gets nothing. */
+  const page = writePage('mutation-why-hidden', VIEWS.indexOf('usage'), localFixture(), html =>
+    html.replace('</head>',
+      '<style>.view-usage.has-why .why-wrap { display: none !important; }</style></head>'));
+  const r = render(page);
+  const hasText = r.error ? null : (r.why ? r.why.text.indexOf(LONG_ERROR) !== -1 : false);
+  check('hiding the strip trips the visibility check',
+    r.error ? `render failed: ${r.error}` : (r.why ? r.why.onScreen === false : 'no #why'), true);
+  check('...while the text is still in the DOM, so visibility is checked separately from presence',
+    r.error ? `render failed: ${r.error}` : hasText === true, true);
+}
+{
+  /* The strip is sized in whole lines, and at 840x344 there is room for
+     exactly one - so --why-lines is the number that decides whether the strip
+     costs slack or costs a meter. This is NOT caught by the overflow check:
+     .widget-root has 21.5px of padding, so a meter pushed out of .meters is
+     still inside the widget and every box measures clean. MEASURED: at two
+     lines the meters still fit (weekly note ends 282.2, .meters 286.6); at
+     three they do not (273.5 against 269.9), which is the smallest value that
+     makes this fire. */
+  const page = writePage('mutation-why-three-lines', VIEWS.indexOf('usage'), localFixture(), html =>
+    html.replace('</head>', '<style>:root { --why-lines: 3 !important; }</style></head>'));
+  const r = render(page);
+  const u = r.error ? null : r.usage;
+  const squeezed = !!(u && u.meters && u.weeklyNote && u.weeklyNote.bottom > u.meters.bottom + 0.5);
+  check('giving the strip three lines at 840x344 trips the squeezed-meter check',
+    r.error ? `render failed: ${r.error}` : squeezed, true);
+  if (u && u.meters) {
+    console.log(`        weekly note ends ${u.weeklyNote.bottom}, .meters ends ${u.meters.bottom}` +
+      `, the strip starts ${u.whyWrap ? u.whyWrap.top : '?'}` +
+      ` — and overflowsIn() saw ${overflowsIn(r).length}, which is why this check exists`);
+  }
+}
+{
+  /* One <span> per word is the thing that makes a long reason reachable: the
+     pager snaps a page to a CHILD boundary, so a reason rendered as one block
+     of text is one unsplittable child and pages nowhere. That is the shape the
+     obvious implementation would have had, so it is the one mutated in. */
+  const page = writePagingPage('mutation-why-one-block', VIEWS.indexOf('usage'), localFixture(),
+    null, src => src.replace('var words = text.split(/\\s+/);',
+      'var one = document.createElement("span"); one.className = "w";' +
+      ' one.style.display = "block"; one.textContent = text;' +
+      ' els.why.appendChild(one); return;' +
+      ' var words = text.split(/\\s+/);'));
+  const r = renderPaging(page);
+  const w = r.error ? null : byScroller(r.samples)['why'];
+  const missing = [];
+  if (w) for (let i = 0; i < w.rows; i++) if (!w.seen.has(i)) missing.push(i);
+  check('rendering the reason as one block instead of word spans trips the readability check',
+    r.error ? `render failed: ${r.error}` : missing.length > 0, true);
+  if (w) {
+    console.log(`        ${w.rows} child(ren), ${missing.length} never fully visible, ` +
+      `${Array.from(w.offsets).join('/')} page offsets (a box that never moves)`);
+  }
 }
 
 /* ------------------------------------------------------------------- teardown */

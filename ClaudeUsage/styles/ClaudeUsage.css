@@ -390,6 +390,53 @@ body {
   text-overflow: ellipsis;
 }
 
+/* ------------------------------------------------- why a reading is not live */
+
+/* The badge says LIVE / LIVE· / LIVE¹ / LOCAL, so the STATE was always on
+   screen; the REASON was in a title attribute, which on a device with no
+   cursor is the same as not saying it. This strip says it in the page.
+
+   Sized in whole lines, never in leftover space: at 840x344 the usage view has
+   22.3px of slack between the two meters (MEASURED - .body is 260.3px and the
+   meters need 237.9px with both bars showing), so one line is what there is,
+   and a second would push the meters out of the widget. Larger slots get
+   three. Anything longer than that is paged one line at a time by the same
+   mechanism that pages the activity lists - the device forwards no drags, so
+   scrolling is not an option and truncation would lose the actual cause. */
+.why-wrap {
+  flex: 0 0 auto;
+  display: none;
+  position: relative;
+  margin-top: calc(var(--layout-unit) * 0.6);
+}
+
+.view-usage.has-why .why-wrap { display: block; }
+
+.why {
+  height: calc(var(--font-badge) * 1.25 * var(--why-lines, 3));
+  line-height: 1.25;
+  font-size: var(--font-badge);
+  color: var(--warn);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* "There is more of this below", the same promise .list.can-scroll makes -
+   but a bottom fade over a one-line box would wash out the line it is meant to
+   be helping, so it is a marker at the end of the line instead. */
+.why-wrap.can-scroll::after {
+  content: '…';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding-left: calc(var(--layout-unit) * 1.2);
+  background: var(--bg);
+  color: var(--warn);
+  font-size: var(--font-badge);
+  line-height: 1.25;
+  pointer-events: none;
+}
+
 .track {
   height: var(--bar-h);
   border-radius: 999px;
@@ -620,6 +667,8 @@ body {
   .view-usage .lists { display: none; }
   .meters { justify-content: space-evenly; }
   :root { --font-value: calc(var(--layout-unit) * 6.5); }
+  /* One line is the whole budget here - see the measurement on .why-wrap. */
+  :root { --why-lines: 1; }
 }
 
 /* M-H 840x696 — too narrow for meters and lists side by side, tall enough for

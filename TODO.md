@@ -205,34 +205,52 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ### Open
 
-- [ ] **Code review of `usage-server/server.js`.** It has grown to 1138 lines
-      and 35 top-level functions by accretion, one feature at a time, and has
-      never been read end to end. Specific things to look at rather than a
-      general skim:
+- [x] **Code review of `usage-server/server.js`** (2026-08-30, at `ad9592a`).
+      Falsification pass, read-only, seven findings — one line each, detail in
+      `.claude/tasks/runs.jsonl` (id `server-js-code-review`):
 
-      - **Eleven module-level mutable variables** in a long-running process.
-        That is where staleness lives, and this project has already been bitten
-        twice by exactly that shape: a cached snapshot that still said "not
-        fetched yet" because `CLAUDE_USAGE_NO_REMOTE` was set after the first
-        `rebuild()`, and `wf_*.json` being read as live state when it is only
-        written once a run *ends*. Ask of each: who writes it, what invalidates
-        it, and what a reader sees mid-rebuild.
-      - **The four long functions** — `build()` 114 lines, `rebuild()` 86,
-        `collectWorkflows()` 83, `collectLiveRuns()` 78. Length is not itself a
-        defect; the question is whether any of them does two things that could
-        fail independently.
-      - **Coverage shape.** 100 checks across three suites, but they all drive
-        the server through HTTP against fixture trees. The collectors have no
-        direct coverage, so a wrong answer inside one is only visible if it
-        changes the payload.
-      - **The incremental index.** A file is re-parsed from a byte offset; what
-        happens if a transcript is truncated or rewritten rather than appended?
+      - **Finding 1** (critical) server.js:1097 — one malformed `?at=` query
+        string throws uncaught out of the HTTP handler and kills the process;
+        no restart supervision until next logon. → `fix-usage-server-request-handler-crash`
+      - **Finding 2** (high) server.js:838-842 — live-run staleness is judged
+        on the run directory's mtime, which NTFS does not move on an append, so
+        a long-running fanned-out workflow drops out at 15 minutes while still
+        writing. → `fix-live-run-staleness-uses-dir-mtime`
+      - **Finding 3** (high) server.js:462-484 — a record torn across a read
+        boundary is permanently lost: the byte cursor advances past it and
+        never revisits. → `fix-incremental-index-torn-line-loss`
+      - **Finding 4** (high) server.js:1061-1063 — a failed rebuild is
+        invisible: `/usage` serves literal `null` with 200 and `/health`
+        reports `ok:true`. → `surface-rebuild-failure-in-health`
+      - **Finding 5** (medium) server.js:213-223 — `watchCredentials` resets
+        rate-limit backoff unconditionally on any `.credentials.json` write,
+        including the server's own token-rotation writes, twice per rotation.
+        → `fix-official-backoff-reset-on-credentials-write`
+      - **Finding 6** (medium, evidence gap — latent, not currently firing:
+        every `quotaLimits` record observed in the wild is `five_hour`, so the
+        defect has no `seven_day` record to trigger it yet) server.js:430-437
+        — `lastQuota` keeps whichever record has the farthest-future
+        `resetsAt` rather than the most recently seen one.
+        → `fix-lastquota-most-recent-not-max-resetsat`
+      - **Finding 7** (low, certain) server.js:727/1044-1045 —
+        `workflowsSeen`/`subtasksSeen` are counted from the already-sliced
+        arrays, so the diagnostic can never report truncation past the cap.
+        → `fix-seen-counts-taken-after-slice`
 
-      Worth doing as a falsification pass rather than a tidy-up: the useful
-      output is a list of things that are wrong, each with the input that
-      demonstrates it, not a refactor. Nothing here is a known bug — this is
-      the one substantial file in the repo that has never had a second pair of
-      eyes on it as a whole.
+      Findings 1 and 2 were independently re-confirmed by the orchestrator.
+      Six other candidates were investigated and FALSIFIED (negative results,
+      not filed): `/usagehtml` does not crash on a null snapshot (guarded);
+      **a reader does NOT see a half-built snapshot mid-rebuild — `build()` is
+      entirely synchronous, so `snapshot = build()` can't be observed torn**,
+      which was exactly this box's original question and the answer is not
+      the one it assumed (the actual danger is a *frozen* snapshot, Finding 4,
+      not a torn one); `MAX_WORKFLOWS` cannot truncate away a live workflow
+      (the live-run collector is uncapped); `officialInFlight` cannot stick
+      true (the `.catch` is attached before the final `.then`); an unparsed
+      `limits.json` does not advance `configMtime` but causes no wrong output,
+      only a re-parse loop; and `?at=<past>` is present-tense for
+      `workflows`/`subtasks`/`counts` despite the docstring's claim, but it's
+      a debug-only affordance, not filed.
 
 - [x] **Show sessions from the other machine (`tdzlaptop`) — DECIDED AGAINST**
       (2026-08-29). Asked whether the Activity lists should show tdzlaptop's

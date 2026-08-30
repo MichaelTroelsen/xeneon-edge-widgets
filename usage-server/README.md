@@ -201,7 +201,7 @@ bump alone would not catch — a `version: 5` file missing a field this server
 reads. Every one of those asserts `stats.unavailable` is set *and* that the
 rest of the payload (sessions, workflows, counts, …) is unaffected, plus a
 recovery case (a file that goes bad and comes good again is re-served, not
-stuck on either cached state) and the happy path itself. 44 checks.
+stuck on either cached state) and the happy path itself. 47 checks.
 
 ## Anthropic's own figures
 

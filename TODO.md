@@ -1,6 +1,6 @@
 # iCUE widgets — TODO
 
-## C64 Weather — 1.4.0
+## C64 Weather — 1.5.0
 
 ### Done
 
@@ -42,23 +42,44 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       own 8x8 set, and `PETSCII.setFont` now takes per-theme glyph overrides so
       ROM-accurate fonts can be added later without touching anything else.
 
-### Open
+### Closed, and decided against
 
-- [ ] **Per-machine ROM letterforms.** Every retro theme still renders in one
-      hand-authored 8x8 set. What is actually missing, per machine: the C64's
-      4 KB character generator ROM, the PET's 2 KB character ROM, the BBC's font
-      in the MOS ROM, the CPC's character matrix table in the lower ROM, the
-      Spectrum's 768 bytes at 0x3D00, and the Amiga's Topaz 8 in Kickstart. The
-      BBC and CPC offsets above are not verified — the other four are. Sourcing
-      any of them is a licensing question as much as a technical one (Cloanto,
-      Amstrad, Acorn/RISC OS Open), so it is not simply a matter of extraction.
-      The hook exists (`PETSCII.setFont(mode, glyphs)`), so this stays additive.
+- [x] **Per-machine ROM letterforms — DECIDED AGAINST** (2026-08-29). Asked
+      whether extracted ROM font bitmaps could go into this public repo; the
+      answer was no, keep the hand-authored set. Six separate rights holders
+      (Cloanto, Amstrad, Acorn/RISC OS Open) against a public repo for a
+      cosmetic gain isn't worth it, and the honest "these are not ROM dumps"
+      note already covers the current set. `PETSCII.setFont(mode, glyphs,
+      mixedCase)` stays in place as the hook, so this is reversible if the
+      licensing answer ever changes. Research worth keeping either way: the
+      BBC's font location is now verified at `&C000` in the OS ROM, 8 bytes
+      per character, 768 bytes for chars 32-127 (tobylobster MOS 1.20
+      disassembly, stardot). The CPC's remains unverified — the set is
+      confirmed to live in the lower ROM `&0000-&3FFF` but no source consulted
+      pins the matrix table's offset within it. Do not ask again.
 
-- [ ] **Machine art on the boot screen.** Pixel art of each machine beside its
-      startup text. The boot screen now has the room for it — it holds the whole
-      slot for two seconds and then clears — which is what made this worth doing
-      at all. Reference photos supplied for the CPC 464, the ZX Spectrum, and a
-      CBM 8032; the BBC Micro and the C64 still need one.
+- [x] **Machine art on the boot screen** (1.5.0). Each machine is drawn beside
+      its own startup text for the two seconds it boots, on the right, with the
+      text unreduced on the left. The art is absolutely positioned inside
+      `.screen` rather than being a flex sibling, which is what keeps the
+      Spectrum's copyright line at the foot of the screen where it belongs.
+
+      Every drawing is from a photograph, never from memory: the CPC 464, ZX
+      Spectrum and CBM 8032 from references supplied for this project, and the
+      BBC Micro, Commodore 64 and Amiga 1200 from public-domain photographs on
+      Wikimedia Commons (`Commodore-64-Computer-FL.jpg`, `BBC Micro left.jpeg`,
+      `Commodore Amiga 1200 Tietokonemuseo.JPG`). The Amiga is a 1200 rather
+      than the more iconic A500 because the theme shows the Kickstart 3.1 ROM
+      screen, and the A500 shipped with Kickstart 1.3.
+
+      They render in `currentColor` like every other sprite, so a machine has
+      to be told apart by silhouette and internal structure rather than by its
+      case colour — hence the PET's monitor on its body, the CPC's cassette
+      deck, the BBC's solid function-key strip, the Spectrum's corner flash,
+      the C64's stacked function keys and the Amiga's numeric keypad. Modern
+      has no startup screen and gets no machine; `setMachine` deliberately has
+      no fallback, because a wrong machine beside the right boot screen is
+      worse than no picture at all.
 
 - [x] **Smooth condition art for the Modern theme** (1.3.0, `3214d2b`). Nine
       stroked 24x24 condition sets on `fontMode === 'system'`. Eight of the nine
@@ -178,24 +199,26 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ### Open
 
-- [ ] **Show sessions from the other machine (`tdzlaptop`).** The Activity
-      lists are this-machine-only by construction: the server walks
-      `~/.claude/projects/**/*.jsonl` on the host it runs on, and Claude Code
-      writes transcripts locally with no sync between machines. Verified
-      2026-08-28 — all 13 indexed project directories are local (11 under
-      `C:\Users\mit\...`, 2 from WSL on the same box), and `ListAgents` found no
-      reachable remote session even with `remoteControlAtStartup: true`.
-      **The usage bars already cover the laptop** and need no work: five-hour and
-      weekly utilisation are server-side account figures counting every client
-      on the account. Only the lists are local.
-      Sketch: run the collector on `tdzlaptop`, have it POST its active sessions
-      to this machine (or write somewhere both can read), tag every row with its
-      host so `read what next · icue` is distinguishable from a laptop row, and
+- [x] **Show sessions from the other machine (`tdzlaptop`) — DECIDED AGAINST**
+      (2026-08-29). Asked whether the Activity lists should show tdzlaptop's
+      sessions too; the answer was to leave it local. The usage bars already
+      cover the laptop — five-hour and weekly utilisation are server-side
+      account figures counting every client, so only the activity lists are
+      machine-bound — and that is their value: an empty list means nothing is
+      running HERE, a claim a flaky peer would quietly break. Background kept
+      for if this is ever revisited: the Activity lists are this-machine-only
+      by construction, since the server walks `~/.claude/projects/**/*.jsonl`
+      on the host it runs on and Claude Code writes transcripts locally with
+      no sync between machines. Verified 2026-08-28 — all 13 indexed project
+      directories are local (11 under `C:\Users\mit\...`, 2 from WSL on the
+      same box), and `ListAgents` found no reachable remote session even with
+      `remoteControlAtStartup: true`. Sketch it would have taken: run the
+      collector on `tdzlaptop`, have it POST its active sessions to this
+      machine (or write somewhere both can read), tag every row with its host
+      so `read what next · icue` is distinguishable from a laptop row, and
       decide what the widget shows when the peer is unreachable — silence is
-      indistinguishable from idle, which is the trap the active-only filter was
-      built to avoid. Needs the two machines to reach each other, and changes
-      the widget's claim from "what this box is doing" to "what my account is
-      doing": a deliberate scope change, not a setting.
+      indistinguishable from idle, which is the trap the active-only filter
+      was built to avoid. Do not ask again.
 
 - [ ] **Confirm touch drag works on the device.** Scrolling is verified in a
       browser, but `interactive` is documented only as enabling *click*

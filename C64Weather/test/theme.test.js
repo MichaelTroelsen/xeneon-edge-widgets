@@ -152,6 +152,7 @@ function boot(opts) {
     store, window, PETSCII, clock, timers, document,
     booting: () => document.querySelector('.widget-root').classes.has('is-booting'),
     bootLines: () => document.getElementById('boot').children.length,
+    machine: () => document.getElementById('machine').innerHTML,
     advance: ms => timers.advance(ms),
     /* A theme is live when its class is on .widget-root - the one thing the
        stylesheet actually reads. */
@@ -289,6 +290,28 @@ check('BOOT_MS was found', BOOT_MS > 0, true);
   const w = boot({ theme: 'modern' });
   check('a theme with no startup screen does not play one',
     [w.bootLines(), w.booting()], [0, false]);
+  check('and shows no machine either', w.machine(), '');
+}
+
+console.log('the machine beside the boot screen:');
+{
+  /* The drawing is keyed on the theme id, so the failure this catches is a
+     theme changing without its picture changing with it - which would show the
+     previous machine beside the new one's startup text. */
+  const seen = {};
+  for (const t of ORDER) {
+    seen[t] = boot({ theme: t }).machine();
+  }
+  const withArt = ORDER.filter(t => seen[t] !== '');
+  check('every theme but Modern draws a machine', withArt, ORDER.filter(t => t !== 'modern'));
+  const distinct = new Set(withArt.map(t => seen[t]));
+  check('and no two machines are the same drawing', distinct.size, withArt.length);
+
+  const w = boot({ theme: 'c64' });
+  const before = w.machine();
+  w.tap();
+  check('tapping to the next machine swaps the drawing too',
+    [w.theme(), w.machine() !== before, w.machine() === seen.pet], ['pet', true, true]);
 }
 
 {

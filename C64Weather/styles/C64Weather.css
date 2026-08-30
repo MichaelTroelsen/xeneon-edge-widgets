@@ -342,6 +342,45 @@ body {
 .widget-root.is-booting .boot-line { display: block; }
 .widget-root.is-booting .stage { display: none; }
 
+/* The machine, beside its own startup screen. Absolutely positioned inside
+   .screen so it takes no part in the flex column: the Spectrum's copyright
+   line is ordered to the foot of the screen, and a flex sibling here would
+   have moved it. Hidden except while booting, and never allowed to reach the
+   left half, where the startup text lives. */
+.screen { position: relative; }
+
+.machine {
+  position: absolute;
+  right: var(--space-pad);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 38%;
+  max-width: 44%;
+  display: none;
+  color: var(--c64-border);
+  opacity: 0.85;
+}
+
+.widget-root.is-booting .machine { display: block; }
+
+/* Keep the startup text out from under the picture. The widest line here is
+   the CPC's 38-character copyright, which still fits this at --font-boot
+   without being scaled down by .px's max-width. */
+.widget-root.is-booting .boot { max-width: 56%; }
+
+/* The art is a wide bitmap scaled to its box, not a 1em glyph like the text
+   runs, so it needs the opposite of .px's sizing. */
+.machine .px.machine-art {
+  height: auto;
+  width: 100%;
+}
+
+/* A slot too short to hold four boot lines has no room for a picture beside
+   them either; the startup text is the part that must survive. */
+@media (max-height: 300px) {
+  .machine { display: none !important; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

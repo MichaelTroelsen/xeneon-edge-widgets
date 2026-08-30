@@ -37,6 +37,12 @@
              real startup screen, which is four for the CPC and one for the
              Spectrum. All of them show while booting, the first two after. -->
         <div class="boot" id="boot"></div>
+
+        <!-- The machine itself, beside its startup screen. Absolutely
+             positioned rather than a flex sibling so it cannot disturb the
+             column - the Spectrum's copyright line is ordered to the foot of
+             the screen and must stay there. Only visible while booting. -->
+        <div class="machine" id="machine"></div>
         <div class="load-line" id="load-line"></div>
 
         <div class="stage">

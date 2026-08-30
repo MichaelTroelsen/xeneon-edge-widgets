@@ -12,7 +12,7 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.4.0';
+  var WIDGET_VERSION = '1.5.0';
 
   /* ---------- themes ----------
      Each theme is a palette (CSS class), a startup screen, and a font mode. The
@@ -527,6 +527,10 @@
   function renderStatic() {
     var theme = applyTheme();
     renderBootLines(theme.boot);
+    /* The machine is keyed on the theme id, not on a per-theme field: the
+       drawing IS the machine, so a theme without one (Modern) simply has no
+       entry and renders nothing. */
+    PETSCII.setMachine(els.machine, appliedTheme);
     setLine(els.load, theme.load);
     setLine(els.ready, theme.ready, els.readyLine);
     playBoot(appliedTheme, theme.boot.length > 0);
@@ -618,6 +622,7 @@
   function cacheElements() {
     els.root = document.querySelector('.widget-root');
     els.boot = document.getElementById('boot');
+    els.machine = document.getElementById('machine');
     els.load = document.getElementById('load-line');
     els.ready = document.getElementById('ready-text');
     els.readyLine = document.querySelector('.ready-line');

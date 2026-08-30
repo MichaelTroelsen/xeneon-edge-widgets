@@ -170,6 +170,40 @@ check('every stat glyph the widget asks for exists', missingGlyphs, []);
 check('at least one sprite and glyph name were checked',
   usedSprites.length > 0 && PETSCII.glyphNames.length > 0, true);
 
+/* ------------------------------------------------------- machine art */
+
+/* The condition sprites fall back to `cloud` when a name is wrong, which is why
+   the checks above exist. The MACHINE art deliberately does NOT fall back - a
+   wrong machine beside the right boot screen is worse than no picture - so the
+   silent failure here is the opposite one: a theme that HAS a startup screen and
+   quietly shows no machine. That is what these check. */
+console.log('machine art:');
+const bootThemes = [...widgetSrc.matchAll(/^    ([a-z0-9]+): \{[\s\S]*?boot: \[([\s\S]*?)\],/gm)]
+  .map(m => ({ id: m[1], empty: !m[2].includes("'") }));
+check('a theme table with boot arrays was found', bootThemes.length >= 7, true);
+
+const wantMachine = bootThemes.filter(t => !t.empty).map(t => t.id).sort();
+const haveMachine = [...PETSCII.machineNames].sort();
+check('every theme with a startup screen has a machine drawing',
+  wantMachine.filter(id => !haveMachine.includes(id)), []);
+check('and no machine drawing exists for a theme without one',
+  haveMachine.filter(id => !wantMachine.includes(id)), []);
+
+/* MACHINES is private to the IIFE, so probe it the way the widget does. */
+const machineProbe = {};
+PETSCII.setMachine(Object.defineProperty({}, 'innerHTML', {
+  set(v) { machineProbe.last = v; }
+}), 'c64');
+check('a machine renders to a non-empty svg',
+  typeof machineProbe.last === 'string' && machineProbe.last.includes('<svg'), true);
+
+const unknownProbe = {};
+PETSCII.setMachine(Object.defineProperty({}, 'innerHTML', {
+  set(v) { unknownProbe.last = v; }
+}), 'no-such-machine');
+check('an unknown machine renders nothing rather than another machine',
+  unknownProbe.last, '');
+
 /* Unused art is not a failure, but it is worth seeing: it is usually either a
    name that was renamed on one side only, or dead weight. */
 const unusedSprites = PETSCII.spriteNames.filter(n => !usedSprites.includes(n));

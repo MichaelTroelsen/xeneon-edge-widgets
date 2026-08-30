@@ -331,10 +331,153 @@ async function testStaleAfterHealthy() {
   }
 }
 
+/* ------------------------------------------------------------------------
+ * The incremental index and a TORN APPEND.
+ *
+ * readIncrement() re-reads only the bytes a transcript has grown by since the
+ * last pass, resuming from a stored byte cursor. A transcript is appended to
+ * by a live Claude Code session, so statSync can perfectly well see a size
+ * that includes only PART of the JSON line currently being written.
+ * parseLines already tolerates that - the fragment does not parse, so it is
+ * skipped - but the cursor used to be stored as the stat size regardless.
+ * The next pass therefore resumed in the MIDDLE of that line, and its
+ * remainder was dropped for not starting with '{'. The record was never
+ * counted again for the life of the process: not a delay, a permanent loss.
+ *
+ * This is the first append-based fixture in the suites. Before it, every
+ * transcript fixture in every suite was written whole with writeFileSync, so
+ * the `entry.size > prev.size` branch had never once executed under test.
+ *
+ * The sequence below is the repro exactly: one whole record, then HALF of a
+ * second record's line, then the REST of that same line, then a third whole
+ * record to prove the index is still alive and that record 2 alone was
+ * destroyed. CLAUDE_USAGE_REFRESH_MS is pushed out to a minute so the only
+ * rebuilds are the `?at=` ones this test asks for - a background rebuild
+ * landing between the appends would decide for itself when the torn read
+ * happened.
+ * ---------------------------------------------------------------------- */
+function assistantLine(tsMs, output) {
+  return JSON.stringify({
+    type: 'assistant',
+    timestamp: new Date(tsMs).toISOString(),
+    message: {
+      model: 'claude-sonnet-5',
+      usage: {
+        input_tokens: 1,
+        output_tokens: output,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0
+      }
+    }
+  });
+}
+
+async function testTornAppend() {
+  console.log('the incremental index across a torn append:');
+  const port = 41811;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-http-test-torn-'));
+  const configFile = path.join(root, 'limits.json');
+  writeConfig(configFile, VALID_CONFIG);
+  const projects = path.join(root, 'projects');
+  const transcript = path.join(projects, 'proj-torn', '7f3a1c20-0000-4000-8000-0000000000ab.jsonl');
+  fs.mkdirSync(path.dirname(transcript), { recursive: true });
+
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+    env: Object.assign({}, process.env, {
+      CLAUDE_USAGE_PROJECTS_DIR: projects,
+      CLAUDE_USAGE_STATUSLINE_FILE: path.join(root, 'no-statusline.json'),
+      CLAUDE_USAGE_STATS_FILE: path.join(root, 'stats-cache.json'),
+      CLAUDE_USAGE_CONFIG_PATH: configFile,
+      CLAUDE_USAGE_NO_REMOTE: '1',
+      CLAUDE_USAGE_REFRESH_MS: '60000',
+      PORT: String(port)
+    }),
+    stdio: ['ignore', 'ignore', 'inherit']
+  });
+
+  /* `?at=<now>` forces a synchronous rebuild, so each step below is a real
+     index pass rather than a wait on the refresh timer. The records are
+     timestamped 30s in the past because sumTokens' upper bound is exclusive
+     and equal to that same `now`. */
+  const tokens = async () => {
+    const r = await get('/usage?at=' + Date.now(), port);
+    if (r.status !== 200) throw new Error('/usage answered ' + r.status);
+    return JSON.parse(r.body).weekly.tokens;
+  };
+
+  try {
+    await waitUntil(async () => {
+      const r = await get('/health', port);
+      return r.status === 200 && JSON.parse(r.body).state === 'healthy';
+    }, 8000, 200);
+
+    const base = Date.now() - 30000;
+
+    fs.writeFileSync(transcript, assistantLine(base, 100) + '\n', 'utf8');
+    let t = await tokens();
+    check('baseline - one whole record is indexed', t.messages, 1);
+    check('baseline - its output tokens are counted', t.output, 100);
+
+    /* The torn write: statSync will see a size that stops mid-line. */
+    const line2 = assistantLine(base + 1000, 777);
+    const cut = Math.floor(line2.length / 2);
+    fs.appendFileSync(transcript, line2.slice(0, cut), 'utf8');
+    t = await tokens();
+    check('a half-flushed record is not counted yet - correct', t.messages, 1);
+    check('...and contributes no output tokens yet - correct', t.output, 100);
+
+    /* The rest of the SAME line. Nothing about record 2 has changed except
+       that it is now whole on disk, so it must now count. */
+    fs.appendFileSync(transcript, line2.slice(cut) + '\n', 'utf8');
+    t = await tokens();
+    check('the completed record is counted once its line is whole', t.messages, 2);
+    check('the completed record contributes its output tokens', t.output, 877);
+
+    /* A third whole record: if this one indexes while record 2 did not, the
+       index is alive and record 2 was specifically destroyed. */
+    fs.appendFileSync(transcript, assistantLine(base + 2000, 5) + '\n', 'utf8');
+    t = await tokens();
+    check('a later whole record still indexes', t.messages, 3);
+    check('the running output total is the sum of all three', t.output, 882);
+
+    /* A WHOLE record with no trailing newline yet. It must count right away -
+       waiting for a newline that may never arrive (a writer that died, or the
+       last record of a transcript nothing will append to again) would be the
+       same permanent loss in a different place. */
+    fs.appendFileSync(transcript, assistantLine(base + 3000, 50), 'utf8');
+    t = await tokens();
+    check('a whole record with no trailing newline counts immediately', t.messages, 4);
+    check('...and contributes its output tokens', t.output, 932);
+
+    /* A pass over an UNCHANGED file must still report it. The cursor sits
+       behind that record on purpose, so `cursor` and the stat size disagree
+       and the state carries a record the cursor has not committed; a
+       short-circuit that handed back only the committed ones would make the
+       count flicker down and back up between rebuilds. (Verified by mutation:
+       returning prev.records.slice(0, prev.committed) here fails these two
+       and nothing else.) */
+    t = await tokens();
+    check('an unchanged pass still reports the uncommitted tail record', t.messages, 4);
+    check('...with its output tokens intact', t.output, 932);
+
+    /* Now it gets its newline, and another record after it. */
+    fs.appendFileSync(transcript, '\n' + assistantLine(base + 4000, 7) + '\n', 'utf8');
+    t = await tokens();
+    check('the terminated record is still counted exactly once', t.messages, 5);
+    check('the output total counts each record exactly once', t.output, 939);
+
+    checkTrue('server process survived the whole append sequence', child.exitCode === null);
+  } finally {
+    child.kill();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await runMalformedRequestSuite();
   await testNeverBuilt();
   await testStaleAfterHealthy();
+  await testTornAppend();
 
   console.log('');
   console.log(failures ? `${failures} FAILED` : 'all passed');

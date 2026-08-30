@@ -473,10 +473,24 @@ function readIncrement(entry, cfg) {
   /* Unchanged since the last pass: reuse what we already parsed. */
   if (prev && prev.size === entry.size && prev.mtime === entry.mtime) return prev;
 
-  const records = prev && entry.size > prev.size ? prev.records : [];
-  const meta = (prev && entry.size > prev.size) ? prev.meta : {};
-  const from = prev && entry.size > prev.size ? prev.size : 0;
+  const grew = !!(prev && entry.size > prev.size);
+  const records = grew ? prev.records : [];
+  const meta = grew ? prev.meta : {};
+  /* Resume from the last COMPLETE line, not from the stat size. A transcript
+     is appended to by a live session, so statSync routinely reports a size
+     that stops in the middle of the JSON line being written. Resuming at that
+     size put the next read mid-line, and the remainder was dropped for not
+     starting with '{' - the record was never counted again for the life of
+     the process. */
+  const from = grew ? prev.cursor : 0;
+  /* The tail after that last newline was parsed speculatively last pass (see
+     below) and is about to be re-read, so drop those records first or they
+     are counted twice. `committed` is how many of `records` came from bytes
+     at or before `cursor`. */
+  if (grew && records.length > prev.committed) records.length = prev.committed;
 
+  let cursor = from;
+  let committed = records.length;
   try {
     const fd = fs.openSync(entry.file, 'r');
     try {
@@ -484,16 +498,40 @@ function readIncrement(entry, cfg) {
       if (length > 0) {
         const buf = Buffer.allocUnsafe(length);
         fs.readSync(fd, buf, 0, length, from);
-        parseLines(buf.toString('utf8'), cfg, records, meta);
+        /* Byte offset just past the last newline. Searched in the Buffer, not
+           the decoded string, because the cursor has to be a byte position;
+           and a byte 0x0A can never be part of a multi-byte UTF-8 sequence,
+           so splitting here never cuts a character in half. */
+        const nl = buf.lastIndexOf(10);
+        const whole = nl >= 0 ? nl + 1 : 0;
+        parseLines(buf.toString('utf8', 0, whole), cfg, records, meta);
+        cursor = from + whole;
+        committed = records.length;
+        /* Whatever follows is a line with no newline YET. It is still parsed,
+           so a record that is complete but not yet newline-terminated is
+           counted immediately rather than waiting - and if it never gets a
+           newline (a writer that died mid-record, or the final record of a
+           transcript nothing will append to again) it keeps being counted on
+           every pass instead of being lost. It is simply not committed: the
+           cursor stays behind it, so the next pass re-reads those same bytes
+           after the rollback above. A fragment still parses to nothing, which
+           is the pre-existing behaviour. */
+        if (whole < length) parseLines(buf.toString('utf8', whole, length), cfg, records, meta);
       }
     } finally {
       fs.closeSync(fd);
     }
   } catch (err) {
-    return prev || { size: 0, mtime: 0, records, meta };
+    return prev || { size: 0, mtime: 0, cursor: 0, committed: 0, records, meta };
   }
 
-  const state = { size: entry.size, mtime: entry.mtime, records, meta };
+  /* `size` stays the stat size - it is what the unchanged-since-last-pass
+     check above compares against, and what decides grow vs. rewrite. `cursor`
+     is the separate, possibly smaller, byte offset that reading resumes from.
+     While a torn tail exists the two differ, so the unchanged check cannot
+     fire and the tail is retried every pass, which is what makes the loss
+     self-healing. */
+  const state = { size: entry.size, mtime: entry.mtime, cursor, committed, records, meta };
   fileState.set(entry.file, state);
   return state;
 }

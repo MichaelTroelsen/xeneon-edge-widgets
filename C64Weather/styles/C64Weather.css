@@ -35,10 +35,6 @@
      temperature was never hard to read, and holding it back leaves the room
      for everything else. */
   --font-hero: calc(var(--layout-unit) * 22);
-  /* Declared, but consumed by no rule in this stylesheet - left at its
-     original value rather than scaled with the others, since changing a token
-     nothing reads would only make the next reader look for the effect. */
-  --font-secondary: calc(var(--layout-unit) * 7);
   --font-label: calc(var(--layout-unit) * 6);
   --font-boot: calc(var(--layout-unit) * 5.2);
 }
@@ -180,7 +176,28 @@ body {
 .stat[data-empty],
 .range[data-empty],
 .load-line[data-empty],
-.ready-line[data-empty] { display: none; }
+.ready-line[data-empty],
+.version-tag[data-empty] { display: none; }
+
+/* Modern's only version marker: a small caption in the corner, not console
+   furniture. Absolute so it takes no part in the flex column and cannot push
+   the readout around; sized well under --font-boot so it reads as a caption. */
+/* Hidden while booting, because the machine drawing is also anchored
+   bottom-right and the two were placed independently - the Amiga is the one
+   theme that has both, and they overlapped. The tag exists to show the version
+   on the SETTLED screen, which is where a stale cached copy would go unnoticed;
+   during the two-second boot the Amiga is already showing its ROM banner. */
+.widget-root.is-booting .version-tag { display: none; }
+
+.version-tag {
+  position: absolute;
+  right: var(--space-pad);
+  bottom: var(--space-pad);
+  font-size: calc(var(--layout-unit) * 3);
+  color: var(--c64-grey);
+  opacity: 0.6;
+  pointer-events: none;
+}
 
 .sprite-cell {
   flex: 0 0 auto;
@@ -362,21 +379,48 @@ body {
 .machine {
   position: absolute;
   right: var(--space-pad);
-  top: 50%;
-  transform: translateY(-50%);
-  width: 38%;
+  /* Bottom, not centred: the boot lines are top-anchored, so the free space is
+     underneath them. Centring is what used to put the picture level with the
+     longest lines and force the text to be squeezed. */
+  bottom: var(--space-pad);
+  width: 36%;
   max-width: 44%;
   display: none;
   color: var(--c64-border);
   opacity: 0.85;
 }
 
+/* The Spectrum is the exception, and only the Spectrum: it orders its single
+   copyright line to the FOOT of the screen (~467px wide), which a bottom-right
+   picture would sit on top of. Its top area is empty instead - the line it
+   would have collided with is the one that moved - so its art goes up there. */
+.theme-spectrum .machine {
+  bottom: auto;
+  top: var(--space-pad);
+}
+
 .widget-root.is-booting .machine { display: block; }
 
-/* Keep the startup text out from under the picture. The widest line here is
-   the CPC's 38-character copyright, which still fits this at --font-boot
-   without being scaled down by .px's max-width. */
-.widget-root.is-booting .boot { max-width: 56%; }
+/* The startup text takes the FULL width while booting, and the picture keeps
+   out of its way by sitting below it rather than beside it.
+
+   This replaces a per-theme column cap. The cap existed because .machine was
+   vertically CENTRED on the right, so it collided with the long boot lines and
+   the text had to be squeezed to 56% - which made .px's max-width silently
+   shrink any run over ~25 characters, on four of the seven themes, worst at
+   67.3% of its declared size. Shrinking --font-boot was not an option: it is
+   5.2 layout-units because the user asked for larger boot text, and the worst
+   line was rendering at 15.05px against the 14.62px it had BEFORE that request,
+   so scaling was quietly undoing the whole change.
+
+   Anchoring the art to the bottom instead removes the collision rather than
+   trading against it. The boot lines are top-anchored and the tallest stack
+   (the CPC's four lines plus load and ready) is ~175px of the 266.6px content
+   height; the art then occupies the lower right, beside the short load (~226px)
+   and ready (~84px) lines, which is room enough to keep it at essentially its
+   original size. Nothing is capped, nothing is scaled, and the art does not
+   shrink. */
+.widget-root.is-booting .boot { max-width: 100%; }
 
 /* The art is a wide bitmap scaled to its box, not a 1em glyph like the text
    runs, so it needs the opposite of .px's sizing. */
@@ -472,7 +516,10 @@ body {
   --frame: #411040;
   --c64-white: #f7fcf8;
   --c64-yellow: #e9a888;
-  --c64-cyan: #7788cc;
+  /* #7788cc measured visibly dimmer than the sunrise/sunset glyphs beside it on
+     this screen's #411040 - about 139 perceived brightness against their 184.
+     Lightened to #a8b8ee (~185) to match, same hue, luminance only. */
+  --c64-cyan: #a8b8ee;
   --c64-grey: #998870;
   --c64-lightred: #e9a888;
 }

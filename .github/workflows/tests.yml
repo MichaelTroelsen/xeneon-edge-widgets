@@ -47,3 +47,11 @@ jobs:
         run: node C64Weather/test/font.test.js
       - name: c64 theme cycling
         run: node C64Weather/test/theme.test.js
+      # The only suite here that looks at the widget instead of reading it: it
+      # renders all seven themes headless at 840x344 and measures the real boxes,
+      # which is the class of check the three visual defects that reached the
+      # device all slipped past. It needs a Chrome-family browser, preinstalled
+      # on both runner images; set CHROME_PATH to point it somewhere else. Chrome
+      # writes its profile to the OS temp directory, never into the checkout.
+      - name: c64 layout and scaling
+        run: node C64Weather/test/layout.test.js

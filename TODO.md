@@ -1,6 +1,6 @@
 # iCUE widgets — TODO
 
-## C64 Weather — 1.5.0
+## C64 Weather — 1.5.3
 
 ### Done
 
@@ -33,6 +33,12 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       checked so the test can't pass vacuously against an empty match list —
       14 checks. Mutation-checked (deleting `|` from the font fails the
       punctuation check). Added to CI alongside the two usage-server suites.
+- [x] **Layout regression test** (2026-08-30). `test/layout.test.js` renders
+      all seven themes headless at 840×344 in both booting and settled states
+      and asserts, from `getBoundingClientRect`, that nothing overflows
+      `.screen` and that no inline-SVG text run is drawn below its declared
+      font-size. Carries its own two mutation checks. Caught a real defect on
+      its first run that eye inspection had missed.
 
 - [x] **Seven themes** (1.3.0). C64, Commodore PET, BBC Micro, Amstrad CPC, ZX
       Spectrum, Amiga and Modern, selected with a `combobox`. Each is a

@@ -12,7 +12,7 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.5.1';
+  var WIDGET_VERSION = '1.5.4';
 
   /* ---------- themes ----------
      Each theme is a palette (CSS class), a startup screen, and a font mode. The
@@ -533,6 +533,13 @@
     PETSCII.setMachine(els.machine, appliedTheme);
     setLine(els.load, theme.load);
     setLine(els.ready, theme.ready, els.readyLine);
+    /* Amiga and Modern are the two machines with no typed load line (the Amiga
+       booted straight to Workbench with no prompt at all, and Modern keeps no
+       console conceit), so neither has anywhere to carry the version. Give
+       both a small corner caption instead - the one place on the device that
+       can tell a stale cached copy from a current one, same as the load line
+       does for the other five. */
+    setLine(els.versionTag, theme.load ? '' : 'v' + WIDGET_VERSION);
     playBoot(appliedTheme, theme.boot.length > 0);
     PETSCII.setText(els.loadingA, 'SEARCHING FOR WEATHER');
     PETSCII.setText(els.loadingB, 'LOADING');
@@ -626,6 +633,7 @@
     els.load = document.getElementById('load-line');
     els.ready = document.getElementById('ready-text');
     els.readyLine = document.querySelector('.ready-line');
+    els.versionTag = document.getElementById('version-tag');
     els.temp = document.getElementById('temp');
     els.condition = document.getElementById('condition');
     els.city = document.getElementById('city');

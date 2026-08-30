@@ -1,184 +1,137 @@
 # Handoff — Xeneon Edge widgets
 
-Written 2026-08-29 ~16:55 local. Replaces the version written at ~09:35, which
-stopped at `bb2ea7d` and described a tree six commits old.
+Written 2026-08-30, rewritten at ~09:15 and topped up at the end of the drain
+that followed. Replaces the version written at f0c4a29.
 
 Repo: `C:\Users\mit\claude\icue` → https://github.com/MichaelTroelsen/xeneon-edge-widgets
-(public, `main`). **`HEAD` is `acfeee4` and `origin/main` is `3214d2b` — the last
-two commits are LOCAL ONLY.** `README.md` and `TODO.md` are modified and
-uncommitted. See Current State before doing anything.
+(public, `main`). The widget is at **C64 Weather 1.5.4**, Claude Code Usage
+**1.9.1**.
+
+**This file was rewritten mid-drain and was stale within the hour** — three
+times over this session. The lesson is recorded in the conventions below and is
+worth repeating here: write the handoff LAST, after the work is committed. What
+follows was reconciled against `.claude/tasks/runs.jsonl` at the end of the
+drain, not during it.
 
 <original_task>
-The session opened with **"read what next"**. Everything after that came from the
+The session opened with **"read what next"**. Everything after came from the
 user's follow-ups, in order:
 
 1. **"please list the themes and the roms missing. Please make it so when you
    click on the c64 weather it changes them."**
-2. Seven reference images, one per message, with no instruction attached: the
+2. Seven reference images, one per message, with no instruction attached — the
    PET, BBC, CPC and Spectrum startup screens, the Amiga Kickstart screen, then
-   photographs of the CPC 464, the ZX Spectrum and a CBM 8032. One asked message
-   was **"picture of BBC Micro machine."** — a request for a photo, not an
-   attachment.
-3. A scoping question was put to the user, who chose **boot-screen-accurate
-   themes with machine art**, and **keep the CPC as a 464**.
-4. **"Everytime you switch theme to a new machine it should boot in 2 sec and
-   then show the weather screen?"** — the shape the rest of the work took.
-5. `/whattask`, then `/runqueue --until-blocked`.
+   photographs of the CPC 464, the ZX Spectrum and a CBM 8032.
+3. **"Everytime you switch theme to a new machine it should boot in 2 sec and
+   then show the weather screen?"**
+4. `/whattask`, `/runqueue`, `/runhuman`, `/runtask` — the task pipeline, several
+   rounds.
+5. **"can you make the font size larger (+1) on the C64 widget?"**, then three
+   device crops and **"this is the text that is to small"**, then **"The
+   tempuratur size is fine."**
+6. **"i have reloaded the widgets"** (twice), **"please check all themes"**,
+   **"any suggested improvements"**.
 </original_task>
 
 <work_completed>
 
-## Commits (both LOCAL, not pushed)
+## Commits
+
+These were pushed and green. Everything from the drain that followed - the
+boot-text scaling fix, the layout suite, the version caption and the redrawn
+machine art, taking the widget from 1.5.1 to 1.5.4 - lands in the commit that
+carries this file, so it is not listed below.
 
 | SHA | What |
 |---|---|
 | `1710ee2` | Tap the weather widget to change theme (1.3.2) |
 | `acfeee4` | Every machine boots before it shows the weather (1.4.0) |
+| `0541d0f` | Docs: catch README and TODO up with 1.4.0 |
+| `f0c4a29` | Handoff (superseded by this file) |
+| `3dc0c4b` | Each machine appears beside its own boot screen (1.5.0) |
+| `fb8520c` | Bigger small text on the weather widget (1.5.1) |
 
-## 1. Tap to change theme (`1710ee2`, C64 Weather 1.3.2)
+## What the widget does now that it did not
 
-Tapping steps through `THEME_ORDER` and wraps. The iCUE combobox is still the
-setting: a tap is an override remembered **alongside the property value it was
-made against**, so when that value changes the settings panel wins and the
-override is dropped. Without that rule the combobox looks broken forever after
-one tap. Persisted under its own `localStorage` key, apart from the reading cache.
+- **Tap to change machine.** Steps through `THEME_ORDER` and wraps. The iCUE
+  combobox is still the setting: a tap is an override remembered *alongside the
+  property value it was made against*, so changing the setting drops the
+  override rather than being outranked by it forever. Needs
+  `"interactive": true` in `manifest.json` or iCUE forwards no touches at all.
+- **Changing machine reboots it.** The new machine's startup screen holds the
+  whole slot for `BOOT_MS` (2000) and then hands over to the weather screen.
+  That reordering is what let the startup text become verbatim at full length.
+- **Verbatim startup screens**, checked against the user's reference shots —
+  four lines of Amstrad/Locomotive copyright, the Kickstart 3.1 ROM banner
+  rather than Workbench 1.3, one Sinclair line at the *foot* of the screen.
+- **Lowercase and `©` in the font** (27 glyphs). Case is a property of the
+  machine: C64 and PET fold to their uppercase/graphics set, the other four do
+  not.
+- **A drawing of each machine below its boot screen** — `MACHINES` in
+  petscii.js, rendered through the existing `artSVG` path. Drawn from
+  photographs, never memory.
+- **Bigger small text** (1.5.1): `--font-boot` +53%, `--font-label` +50%,
+  `--font-hero` deliberately unchanged.
 
-`manifest.json` needed **`"interactive": true`** — without it iCUE never forwards
-touches to the page at all. 12px slop / 700ms, same rule as the usage widget.
+## Tests
 
-Fixed alongside, same code path: **`renderStatic()` ran once at boot and never
-again**, so a theme picked in the settings panel did not appear until reload.
+`C64Weather/test/theme.test.js` is new this session — 65 checks over a stub DOM
+and a fake timer queue: the tap cycle and its wrap, the drag and hold guards,
+persistence, settings-outrank-a-tap, the boot on load and on change, its exact
+duration, per-theme boot-line counts, letter case, and the machine drawings.
+`font.test.js` gained lowercase, `©` and five machine-art checks.
 
-## 2. The boot sequence and the accurate startup screens (`acfeee4`, 1.4.0)
-
-Changing theme now **reboots the machine**: its real startup screen holds the
-whole slot for `BOOT_MS` (2000) and then the weather screen takes over. That
-reordering is what made the rest possible — the startup text no longer shares the
-slot with the readout, so it can be the real thing at its real length.
-
-- **Startup text is now verbatim**, per machine, checked against the user's
-  reference shots. Four lines of Amstrad/Locomotive copyright for the CPC 464;
-  `BBC Computer 32K / Acorn DFS / BASIC`; the Kickstart 3.1 ROM banner rather
-  than Workbench 1.3; one Sinclair line at the **foot** of the screen, where the
-  real one sat (`order: 3` plus `margin-top: auto` — `order` alone only reorders,
-  it does not drop to the bottom).
-- **The WEATHER-for-BASIC homage is gone.** Beside the real screens it read as a
-  mistake rather than a joke. The widget's own line is `load`, which on all six
-  machines was something the user *typed* — and it carries the version, so the
-  device still states which build it is running.
-- **The font gained 26 lowercase letters and `©`.** Four of the six machines boot
-  in mixed case, so capitals were an inaccuracy, not a style. Case is a property
-  of the machine: C64 and PET fold to their uppercase/graphics set, the rest do
-  not. Descenders reach row 7, which is why `.boot` needed a row gap — "plc" ran
-  into the line below it.
-- **Three palettes were wrong** and are now *sampled* from the reference images
-  rather than guessed: Amiga `#411040` on `#e9a888`, CPC `#000088` (not
-  `#000080`), Spectrum paper `#d0d0d0` (not white).
-
-## 3. Tests
-
-| File | What | Notes |
-|---|---|---|
-| `C64Weather/test/theme.test.js` | **NEW**, 39 checks | stub DOM + fake timer queue |
-| `C64Weather/test/font.test.js` | extended | now sets mixed case before probing |
-
-`theme.test.js` runs `widget.js` against a stub DOM. It covers the cycle and its
-wrap, the drag and hold guards, persistence across a reload, the
-settings-outrank-a-tap rule, the boot on load and on change, its exact duration,
-the CPC's four lines and the Spectrum's one, Modern playing no boot at all, and a
-second tap restarting the clock rather than inheriting the old timer.
-
-**Mutation-checked six ways** (fails: uncleared timer 1, redraw-reboots 2,
-boot-with-no-screen 1, case flag dropped 4, always-uppercase 6, one lowercase
-glyph deleted 7).
-
-Two of those tests exist because the mutation check found the gap first:
-- **"a data refresh redraws WITHOUT rebooting"** — removing the `bootedTheme ===
-  name` guard initially passed every test. Without it the weather would vanish
-  behind the startup screen on every refresh cycle, all day.
-- **`font.test.js` was passing vacuously for lowercase.** Its probe ran in the
-  default uppercase mode, so every lowercase probe folded to a capital that
-  already existed. It now calls `setFont('pixel', null, true)` first and asserts
-  `letterCase() === 'mixed'`.
-
-## 4. The `/runqueue` cycle (this session, after the commits)
-
-Two delegated agents ran concurrently; both recorded `done` in `runs.jsonl`.
-
-- **`verify-modern-condition-art`** closed the gap `3214d2b` left: all nine Modern
-  conditions rendered and looked at as images, not counted as paths. **Eight of
-  nine read correctly. `snow` does not** — cloud plus three plain dots, which
-  reads as light rain or hail. Confirmed independently by the orchestrator.
-  Opened `fix-modern-snow-glyph-legibility`.
-- **`sync-docs-after-1-4-0`** rewrote README's banner example, its seven-row theme
-  table and its authenticity paragraph against `widget.js`, and bumped TODO's
-  usage header to 1.9.1. Four of the six theme rows were wrong in substance, not
-  just in version. **These edits are uncommitted.**
+Both were **mutation-checked**, and two of their assertions exist *because* a
+mutation passed first: a data refresh must redraw WITHOUT rebooting, and
+`font.test.js` was passing vacuously for lowercase until it was made to set
+mixed case before probing.
 </work_completed>
 
 <work_remaining>
 
-## Immediate, and in this order
+Everything open is in `.claude/tasks/whattask.json`. Six tasks ran in the drain
+that followed this file's first draft; **only two remain, and both are yours** -
+neither is blocked on work.
 
-1. **Push.** `origin/main` is at `3214d2b`; `1710ee2` and `acfeee4` are local
-   only. **CI has therefore never run `theme.test.js`** — the last green run is
-   for `3214d2b`. Both suites pass locally on Windows/Node 22; the matrix
-   (Ubuntu × Node 20/22) is unproven for the new test, and it uses `Proxy`,
-   `Object.defineProperty` and a fake timer queue, so a platform difference is
-   not impossible.
-2. **Review and commit `README.md` and `TODO.md`.** Written by a subagent, spot-
-   checked by the orchestrator (every theme's `boot[0]` verified verbatim against
-   `widget.js`), but not read line by line by a human.
-3. **The device is two versions behind, on both widgets.** Installed folders hold
-   C64 Weather **1.3.0** and Claude Code Usage **1.9.0**; the repo is **1.4.0**
-   and **1.9.1**. Nothing from the last four commits is visible on the Edge.
-   Needs a remove-and-re-add in iCUE, which mints a new GUID and resets widget
-   properties.
+- **`render-smoke-test-in-ci`** - the local half is DONE. `C64Weather/test/layout.test.js`
+  exists, exits 0, and both its own mutation checks fire. The only unmet clause
+  is "green on all four matrix jobs", which needs a commit and a push before CI
+  can run. It is worth knowing why this test exists: THREE visual defects
+  reached the device in one session and every one was found by a human looking
+  at a picture, with all suites green throughout. On its first run it measured a
+  fourth that eye inspection had missed.
+- **`verify-touch-drag`** - needs a finger on the Edge, which is running a build
+  with the tap handler. The real risk is the USAGE widget, not the weather one:
+  its lists scroll AND it switches view on tap, both on the same 12px slop rule,
+  so a webview delivering a drag without intermediate pointer positions would
+  flip the view on every scroll.
 
-## Open tasks (see `.claude/tasks/whattask.json`, generated at `acfeee4`)
-
-Five of the eight are `requires-user` — they are waiting on a decision, not on
-work:
-
-- **`boot-screen-machine-art`** — the piece the reference photos were for. Blocked
-  on two answers: does the art sit BESIDE the startup text for the two booting
-  seconds or REPLACE it, and there are no reference photos yet for the BBC Micro
-  or the C64. Drawing those two from memory is the same fiction the ROM task
-  refuses.
-- **`c64-rom-letterforms`** — blocked on a licensing decision (Cloanto, Amstrad,
-  Acorn/RISC OS Open), not a technical one. Two of the six offsets are also
-  unverified: the BBC's font in the MOS ROM and the CPC's character matrix table.
-- **`reload-widgets-in-icue`** and **`verify-touch-drag`** — both need a human at
-  the device. Touch drag matters more than it did: tap-to-change-theme uses the
-  same 12px slop rule as the usage widget's scrolling lists, so if the webview
-  forwards drags as taps, the theme could change during a scroll.
-- **`tdzlaptop-remote-sessions`** — blocked on whether the widget's claim changes
-  from "what this box is doing" to "what my account is doing".
-
-Not yet in the plan, opened by this session's run log:
-
-- **`fix-modern-snow-glyph-legibility`** — the snow glyph needs a snowflake or
-  asterisk mark instead of three dots. A `petscii.js` change; small, and now
-  evidenced by a rendered image rather than a suspicion.
+Closed in that drain, for the record: `polish-visual-seams`,
+`modern-theme-shows-no-version`, `machine-art-distinctiveness`,
+`sync-docs-after-1-5-x` and this file's own rewrite. See `runs.jsonl` for what
+each actually found - three of them corrected a brief rather than following it.
 
 ## Known limitations, documented not fixed
 
-- **The `©` glyph is muddy at boot-line size.** At `--font-boot` each of the 8
-  rows is ~1.8px, so a 1px feature blurs; the ring reads as a blob. Inherent to
-  5×7, not a bug — the letters survive because they are simpler.
+- **The `©` glyph WAS muddy at boot size; the 1.5.1 font increase largely fixed
+  it.** At `--font-boot` 3.4 each of the 8 rows was ~1.8px and the ring filled
+  in; at 5.2 it is ~2.8px and the ring resolves, confirmed by a magnified
+  render. Still cramped inside — 5px wide cannot do better — but no longer a
+  blob. Do not re-report it as broken without looking first.
 - **Subtask labels are the first line of the agent's prompt.** `opts.label` is
   never written to disk.
-- **A workflow launched from a script outside the session's `workflows/scripts/`**
-  falls back to its short run id.
-- **~20 s lag each way** — `REFRESH_MS` 10 s + widget poll 10 s. Tightening is
-  cheap but **both** numbers must drop together.
+- **~20 s lag each way** — `REFRESH_MS` 10 s + widget poll 10 s. Both numbers
+  must drop together.
 
-## Deliberately not done
+## Deliberately not done, do not re-propose
 
-- **Changing the User-Agent**, or refreshing the token to reset the rate-limit
-  window. Both are working around a rate limit; the second reportedly breaks
-  Claude Code's own auth. It matters less than it did — the widget's figures come
-  from the statusline path, which uses no token at all.
+- **ROM letterforms** — authorisation refused 2026-08-29. Six rights holders
+  against a public repo for a cosmetic gain. `PETSCII.setFont(mode, glyphs,
+  mixedCase)` stays as the hook if that ever changes.
+- **tdzlaptop sessions in the activity lists** — declined 2026-08-29. The usage
+  bars already cover the laptop; the lists' value is that an empty list means
+  nothing is running HERE.
+- **Changing the User-Agent** or refreshing the token to dodge the 429.
 </work_remaining>
 
 <attempted_approaches>
@@ -204,59 +157,83 @@ Not yet in the plan, opened by this session's run log:
   stack; items still pack from the top. The Spectrum's copyright needed
   `margin-top: auto` as well.
 - **Trusting a mutation check that passes.** Two mutations passed the suite
-  unchanged and both were real gaps in the tests, not proof the code was safe.
-  A mutation that does not fail anything is a missing test, every time.
+  unchanged and both were missing tests, not safe code. A mutation that fails
+  nothing is a gap in the tests, every time.
+- **Believing a structural check about a picture.** Path counts, sprite-name
+  existence and "no empty `d`" all passed on a snow icon that rendered as three
+  dots. If the claim is about how something LOOKS, the check has to look.
 
-## The recurring environment trap — SIX sightings, twice this session
+## The recurring environment trap — SEVEN sightings
 
-**A backslash escape (`\n`, `\\E`, `\U`) or a Windows path inside a heredoc'd
-Python or shell string gets mangled.** It has broken `live-detection.test.js`,
+**A backslash escape (`\n`, `\\E`, `\U`) or a Windows path inside a heredoc'd or
+`python -c` string gets mangled.** It has broken `live-detection.test.js`,
 `statusline.test.js`, `usagehtml.js`, the `usage-server/README.md` edit (which
-was committed *without* its documentation as a result), and this session it ate
-both a `theme.test.js` heredoc and a verification regex — the second producing a
-bare `re.PatternError` with no hint of the cause.
+was committed *without* its documentation as a result), a `theme.test.js`
+heredoc, and — the seventh, on 2026-08-30 — a `python -c` regex that came back as
+a bare `re.PatternError` with nothing pointing at the cause.
 
 **Use the Write/Edit tools for any line containing a backslash escape or a
-Windows path, and check `git status` before committing a scripted edit.**
+Windows path, or put the script in a scratch `.py` file and run it by path.**
 
-## Headless-render gotchas, found this session
+## Headless-render gotchas
 
 - **`file:///$PWD/...` fails with `ERR_FILE_NOT_FOUND`.** Git Bash's `pwd`
-  returns a POSIX mount path (`/tmp/claude/...`), not the Windows path, even
-  though the cwd is a real Windows directory. Hardcode the Windows absolute path.
+  returns a POSIX mount path, not the Windows path. Hardcode the Windows path.
 - **A running Chrome on the default profile makes bare `--headless` misbehave.**
-  Add `--user-data-dir=<scratch>/chromeprofile --no-sandbox` for an isolated
-  instance.
-- Nine renders that all came back **identical in size** were nine copies of one
-  failed page. Compare file sizes before trusting a batch.
+  Add `--user-data-dir=<scratch>/chromeprofile --no-sandbox`.
+- Renders that all come back **identical in size** are copies of one failed
+  page. Compare sizes before trusting a batch.
+- To force a theme, inject `<script>window.theme='cpc';</script>` **before** the
+  `petscii.js` tag; `getIcueProperty` reads `window[name]`.
+- Budget past the 2-second boot (`--virtual-time-budget=6000`) for the settled
+  screen, and inside it (~900) for the boot screen.
+
+## Task-pipeline traps, new this session
+
+- **`partial` keeps a task selectable forever.** `boot-screen-machine-art` was
+  recorded `partial` for a touches violation, not for missing work; its feature
+  was complete and committed. The next `/runtask next` selected it again,
+  because `partial` never satisfies. If the work is done and only the record is
+  wrong, fix it in the plan rather than leaving the trap armed.
+- **Reading `opened` from the LAST line per id loses ids.** An id recorded in an
+  earlier line for the same task disappears. `modern-theme-shows-no-version` was
+  lost that way and only recovered by scanning every line. Reconcile `opened`
+  over the WHOLE file.
+- **A verify that bundles another task's subject cannot pass.**
+  `reload-widgets-in-icue` carried gesture clauses belonging to
+  `verify-touch-drag`, which forced a `partial` when the re-add had entirely
+  succeeded.
 
 ## Corrections made mid-session
 
-- The user's own references **contradict each other**, twice: the PET startup
-  shot is an 8K BASIC 2.0 machine while the photographed machine is a CBM 8032
-  (BASIC 4.0, 31743 bytes); the CPC startup shot is a 6128 while the photographed
-  machine is a 464. Resolved toward the machines photographed, and recorded in
-  the theme table so the next person does not "fix" it back.
-- The plan marked both delegated tasks `lane: serial`, but their only shared
-  paths were `r:` on both sides. The lanes had been computed against
-  `requires-user` tasks that can never be scheduled. The arithmetic was followed
-  and they ran concurrently.
+- **A touches violation, twice.** Both `c64-retro-themes` and
+  `boot-screen-machine-art` wrote a path they had not declared, and both times
+  it was the same class: a task that adds a rendered element needs `rw:` on the
+  page hosting it. Declare `index.html` for anything that renders.
+- **The user's own references contradicted each other twice.** The PET startup
+  shot is an 8K BASIC 2.0 machine while the photographed machine is a CBM 8032;
+  the CPC startup shot is a 6128 while the photographed machine is a 464.
+  Resolved toward the machines photographed, and recorded in the theme table so
+  the next person does not "fix" it back.
+- **"+1 on the font size" was read too broadly at first** — every token including
+  the hero. The user's crops and then "The tempuratur size is fine" narrowed it
+  to the small text only.
 </attempted_approaches>
 
 <critical_context>
 
 ## Environment
 
-- `icuewidget` CLI at `C:\Program Files\Corsair\iCUE Widget CLI\` (v0.4.45;
-  0.4.47 available). `validate` then `package`.
+- `icuewidget` CLI at `C:\Program Files\Corsair\iCUE Widget CLI\` (v0.4.45).
+  `validate` then `package`.
 - Xeneon Edge is `\\.\DISPLAY2`, **2560×720 at X=-1881, Y=1440**; widgets sit in
   **840×344** slots. Capture with `System.Drawing` `CopyFromScreen`.
 - Node `C:\Program Files\nodejs\node.exe`; Chrome at
   `C:\Program Files\Google\Chrome\Application\chrome.exe`.
-- `gh` authenticated as `MichaelTroelsen`.
-- Server runs under scheduled task **`ClaudeUsageFeed`** via `start-hidden.vbs`.
-- The **tokensave MCP server failed to connect** this session; all exploration
-  was plain `grep`/`Read`.
+- `gh` authenticated as `MichaelTroelsen`. Server runs under scheduled task
+  **`ClaudeUsageFeed`**.
+- The **tokensave MCP server failed to connect** all session; exploration was
+  plain `grep`/`Read`.
 
 ## Environment overrides (all unset in normal use)
 
@@ -271,93 +248,115 @@ Windows path, and check `git status` before committing a scripted edit.**
 
 | Constant | Value | File |
 |---|---|---|
+| `--font-hero` / `--font-label` / `--font-boot` | 22 / 6 / 5.2 × layout-unit | C64Weather.css |
+| `--font-secondary` | 7 — **declared, read by nothing** | C64Weather.css |
 | `BOOT_MS` | 2000 | C64Weather/scripts/widget.js |
 | `TAP_SLOP_PX` / `TAP_MAX_MS` | 12 px / 700 ms | both widgets |
 | `REFRESH_MS` | 10 s | usage-server/server.js |
-| `SESSION_ACTIVE_MS` | 15 min | server.js |
-| `LIVE_RUN_STALE_MS` | 15 min | server.js |
-| `OFFICIAL_INTERVAL_MS` | 12 min | server.js |
-| `OFFICIAL_STALE_MS` | 45 min | server.js |
-| `FRESH_MS` / `MAX_AGE_MS` | 10 min / 45 min | statusline.js |
+| `SESSION_ACTIVE_MS` / `LIVE_RUN_STALE_MS` | 15 min | server.js |
+| `OFFICIAL_INTERVAL_MS` / `OFFICIAL_STALE_MS` | 12 min / 45 min | server.js |
 | `HIGH_WATER` / `CRITICAL_WATER` | 80 / 95 | ClaudeUsage/scripts/widget.js |
 
 ## Non-obvious behaviours
 
 - **`"interactive": true` in `manifest.json` is required** or iCUE forwards no
   touches at all. It is not implied by having a click handler.
-- A theme is live when its `theme-<name>` class is on `.widget-root`; that class
-  is the only thing the stylesheet reads, which is what makes it the right thing
-  to assert on.
-- `wf_*.json` is written **only at completion**; the transcript directory exists
-  from launch.
-- A just-opened session's transcript contains **no message**.
-- Claude Code **drops a window** from `rate_limits` once its `resets_at` passes,
-  which is what makes the `LIVE¹` partial-provenance case real.
-- `resets_at` is epoch **seconds** in the statusline payload, an **ISO string**
-  from `/api/oauth/usage`.
-- **The 429 on `/api/oauth/usage` is not our fault** — verified against
-  anthropics/claude-code#30930, #31637, #31055. Do not re-derive it as "we polled
-  too much". It is cosmetic now: the figures come from the statusline path.
-- `.icuewidget` packages are **gitignored** — do not try to commit them.
+- **A theme is live when its `theme-<name>` class is on `.widget-root`** — the
+  only thing the stylesheet reads, so it is the right thing to assert on.
+- **`setMachine` has NO fallback**, unlike `setSprite` which falls back to
+  `cloud`. An unknown machine draws nothing, deliberately: the right startup
+  screen beside the wrong machine is worse than no picture.
+- **Modern prints no version** (`boot: []`, `load: ''`), so a device capture of
+  the Modern theme cannot confirm which build is running. This is an open task.
 - **iCUE caches the page**; the version on screen is the only reliable indicator
-  of what is running. Re-adding mints a new GUID and resets properties. **Do not
-  restart iCUE** — it orphaned the dashboard layout once.
-- **`tab-buttons` is unusable and it is iCUE's bug**, not ours:
-  `TabButtonsEditorSetting.qml:33` calls `rowCount()` on a QVariantList, which
-  crosses into QML as a plain array. It throws for every possible `data-values`
-  payload, Corsair's own bundled widgets included. Both settings are `combobox`
-  now (`c1f7644`); do not switch back.
+  of what is running. Re-adding mints a **new GUID and resets widget
+  properties** — the theme goes back to `c64`. **Do not restart iCUE**; it
+  orphaned the dashboard layout once.
+- **`tab-buttons` is unusable and it is iCUE's bug** —
+  `TabButtonsEditorSetting.qml:33` calls `rowCount()` on a QVariantList. Both
+  settings are `combobox` now; do not switch back.
+- **The 429 on `/api/oauth/usage` is not our fault** — anthropics/claude-code
+  #30930, #31637, #31055. Cosmetic now: figures come from the statusline path.
+- **`.icuewidget` packages are gitignored** — do not try to commit them.
+- **Corsair's own stock Weather widget is also on this dashboard**, top-left,
+  and looks superficially similar. Ours writes `17° | 19°` (degree only) and
+  `17KM/H` uppercase; theirs writes `15°C | 18°C` and `9km/h`.
 
 ## Verification conventions
 
-- Layout: exactly-sized `<iframe>` in a larger window (bare `--window-size`
-  includes window chrome).
-- To force a theme headlessly, inject `<script>window.theme='cpc';</script>`
-  **before** the `petscii.js` tag — `getIcueProperty` reads `window[name]`.
-- To reach a specific view or state, append a script that dispatches real
-  `PointerEvent`s, or overrides `window.fetch` with a stub.
-- Budget past the 2-second boot: `--virtual-time-budget=6000`.
+- Layout: exactly-sized render at 840×344; bare `--window-size` on a real window
+  includes chrome.
+- To test a payload variant, override `window.fetch` with a stub in an injected
+  script; read `resolveLocation`/`fetchWeather` for the real response shape.
 - **Mutation-check every new test** by reverting the fix — and treat a mutation
   that passes as a missing test, not as reassurance.
+- **If the claim is visual, look at the picture.** Three defects this session
+  passed every structural check.
+- **A CSS rule that is never applied can still leave the page looking right.**
+  A malformed comment (a closing `*/`, more prose, then another `*/`) silently
+  ate a whole rule in `C64Weather.css`; every test stayed green because the
+  tests measure the RESULT, and the result happened to be correct anyway. When
+  a fix IS a CSS rule, confirm with `getComputedStyle` in the page that the
+  rule is actually applied — don't infer it from a screenshot.
+- **Write the handoff LAST.** This one was rewritten mid-drain and was stale
+  within the hour, because findings kept landing after it was written.
 </critical_context>
 
 <current_state>
 
-## Not clean, not pushed
+## Where the tree stands
 
-- `HEAD` **`acfeee4`**, `origin/main` **`3214d2b`** — two commits ahead, unpushed.
-- Working tree: **`README.md` and `TODO.md` modified**, uncommitted, written by
-  the `/runqueue` doc agent.
-- **CI's last green run is `3214d2b`.** It has never seen `theme.test.js`.
-
-## Versions
-
-| | Repo | Installed | Device |
-|---|---|---|---|
-| C64 Weather | **1.4.0** | 1.3.0 | not re-checked; was 1.2.0-era |
-| Claude Code Usage | **1.9.1** | 1.9.0 | last seen 1.7.0 |
+- **C64 Weather 1.5.4**, **Claude Code Usage 1.9.1** in the repo.
+- The DEVICE is on **1.5.1** — it was re-added twice on 2026-08-30 and has not
+  been re-added since, so the boot-text scaling fix, the machine-art placement,
+  the version caption and the redrawn machines are all NOT on it yet. Seeing
+  them needs another remove-and-re-add, which resets the widget properties and
+  mints a new GUID; it is worth batching.
+- Installed GUIDs at the last re-add: weather
+  `1f6c321f-2100-4b8d-a7c2-a042f589fc84`, usage
+  `d8802bff-17c9-4c00-8f13-960532db8e2e` (unchanged — it did not need
+  re-adding). The device is on the **C64 theme**, because re-adding reset it.
+- Corsair's own stock Weather widget is also on this dashboard, top-left, and
+  looks superficially similar. Ours writes `17° | 19°` and `17KM/H`; theirs
+  writes `15°C | 18°C` and `9km/h`.
 
 ## Tests — all passing locally
 
 ```bash
-node C64Weather/test/font.test.js        # extended, mixed-case probe
-node C64Weather/test/theme.test.js       # 39 checks, NEW
+node C64Weather/test/font.test.js        # font, art names, machine art
+node C64Weather/test/theme.test.js       # 65 checks: tap, boot, case, machines, version
+node C64Weather/test/layout.test.js      # NEW: renders 7 themes, measures every box
 node usage-server/test/live-detection.test.js   # 18 checks
 node usage-server/test/statusline.test.js       # 35 checks
 ```
 
-`icuewidget validate C64Weather` → valid, 1.4.0.
+`layout.test.js` is the only suite that LOOKS at the widget rather than reading
+it: it renders all seven themes at 840x344 booting and settled, and asserts
+nothing overflows `.screen` and no inline-SVG text run is drawn below its
+declared font-size. It carries its own two mutation checks. It has not run in CI
+yet — the workflow step exists but needs a push.
+
+`icuewidget validate C64Weather` → valid, 1.5.4.
 
 ## Task queue
 
-`.claude/tasks/whattask.json` was generated at `acfeee4`: **8 tasks, 9 closed**.
-`/runqueue --until-blocked` drained both runnable delegated tasks and this
-handoff; **the remaining five are all `requires-user`**, so the queue is blocked
-on decisions rather than on work. `runs.jsonl` has 11 lines.
+`.claude/tasks/whattask.json`, `runs.jsonl` (23 lines) and `decisions.jsonl`
+(5 lines, two of which cancelled tasks outright). Only two tasks remain and both
+need a human, not work: push so CI can judge `layout.test.js`, and drag a finger
+on the device for `verify-touch-drag`.
 
 ## Open questions
 
-- Does the iCUE webview forward touch **drags**? Now load-bearing for two widgets.
-- Should the 10 s / 10 s intervals be tightened? Cheap, still not requested.
-- Does `/api/oauth/usage` ever stop 429ing for this account? Cosmetic.
+- Does the iCUE webview forward touch **drags**? Answerable now. Matters most
+  for the usage widget's scrolling lists, where a drag misread as a tap would
+  flip the view.
+- Should the 10 s / 10 s poll intervals be tightened? Cheap, still not asked for.
+- Can `/stats`-style history be added to the usage widget? Researched and YES,
+  cheaply: `~/.claude/stats-cache.json` (19 KB) already holds `dailyActivity`
+  back to 2025-11-19, `dailyModelTokens`, `modelUsage`, `hourCounts` and totals
+  — its `totalSessions` matches what `/stats` prints, so it is the same source.
+  Caveats: undocumented internal file already at `version: 5`, a day stale
+  between `/stats` runs, and `dailyModelTokens` covers fewer days than
+  `dailyActivity`.
+
 </current_state>

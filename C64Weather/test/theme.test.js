@@ -338,6 +338,39 @@ console.log('letter case is a property of the machine:');
   }
 }
 
+console.log('the version on the device:');
+{
+  /* Walks every element the widget touched (top-level cached elements plus
+     anything appended under them, e.g. the boot lines) and collects the
+     aria-label PETSCII.setText always stamps regardless of font mode - that
+     is the one property that reliably carries the source string whether the
+     visible glyphs are an SVG (pixel themes) or a text node (Modern), so
+     reading it alone avoids double-counting a single caption that also sets
+     textContent. */
+  function renderedText(document) {
+    const seen = new Set();
+    let out = '';
+    function walk(el) {
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      if (el.attrs && el.attrs['aria-label']) out += ' ' + el.attrs['aria-label'];
+      (el.children || []).forEach(walk);
+    }
+    Object.keys(document.byKey).forEach(k => walk(document.byKey[k]));
+    return out;
+  }
+
+  const VERSION = (widgetSrc.match(/var WIDGET_VERSION = '([^']+)';/) || [])[1];
+  check('WIDGET_VERSION was found', !!VERSION, true);
+
+  for (const t of ORDER) {
+    const w = boot({ theme: t });
+    const text = renderedText(w.document);
+    const hits = (text.match(new RegExp(VERSION.replace(/\./g, '\\.'), 'g')) || []).length;
+    check(`the ${t} theme surfaces the version exactly once`, hits, 1);
+  }
+}
+
 console.log('the plumbing that makes taps arrive at all:');
 check('the manifest declares the widget interactive', manifest.interactive, true);
 check('a click fallback exists for contexts without pointer events',

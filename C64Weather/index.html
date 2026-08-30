@@ -38,10 +38,15 @@
              Spectrum. All of them show while booting, the first two after. -->
         <div class="boot" id="boot"></div>
 
-        <!-- The machine itself, beside its startup screen. Absolutely
-             positioned rather than a flex sibling so it cannot disturb the
-             column - the Spectrum's copyright line is ordered to the foot of
-             the screen and must stay there. Only visible while booting. -->
+        <!-- The machine itself, anchored bottom-right below the boot text
+             (Spectrum is the exception: top-right, since its copyright line
+             is ordered to the foot of the screen and bottom-right art would
+             collide with it). Absolutely positioned rather than a flex
+             sibling so it cannot disturb the column. Centring it beside the
+             text on the right is what had forced the boot column down to
+             56% width and made long lines scale - moving it below the text
+             frees the boot column to the full width. Only visible while
+             booting. -->
         <div class="machine" id="machine"></div>
         <div class="load-line" id="load-line"></div>
 
@@ -89,6 +94,16 @@
           <span id="ready-text"></span>
           <span class="cursor"></span>
         </div>
+
+        <!-- Modern AND Amiga have no load line to carry the version - both set
+             load: '' in THEMES - so a widget sitting on either could not be
+             told from a stale cached copy. They get a quiet corner caption
+             instead. It is gated on the load line being empty rather than on a
+             theme name, so any future theme without one gets it too; the five
+             themes that do print a load line keep it hidden via setLine's
+             data-empty handling, and theme.test.js asserts every theme
+             surfaces the version exactly once. -->
+        <div class="version-tag" id="version-tag"></div>
       </div>
     </div>
   </div>

@@ -1,7 +1,7 @@
 # Handoff — Xeneon Edge widgets
 
 Written 2026-08-30. Replaces the version written at f0c4a29, and updated again
-after the usage-widget stats work landed.
+after the usage-widget stats work and the server.js review follow-ups landed.
 
 Repo: `C:\Users\mit\claude\icue` → https://github.com/MichaelTroelsen/xeneon-edge-widgets
 (public, `main`). The widgets are at **C64 Weather 1.5.4** and **Claude Code
@@ -56,6 +56,9 @@ carries this file, so it is not listed below.
 | `74ab741` | A test that looks at the widget, and the defects it found |
 | `5cc7e20` | Serve Claude Code's own stats rollup from the feed |
 | `200916e` | A fourth view for the usage widget: all time (1.10.0) |
+| `d42b3bf` | Run the stats suite in CI |
+| `5d05fe1` | One bad query string no longer kills the feed |
+| `bc407e1` | Record what the server.js review actually found |
 
 ## What the widget does now that it did not
 
@@ -98,6 +101,26 @@ carries this file, so it is not listed below.
 - **`stats.unavailable` prints the reason** rather than drawing an empty grid,
   which would read as months of silence instead of a missing file.
 
+## What the FEED does now that it did not
+
+- **It survives a malformed request** (`5d05fe1`). `GET /usage?at=%` used to
+  throw uncaught out of the handler and kill the process; `start-hidden.vbs` is
+  fire-and-forget with no restart supervision, so the feed and both widgets
+  stayed dead until the next logon. A malformed escape is now a 400, anything
+  else a 500 after checking `res.headersSent`, with an `uncaughtException` net
+  behind both. That net is the right trade ONLY because nothing restarts this
+  process - revisit it if a supervisor ever appears.
+- **`/health` reports three states, not one.** `healthy`; `stale` (a snapshot
+  exists but rebuilds are failing - stays `ok:true`, because the data is real if
+  ageing, and `generatedAt` pins to the last GOOD build so the staleness is
+  visible); `unbuilt` (`ok:false`, nothing ever built). `/usage` answers 503
+  naming the failure rather than `200` with the body `null`.
+- **`CLAUDE_USAGE_CONFIG_PATH` and `CLAUDE_USAGE_REFRESH_MS`** exist so a test
+  can point `limits.json` at a fixture and shorten the rebuild cadence. Both
+  unset in normal use.
+- **A fifth suite, `usage-server/test/http.test.js`**, and all five now run in
+  CI.
+
 ## Tests
 
 `C64Weather/test/theme.test.js` is new this session — 65 checks over a stub DOM
@@ -114,38 +137,56 @@ mixed case before probing.
 
 <work_remaining>
 
-Everything open is in `.claude/tasks/whattask.json`, whose snapshot is keyed to
-HEAD `74ab741` and is therefore now one commit behind - re-run `/whattask`
-before trusting its readiness column.
+Everything open is in `.claude/tasks/whattask.json`, keyed to HEAD `d42b3bf` -
+two commits behind, so re-run `/whattask` before trusting its readiness column.
+Readiness is always recomputed from `runs.jsonl`, which is what the runners
+actually use.
 
-Four tasks are open, and one more exists only in `runs.jsonl` because nothing
-has re-planned since it was opened:
+THE SERVER.JS REVIEW IS THE BACKLOG NOW. It produced seven findings; two are
+fixed and five remain. Every one of the five writes `usage-server/server.js`, so
+they SERIALISE - one per cycle, no way around it, and that is arithmetic from
+`touches` rather than a preference.
 
-- **`server-js-code-review`** (opus, xhigh, subtask) - the user asked for this
-  explicitly. `usage-server/server.js` is 1138 lines, 35 functions and **11
-  module-level mutable variables**; it is framed in `TODO.md:208` as a
-  falsification pass, not a tidy-up.
-- **`usage-server-ci-add-stats-test`** (sonnet, low, subtask) - `stats.test.js`
-  is hermetic and passes, but is NOT in `.github/workflows/tests.yml`, so it
-  only runs when invoked by hand. The agent that wrote it stopped at the
-  undeclared path rather than editing the workflow, which is the behaviour the
-  touches rule exists to produce; this is the follow-up it opened.
+- **`fix-live-run-staleness-uses-dir-mtime`** (opus, high) - finding 2. Liveness
+  is judged on the run DIRECTORY's mtime, which NTFS does not move on an append,
+  so a fanned-out workflow - this pipeline's own shape - drops out of the widget
+  at 15 minutes while still writing. It is opus work because
+  `live-detection.test.js:74-77` actively pins the WRONG behaviour: it ages its
+  "dead run" fixture with `utimesSync(runDir, ...)`, exactly the signal a healthy
+  long run produces. Both cases must end up covered.
+- **`fix-incremental-index-torn-line-loss`** (opus, high) - finding 3. A record
+  torn across a read boundary is lost for the life of the process. The
+  incremental branch has NO coverage at all: 14 `writeFileSync` calls across the
+  suites and zero `appendFileSync`, so this task writes the first append-based
+  fixture rather than just an assertion.
+- **`fix-official-backoff-reset-on-credentials-write`** (sonnet, high) - finding
+  5. A credentials write clears rate-limit backoff, and each rotation fires it
+  twice. Untestable as things stand: `watchCredentials()` is unreachable while
+  `CLAUDE_USAGE_NO_REMOTE=1`, which all suites set.
+- **`fix-lastquota-most-recent-not-max-resetsat`** (sonnet, medium) - finding 6.
+  LATENT, not currently firing: every `quotaLimits` record seen in the wild is
+  `five_hour`, and the bug needs a `seven_day` one. Do not prioritise it as live.
+- **`fix-seen-counts-taken-after-slice`** (sonnet, low) - finding 7. The
+  truncation diagnostic is counted after the cap, so it can never report
+  truncation.
+
+Not from the review:
+
 - **`usage-widget-model-token-chart`** (opus, medium, main) - the second half of
-  the user's `/stats` request: the Models chart. Its dependency
-  `usage-widget-stats-view` is now `done`, so it is READY. `dailyModelTokens`
-  (34 entries, fewer days than `dailyActivity`) is the source.
-- **`usage-widget-stats-layout-test`** (opened 2026-08-30, not yet in the plan)
-  - the render-and-probe harness for the All time view lives only in the
-  scratchpad, so nothing in the repo would catch a regression in it. C64Weather
-  has `test/layout.test.js` doing exactly this job; **ClaudeUsage has no test
-  directory at all**. The harness already carries the two Chrome calibrations
-  recorded below, which cost most of the time in that task.
-- **`verify-touch-drag`** (requires-user) - needs a finger on the Edge. The real
-  risk is the USAGE widget, not the weather one: its lists scroll AND it
-  switches view on tap, both on the same 12px slop rule, so a webview delivering
-  a drag without intermediate pointer positions would flip the view on every
-  scroll. That risk is now larger, not smaller - there are four views to flip
-  through instead of three.
+  the user's `/stats` request: the Models chart. `dailyModelTokens` is the
+  source, 34 entries against `dailyActivity`'s 92 and SPARSE BY DATE in the same
+  way - see the heatmap lesson below.
+- **`usage-widget-stats-layout-test`** (sonnet, high) - **ClaudeUsage still has
+  no test directory at all.** The render-and-probe harness for the All time view
+  lives only in a scratchpad.
+- **`sanitise-opened-arrays-in-runs-log`** (sonnet, low) - must run ALONE in its
+  cycle: it rewrites the append-only log that every runner, including the
+  orchestrator at join time, appends to.
+- **`verify-touch-drag`** (requires-user) - needs a finger on the Edge. The risk
+  is the USAGE widget: its lists scroll AND it switches view on tap, both on the
+  same 12px slop rule, so a webview delivering a drag without intermediate
+  pointer positions would flip the view on every scroll. There are now FOUR
+  views to flip through, not three.
 
 Closed for the record: `polish-visual-seams`, `modern-theme-shows-no-version`,
 `machine-art-distinctiveness`, `sync-docs-after-1-5-x`, `render-smoke-test-in-ci`,

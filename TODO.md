@@ -145,6 +145,14 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 - [x] **Scrollable lists**, replacing the row trimming that made anything past
       the first handful unreachable. Headings carry totals, a fade marks an
       overflowing list, and scroll position survives a refresh.
+- [x] **Self-paging lists** (1.12.0), because the scrolling above turned out to
+      be unreachable on the device — see the drag finding below. An overflowing
+      region advances one page every 5s and wraps; boundaries snap to rows so
+      none is sliced; a dot per page rides in the heading; the fade now means
+      "more below *this page*" and goes out on the last one. Driven off computed
+      overflow rather than a list of ids, so the Tokens view's two columns page
+      on the same mechanism. Measured: 7 of 40 rows per column were reachable
+      before, 40 of 40 after.
 
 - [x] **Dropped the estimated percentage** (1.3.0). Proved it cannot be made to
       work: between two windows the measured growth was 4.28×–9.18× per token
@@ -283,10 +291,15 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       indistinguishable from idle, which is the trap the active-only filter
       was built to avoid. Do not ask again.
 
-- [ ] **Confirm touch drag works on the device.** Scrolling is verified in a
-      browser, but `interactive` is documented only as enabling *click*
-      handling — whether the iCUE webview forwards drags is unknown. If it does
-      not, page the lists on a timer instead.
+- [x] **The iCUE webview does NOT forward touch drags** (2026-08-30). Measured
+      on the device at 1.11.0: a finger dragged across an activity list does not
+      scroll it, the list stays put. Taps *are* forwarded and the 12px/700ms tap
+      gate does not misfire — the view did not change — so the specific bug this
+      was written to catch does not exist. What it broke instead was the premise
+      that a scrolling list keeps every row reachable: 33 of 40 rows per column
+      were stranded behind a fade promising content nobody could get to. Fixed
+      by the self-paging lists above. Do not design anything for this device
+      that depends on reaching a scrollable region by hand.
 - [x] **Confirmed the weekly anchor** (2026-08-28). Thu 21:00 local was taken
       from the usage panel; the statusline's `seven_day.resets_at` — Anthropic's
       own value — agrees. Only affects the measured `LOCAL` fallback anyway.

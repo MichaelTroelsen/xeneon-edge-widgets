@@ -160,8 +160,9 @@ the activity tables with their totals (`3 active of 24 seen`) — open
 | `colorTheme` | tabs | `dark` / `light` |
 | `refreshSeconds` | slider 5–120 | 10 |
 
-**Tap the widget** to cycle four views: the usage bars, an activity view, a
-token breakdown and all-time stats; a fourth tap returns to the start. The
+**Tap the widget** to cycle five views: the usage bars, an activity view, a
+token breakdown, all-time stats and tokens by model; a fifth tap returns to the
+start. The
 **Tokens** view carries
 what the bars are drawn from — output, cache creation, cache read and input for
 both windows with each class's share of the total, the weighted figure, and a
@@ -195,15 +196,28 @@ label alone does not say which one you are looking at.
 Expect up to ~20s of lag in each direction: the feed re-indexes every 10s and the
 widget polls every 10s, so a very short run can still begin and end unseen.
 
-**The lists scroll.** Each column scrolls independently, the heading carries the
-count (`SESSIONS · 1 ACTIVE`, or `WORKFLOWS · NONE ACTIVE` when idle) and a fade
-marks a list with more below. A gesture only counts as a tap if the pointer moved
-less than 12px and was held under 700ms, so scrolling does not flip the view.
+**The lists page themselves.** Each column that overflows advances one page
+every five seconds and wraps at the end, so every row reaches the screen without
+anyone touching the glass. The heading carries the count (`SESSIONS · 1 ACTIVE`,
+or `WORKFLOWS · NONE ACTIVE` when idle) and, when there is more than one page, a
+dot per page with the current one lit. The fade at the bottom edge means there
+is more *below the page you are on*, so it goes out on the last one.
 
-> Whether the iCUE webview forwards touch *drags* to the page is not documented —
-> `interactive` is described only as enabling click handling. Scrolling is
-> verified in a browser; if a drag does nothing on the device, the fallback is to
-> page the lists automatically on a timer.
+Page boundaries snap to row boundaries, so a row is never sliced across the
+fold — the rows do not divide the box evenly (7.2 of them fit at 840×344), so
+paging by a flat box-height step would cut one in half at every boundary.
+
+> **The iCUE webview does not forward touch drags.** Measured on the device on
+> 2026-08-30: a finger dragged across a list does not scroll it, the list simply
+> stays put. Taps *are* forwarded, so tap-to-cycle works — a gesture counts as a
+> tap only if the pointer moved less than 12px and was held under 700ms, and the
+> drag test confirmed that gate does not misfire.
+>
+> This is why the lists page themselves rather than relying on `overflow-y:
+> auto`. Before the pager, the Activity view showed 7 of up to 40 rows per
+> column at 840×344 and the other 33 were unreachable by any means. **Do not
+> design anything for this device that depends on a scrollable region being
+> reachable by hand.**
 
 ## Verifying a layout
 
@@ -266,5 +280,6 @@ slot and a 2536px one:
   density rather than inflated text.
 - When space runs out, elements are hidden outright rather than shrunk. The hero
   value — the temperature, the session percentage — is the last thing to go. The
-  exception is the usage widget's activity lists, which scroll instead, because
-  hiding a row there would put it out of reach entirely.
+  exception is the usage widget's activity lists, which page through their rows
+  instead, because hiding a row there would put it out of reach entirely — and
+  so would leaving it below a fold on a device that forwards no drags.

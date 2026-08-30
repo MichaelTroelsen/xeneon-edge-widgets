@@ -733,6 +733,253 @@ console.log('the checks are not vacuous:');
   }
 }
 
+/* ------------------------------------------------------------------- paging */
+
+/* THE DEVICE FORWARDS NO TOUCH DRAGS. Confirmed on the Xeneon Edge on
+   2026-08-30: a finger dragged across an activity list does not scroll it.
+   So "the row is there, just scroll to it" is not a defence any more - a row
+   the pager never brings into view is a row nobody can ever read, and that is
+   what this section measures.
+ *
+ * It samples the real page over virtual time rather than asserting on the
+ * pager's arithmetic, because the arithmetic was not the thing that broke
+ * when this was written: adding the page indicator to the heading made one
+ * heading WRAP, which took 22px off that column's list and silently cost it a
+ * row. Only measuring the rendered boxes catches that. */
+
+const PAGE_MS = Number(extractString(widgetSrc, 'PAGE_MS') ||
+  (widgetSrc.match(/var PAGE_MS = (\d+)/) || [])[1]);
+
+console.log('paging — the drag-less device can still reach every row:');
+check('PAGE_MS was read out of widget.js', Number.isFinite(PAGE_MS) && PAGE_MS > 0, true);
+
+const PAGING_ROWS = 40;
+function pagingFixture() {
+  const f = fullStatsFixture();
+  f.workflows = buildRows(PAGING_ROWS, 'workflow');
+  f.subtasks = buildRows(PAGING_ROWS, 'subtask', true);
+  f.sessions = buildRows(PAGING_ROWS, 'session');
+  return f;
+}
+function shortFixture() {
+  const f = fullStatsFixture();
+  f.workflows = buildRows(2, 'workflow');
+  f.subtasks = buildRows(2, 'subtask', true);
+  f.sessions = buildRows(2, 'session');
+  return f;
+}
+
+const SAMPLE_STEP = Math.max(1, Math.round(PAGE_MS / 2));
+const SAMPLE_COUNT = 16;   /* 8 dwells - more than the 6 pages 40 rows produce */
+
+/* Sampled with the same measure-the-box discipline as everything above: a row
+   counts as readable only when its whole height is inside the scroller. */
+const SAMPLER = `<script>
+(function () {
+  function snap() {
+    var av = document.querySelector('.view.is-active');
+    if (!av) return null;
+    var out = [];
+    var all = av.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (el.clientHeight === 0) continue;
+      var oy = window.getComputedStyle(el).overflowY;
+      if (oy !== 'auto' && oy !== 'scroll') continue;
+      var box = el.classList.contains('col') ? el : el.parentNode;
+      var h = box ? box.querySelector('h2') : null;
+      var pg = h ? h.querySelector('.pages') : null;
+      var active = -1;
+      if (pg) {
+        for (var k = 0; k < pg.children.length; k++) {
+          if (pg.children[k].className === 'is-active') active = k;
+        }
+      }
+      var visible = [];
+      var base = el.children.length ? el.children[0].offsetTop : 0;
+      for (var r = 0; r < el.children.length; r++) {
+        var c = el.children[r];
+        var t = c.offsetTop - base;
+        if (t >= el.scrollTop - 0.5 &&
+            t + c.offsetHeight <= el.scrollTop + el.clientHeight + 0.5) visible.push(r);
+      }
+      out.push({
+        id: el.id || el.getAttribute('data-page-key'),
+        rows: el.children.length,
+        clientHeight: el.clientHeight,
+        scrollTop: Math.round(el.scrollTop),
+        maxScroll: Math.round(el.scrollHeight - el.clientHeight),
+        dots: pg ? pg.children.length : 0,
+        activeDot: active,
+        visible: visible,
+        fade: box ? box.classList.contains('can-scroll') : null
+      });
+    }
+    return out;
+  }
+  var samples = [], n = 0;
+  var iv = setInterval(function () {
+    samples.push(snap());
+    if (++n >= __SAMPLE_COUNT__) {
+      clearInterval(iv);
+      document.documentElement.setAttribute('data-paging',
+        encodeURIComponent(JSON.stringify(samples)));
+    }
+  }, __SAMPLE_STEP__);
+})();
+</script>`;
+
+function writePagingPage(name, taps, fixture, mutate) {
+  return writePage(name, taps, fixture, html => {
+    const withSampler = html.replace('</head>', SAMPLER
+      .replace('__SAMPLE_COUNT__', String(SAMPLE_COUNT))
+      .replace('__SAMPLE_STEP__', String(SAMPLE_STEP)) + '</head>');
+    return mutate ? mutate(withSampler) : withSampler;
+  });
+}
+
+function renderPaging(page) {
+  const budget = PRE_TAP_MS + POST_TAP_MS + SAMPLE_STEP * SAMPLE_COUNT + 2000;
+  const args = [
+    '--headless', '--disable-gpu', '--hide-scrollbars', '--no-sandbox',
+    '--no-first-run', '--no-default-browser-check', '--disable-extensions',
+    '--disable-background-networking', '--disable-sync', '--mute-audio',
+    '--force-device-scale-factor=1',
+    `--user-data-dir=${PROFILE}`,
+    `--window-size=${winW},${winH}`,
+    `--virtual-time-budget=${budget}`,
+    '--dump-dom',
+    fileUrl(page)
+  ];
+  const res = spawnSync(CHROME, args, { encoding: 'utf8', timeout: 180000, maxBuffer: 64 * 1024 * 1024 });
+  if (res.error) return { error: String(res.error) };
+  const m = (res.stdout || '').match(/data-paging="([^"]*)"/);
+  if (!m) return { error: 'no data-paging in the dumped DOM (the page never sampled itself)' };
+  try {
+    const samples = JSON.parse(decodeURIComponent(m[1])).filter(Boolean);
+    return samples.length ? { samples } : { error: 'every sample was empty (no active view)' };
+  } catch (e) {
+    return { error: 'data-paging did not parse: ' + e };
+  }
+}
+
+/* Folds the per-sample snapshots into one record per scroller. */
+function byScroller(samples) {
+  const out = {};
+  samples.forEach(snap => (snap || []).forEach(s => {
+    const r = out[s.id] || (out[s.id] = {
+      id: s.id, rows: s.rows, clientHeight: s.clientHeight, maxScroll: s.maxScroll,
+      dots: s.dots, seen: new Set(), offsets: new Set(), states: [], reachedBottom: false,
+      fadeAtBottom: null
+    });
+    s.visible.forEach(v => r.seen.add(v));
+    r.offsets.add(s.scrollTop);
+    r.states.push({ scrollTop: s.scrollTop, activeDot: s.activeDot, fade: s.fade });
+    if (s.scrollTop === s.maxScroll && s.maxScroll > 0) {
+      r.reachedBottom = true;
+      r.fadeAtBottom = s.fade;
+    }
+  }));
+  return out;
+}
+
+const DETAIL_TAPS = VIEWS.indexOf('detail');
+
+{
+  const r = renderPaging(writePagingPage('paging-full', DETAIL_TAPS, pagingFixture()));
+  check('the Activity view sampled itself over several page dwells',
+    r.error ? r.error : true, true);
+  if (!r.error) {
+    const lists = byScroller(r.samples);
+    const ids = Object.keys(lists);
+    check('all three activity lists were found scrolling', ids.length, 3);
+
+    /* The three columns are structurally identical, so an unequal box means
+       one of the headings wrapped - the exact regression the page indicator
+       caused when it was first added. */
+    const heights = ids.map(id => lists[id].clientHeight);
+    check('every activity column got the same box height, so no heading wrapped',
+      heights.every(h => h === heights[0]), true);
+    console.log(`        boxes ${heights.join(', ')}px`);
+
+    ids.forEach(id => {
+      const l = lists[id];
+      const missing = [];
+      for (let i = 0; i < l.rows; i++) if (!l.seen.has(i)) missing.push(i);
+      check(`${id}: every one of its ${l.rows} rows became fully readable`,
+        missing.length ? `never fully visible: ${missing.join(',')}` : true, true);
+
+      check(`${id}: the last page reaches the bottom of the content`,
+        l.reachedBottom, true);
+
+      /* On the last page there is nothing below, so the fade would be the same
+         false promise the drag-less device made in the first place. */
+      check(`${id}: the fade is off once the bottom is reached`,
+        l.fadeAtBottom, false);
+
+      const offsets = Array.from(l.offsets).sort((a, b) => a - b);
+      check(`${id}: one dot per page (${offsets.length} pages)`, l.dots, offsets.length);
+
+      const wrong = l.states.filter(s => s.activeDot !== offsets.indexOf(s.scrollTop));
+      check(`${id}: the lit dot is the page actually shown, in every sample`,
+        wrong.length ? `${wrong.length} of ${l.states.length} samples disagreed` : true, true);
+    });
+  }
+}
+
+{
+  const r = renderPaging(writePagingPage('paging-short', DETAIL_TAPS, shortFixture()));
+  check('a two-row Activity view sampled itself', r.error ? r.error : true, true);
+  if (!r.error) {
+    const lists = byScroller(r.samples);
+    const ids = Object.keys(lists);
+    /* A list that fits is not a scroller at all, so it should not even appear
+       - and if it does, it must never move and must carry no dots. */
+    const moved = ids.filter(id => lists[id].offsets.size > 1);
+    check('a list that fits its box never pages', moved.length ? moved.join(',') : true, true);
+    const dotted = ids.filter(id => lists[id].dots > 0);
+    check('a list that fits its box shows no page indicator',
+      dotted.length ? dotted.join(',') : true, true);
+  }
+}
+
+console.log('the paging checks are not vacuous:');
+{
+  /* A row taller than its own box can never be fully visible on any page, so
+     the reachability check MUST fail here. A mutation that does not fire is a
+     missing test, not a passing one. */
+  const page = writePagingPage('mutation-unreachable-row', DETAIL_TAPS, pagingFixture(), html =>
+    html.replace('</head>',
+      '<style>#d-sessions li:nth-child(9) { height: 400px !important; flex: 0 0 400px !important; }' +
+      '</style></head>'));
+  const r = renderPaging(page);
+  const lists = r.error ? {} : byScroller(r.samples);
+  const l = lists['d-sessions'];
+  const missing = [];
+  if (l) for (let i = 0; i < l.rows; i++) if (!l.seen.has(i)) missing.push(i);
+  check('a row taller than its box trips the reachability check',
+    r.error ? `render failed: ${r.error}` : missing.length > 0, true);
+  if (missing.length) console.log(`        caught ${missing.length} unreachable row(s): ${missing.join(',')}`);
+}
+{
+  /* Restores the pre-fix heading: a loose text node beside the dots is an
+     anonymous flex item that will not shrink, so the longest heading wraps and
+     its column loses a row. This is the regression itself, re-created. */
+  const page = writePagingPage('mutation-wrapping-heading', DETAIL_TAPS, pagingFixture(), html =>
+    html.replace('</head>',
+      /* flex: 0 1 auto, NOT 0 0 auto - an item that cannot shrink sizes to
+         max-content and never wraps, so the mutation would not fire at all.
+         This is the loose-text-node behaviour the fix replaced. */
+      '<style>.list h2 .htext { white-space: normal !important; overflow: visible !important; ' +
+      'text-overflow: clip !important; flex: 0 1 auto !important; }</style></head>'));
+  const r = renderPaging(page);
+  const lists = r.error ? {} : byScroller(r.samples);
+  const heights = Object.keys(lists).map(id => lists[id].clientHeight);
+  check('a heading allowed to wrap trips the equal-box-height check',
+    r.error ? `render failed: ${r.error}` : (heights.length > 1 && !heights.every(h => h === heights[0])), true);
+  if (heights.length) console.log(`        boxes ${heights.join(', ')}px`);
+}
+
 /* ------------------------------------------------------------------- teardown */
 
 try { fs.rmSync(WORK, { recursive: true, force: true }); }

@@ -224,6 +224,9 @@ body {
   overflow-x: hidden;
 }
 
+/* Sticky because this heading lives INSIDE its own scroller, unlike .list h2
+   which sits outside one. Without it the column's page indicator would scroll
+   out of sight on the very page it is there to explain. */
 .cols .col h2 {
   font-size: var(--font-name);
   font-weight: 600;
@@ -231,6 +234,10 @@ body {
   letter-spacing: 0.06em;
   color: var(--muted);
   margin: 0 0 calc(var(--layout-unit) * 0.5);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
 }
 
 .cols .col-sub,
@@ -428,8 +435,10 @@ body {
   position: relative;
 }
 
-/* Only drawn when the list actually overflows, so a short list keeps its last
-   row at full strength. */
+/* Drawn only while there is content BELOW THE CURRENT PAGE, so a short list -
+   and the last page of a long one - keeps its final row at full strength. It
+   used to mean "this box overflows somewhere", which on a device that forwards
+   no drags was a promise of content nobody could reach. */
 .list.can-scroll::after {
   content: '';
   position: absolute;
@@ -449,6 +458,51 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+
+/* ------------------------------------------------------- page indicator */
+
+/* An overflowing region pages itself (the webview forwards no drags), and its
+   heading says how many pages there are and which one is showing. It rides in
+   the heading rather than on a line of its own because the Activity lists get
+   a 232px box and a row is ~32px of it: a separate line would have cost a row
+   of the very content it describes. Same dot idiom as the view indicator in
+   the header, so one visual language means "there is more, in sequence". */
+.list h2,
+.cols .col h2 {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 1);
+}
+
+/* The heading's text, as a real flex item. As a loose text node it was an
+   anonymous item that would not shrink, so the heading wrapped to a second
+   line and stole a row from the list under it. */
+.htext {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pages {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 0.8);
+  flex: 0 0 auto;
+}
+
+/* <i>, not .dot - .list li .dot is the row's state marker and must not be
+   restyled by this. */
+.pages i {
+  width: calc(var(--layout-unit) * 1.2);
+  height: calc(var(--layout-unit) * 1.2);
+  border-radius: 999px;
+  background: var(--track);
+}
+
+.pages i.is-active { background: var(--fill); }
 
 /* flex+min-height:0 bounds the list to its box. Without it the ul sizes to its
    content and only the parent clips, so scrollHeight == clientHeight and the

@@ -5,12 +5,13 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.11.0';
+  var WIDGET_VERSION = '1.12.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
-  var MAX_ROWS = 40;          /* lists scroll, so render everything the feed sends */
+  var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
   var TAP_SLOP_PX = 12;       /* movement beyond this is a scroll, not a tap */
   var TAP_MAX_MS = 700;
+  var PAGE_MS = 5000;         /* dwell on each page of an overflowing region */
   var HIGH_WATER = 80;        /* percent at which a bar turns amber */
   var CRITICAL_WATER = 95;    /* and red */
 
@@ -139,8 +140,11 @@
     h.textContent = base + ' · ' + (total ? total + ' active' : 'none active');
   }
 
+  /* The reader's place is NOT saved here: refreshPaging() owns every scroll
+     position now and restores the page this list was on, which survives a
+     refresh the way a raw pixel offset could not once the rows beneath it
+     changed height. */
   function renderList(ul, items, describe, emptyNote) {
-    var scrollTop = ul.scrollTop; /* keep the reader's place across a refresh */
     ul.textContent = '';
     setHeading(ul, items ? items.length : 0);
     if (!items || !items.length) {
@@ -181,7 +185,6 @@
       li.appendChild(meta);
       ul.appendChild(li);
     });
-    ul.scrollTop = scrollTop;
   }
 
   /* One row per token class, with its share of the total - the share is what
@@ -665,18 +668,151 @@
     renderModelChart(data.stats);
 
     showState('content');
-    markScrollable();
+    refreshPaging();
   }
 
-  /* Lists scroll rather than being trimmed to fit, so nothing is unreachable.
-     A partly visible row at the bottom edge is the point: together with the
-     fade it says there is more below. */
-  function markScrollable() {
-    [els.workflows, els.subtasks, els.dSessions, els.dWorkflows, els.dSubtasks].forEach(function (ul) {
-      if (!ul || !ul.parentNode) return;
-      var more = ul.scrollHeight > ul.clientHeight + 1; /* +1 absorbs sub-pixel rounding */
-      ul.parentNode.classList.toggle('can-scroll', more);
-    });
+  /* ---------- paging overflowing regions ---------- */
+
+  /* THE ICUE WEBVIEW FORWARDS NO TOUCH DRAGS. Confirmed on the device on
+     2026-08-30: a finger dragged across an activity list does not scroll it,
+     the list simply stays put. Taps ARE forwarded, so tap-to-cycle is fine;
+     it is only scrolling that is absent.
+
+     That falsifies what this file used to assert here - "lists scroll rather
+     than being trimmed to fit, so nothing is unreachable". On the Xeneon Edge
+     nothing scrolls by hand, so at 840x344 the Activity view showed 7 of up to
+     40 rows per column and stranded the other 33 behind a fade that promised
+     content nobody could reach.
+
+     So an overflowing region advances ITSELF, one page every PAGE_MS, wrapping
+     at the end. A region that fits never moves. Nothing here assumes a list:
+     it is driven off computed overflow, so the Tokens view's two columns page
+     on the same mechanism without naming them. */
+
+  var paged = [];          /* the overflowing regions of the active view */
+  var pageIndex = {};      /* page per region, kept ACROSS a re-render */
+  var pageTimer = null;
+
+  /* Page boundaries snap to child boundaries, so a row is never sliced across
+     the fold - paging by a flat clientHeight step would cut one in half at
+     every boundary, since the rows do not divide the box evenly (7.2 of them
+     fit). The last offset is clamped flush to the bottom so the final page is
+     full rather than a lone row above blank space. */
+  function pageOffsets(el) {
+    var kids = el.children;
+    if (!kids.length) return [0];
+    var max = el.scrollHeight - el.clientHeight;
+    var base = kids[0].offsetTop;
+    var offsets = [0];
+    var top = 0;
+    for (var i = 0; i < kids.length; i++) {
+      var t = kids[i].offsetTop - base;
+      if (t + kids[i].offsetHeight > top + el.clientHeight + 0.5) {
+        top = t;
+        offsets.push(Math.min(t, max));
+      }
+    }
+    /* Clamping can collapse the last two boundaries onto the same offset. */
+    var out = [offsets[0]];
+    for (var j = 1; j < offsets.length; j++) {
+      if (offsets[j] > out[out.length - 1] + 0.5) out.push(offsets[j]);
+    }
+    return out;
+  }
+
+  /* The fade now means "there is content BELOW WHERE YOU ARE", not "this box
+     overflows somewhere" - on the last page there is nothing more to come and
+     drawing it would be the same false promise in a smaller form. */
+  function markFade(el) {
+    var box = el.classList.contains('col') ? el : el.parentNode;
+    if (!box) return;
+    var more = el.scrollHeight - el.clientHeight - el.scrollTop > 1; /* +1 absorbs sub-pixel rounding */
+    box.classList.toggle('can-scroll', more);
+  }
+
+  /* One dot per page in the region's own heading, which costs no vertical
+     space - the box is 232px and a row is 32px, so an indicator on its own
+     line would have cost a row of the very content it describes. Same idiom
+     as the view dots in the header. */
+  /* The heading's own text has to become a real element before the dots go
+     beside it. Left as a loose text node it is an anonymous flex item that
+     will not shrink, so the heading wrapped to a second line and took 22px
+     off the list below it - MEASURED: d-workflows' box fell from 232px to
+     210px, one whole row, the first time the dots were added. */
+  function headingBody(h) {
+    var body = h.querySelector('.htext');
+    if (body) return body;
+    body = document.createElement('span');
+    body.className = 'htext';
+    while (h.firstChild) body.appendChild(h.firstChild);
+    h.appendChild(body);
+    return body;
+  }
+
+  function setPageDots(el, i, pages) {
+    var h = (el.classList.contains('col') ? el : el.parentNode);
+    h = h && h.querySelector('h2');
+    if (!h) return;
+    var old = h.querySelector('.pages');
+    if (old) h.removeChild(old);
+    headingBody(h);
+    if (pages < 2) return;
+    var wrap = document.createElement('span');
+    wrap.className = 'pages';
+    for (var p = 0; p < pages; p++) {
+      var d = document.createElement('i');
+      if (p === i) d.className = 'is-active';
+      wrap.appendChild(d);
+    }
+    h.appendChild(wrap);
+  }
+
+  /* Rebuilt whenever the data or the view changes, because both change which
+     regions overflow and by how much. Driven off getComputedStyle rather than
+     a list of ids so a future view is covered without being named here. */
+  function refreshPaging() {
+    paged = [];
+    var av = document.querySelector('.view.is-active');
+    if (!av) return;
+    var all = av.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (el.clientHeight === 0) continue;
+      var oy = window.getComputedStyle(el).overflowY;
+      if (oy !== 'auto' && oy !== 'scroll') continue;
+      /* DOM order is stable, so a positional key survives a re-render and
+         keeps a list on the page it was showing. */
+      if (!el.id && !el.getAttribute('data-page-key')) {
+        el.setAttribute('data-page-key', view + ':' + i);
+      }
+      var key = el.id || el.getAttribute('data-page-key');
+      var offsets = pageOffsets(el);
+      var at = Math.min(pageIndex[key] || 0, offsets.length - 1);
+      pageIndex[key] = at;
+      el.scrollTop = offsets[at];
+      setPageDots(el, at, offsets.length);
+      markFade(el);
+      if (offsets.length > 1) paged.push({ el: el, key: key, offsets: offsets });
+    }
+  }
+
+  function advancePages() {
+    for (var i = 0; i < paged.length; i++) {
+      var p = paged[i];
+      /* A region that has since been re-rendered smaller is left to the next
+         refreshPaging() rather than scrolled to a stale offset. */
+      if (!p.el.isConnected || p.el.clientHeight === 0) continue;
+      var at = (pageIndex[p.key] + 1) % p.offsets.length;
+      pageIndex[p.key] = at;
+      p.el.scrollTop = p.offsets[at];
+      setPageDots(p.el, at, p.offsets.length);
+      markFade(p.el);
+    }
+  }
+
+  function startPaging() {
+    if (pageTimer) clearInterval(pageTimer);
+    pageTimer = setInterval(advancePages, PAGE_MS);
   }
 
   function applyView() {
@@ -689,9 +825,11 @@
     Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
       d.classList.toggle('is-active', d.getAttribute('data-view') === view);
     });
-    /* Row trimming depends on the box each list actually got, which only
-       exists once the view is displayed. */
-    if (data) markScrollable();
+    /* Which regions overflow depends on the box each one actually got, which
+       only exists once the view is displayed. Page positions are cleared
+       rather than kept, so a view always opens at the top of its lists instead
+       of wherever it was left the last time it came round. */
+    if (data) { pageIndex = {}; refreshPaging(); }
   }
 
   function toggleView() {
@@ -876,6 +1014,7 @@
 
   showState('loading-state');
   startClock();
+  startPaging();
   fetchFeed();
   bootCheck();
 })();

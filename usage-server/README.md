@@ -485,16 +485,54 @@ that workflow's steps alongside them.
 ## Endpoints
 
 - `GET /usage` — the full snapshot, including the `stats` block (see
-  [Claude Code's own stats rollup](#claude-codes-own-stats-rollup))
+  [Claude Code's own stats rollup](#claude-codes-own-stats-rollup)). Served
+  from the cache that the background rebuild refreshes every
+  `CLAUDE_USAGE_REFRESH_MS` (10s by default) - it is not rebuilt per request.
+  If a rebuild is failing (see `/health` below) this keeps serving the last
+  snapshot that DID build successfully, however old; it only answers a 5xx
+  - with an `error` body naming the failure, never a bare `null` - if no
+  rebuild has EVER succeeded, i.e. there is nothing to serve at all.
 - `GET /usage?at=<epoch-ms | ISO timestamp>` — the snapshot as it would have
   been at that moment, rebuilt on demand and never cached. Windows are capped at
   the given time, so it does not count usage from after it. Useful for comparing
   a past moment against a timestamped screenshot.
-- `GET /health` — liveness plus the last build time
+- `GET /health` — what the monitoring endpoint promises: not just "is the
+  process alive" but "is the feed actually saying something true". It reports
+  one of three states, and does not collapse them into each other:
+  - `{"ok":true,"state":"healthy",...}` — a snapshot exists and the most
+    recent rebuild succeeded.
+  - `{"ok":true,"state":"stale","generatedAt":<last good build>,"error":<message>}`
+    — a snapshot built successfully at some point, but the most recent
+    rebuild(s) have failed since (for example, limits.json was hand-edited
+    into a shape the server can't use - see
+    [The weekly anchor](#the-weekly-anchor) above for the field most likely
+    to be missing). The feed keeps serving that last
+    good snapshot, so `ok` stays `true`: the data being shown is real, just
+    ageing, and a monitor paging someone over a still-working feed would be
+    its own bug. `error` and the unchanging `generatedAt` are there for
+    anyone who wants to notice the staleness and go fix the config, or for a
+    dashboard that wants to alert on `state !== "healthy"` specifically.
+  - `{"ok":false,"state":"unbuilt","generatedAt":null,"error":<message>}` —
+    no rebuild has ever succeeded; there is nothing behind the feed. This is
+    the one state a monitor should treat as down.
+
+  `generatedAt` is the timestamp of the most recent snapshot that actually
+  built, or `null` only in the `unbuilt` state. `error` is the most recent
+  rebuild failure's message, or `null` when `state` is `healthy`.
 - `GET /usagehtml` — **a human-readable debug page**: both windows with their
   full token breakdown and per-model split, every session, workflow and subtask
   as a table, and the config actually in force. An addition alongside `/usage`,
   which is unchanged and remains what the widget reads. Self-refreshes every 30s.
+
+`test/http.test.js` covers the malformed-request handling above plus the
+`stale`/`unbuilt` `/health` states, spawning three short-lived servers of its
+own. Two more overrides exist purely for that, in the same style as
+`CLAUDE_USAGE_PROJECTS_DIR` and friends above, both unset in normal use:
+`CLAUDE_USAGE_CONFIG_PATH` points `limits.json` at a fixture, so a test can
+exercise one broken the way [the weekly anchor](#the-weekly-anchor) can be
+without ever touching the real file, and `CLAUDE_USAGE_REFRESH_MS` shortens
+the background rebuild's cadence so a test can wait out a rebuild in
+milliseconds rather than the real 10s.
 
 ## Cost
 

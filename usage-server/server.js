@@ -29,7 +29,11 @@ const CLAUDE_DIR = path.join(HOME, '.claude');
    directory. Unset in normal use. */
 const PROJECTS_DIR = process.env.CLAUDE_USAGE_PROJECTS_DIR ||
   path.join(CLAUDE_DIR, 'projects');
-const CONFIG_PATH = path.join(__dirname, 'limits.json');
+/* Same reasoning as PROJECTS_DIR above: a fixture path lets a test exercise a
+   broken limits.json (e.g. one missing weeklyAnchor) without ever touching
+   the real file operators hand-edit. Unset in normal use. */
+const CONFIG_PATH = process.env.CLAUDE_USAGE_CONFIG_PATH ||
+  path.join(__dirname, 'limits.json');
 /* Same reasoning as PROJECTS_DIR above: fixtures go through this override so a
    test never reads (or worse, requires) the developer's real stats-cache.json. */
 const STATS_FILE = process.env.CLAUDE_USAGE_STATS_FILE ||
@@ -43,7 +47,12 @@ const SESSION_BLOCK_MS = 5 * 60 * 60 * 1000; /* the "current session" is a 5-hou
    that is an upper bound, since the timer's rebuild neither serialises nor
    sends. The widget polls on the same interval, so the two together bound the
    lag at roughly 20s rather than 40s. */
-const REFRESH_MS = 10000;                    /* how often the index is rebuilt */
+/* Overridable so a test can wait out a background rebuild in well under a
+   second instead of the real 10s cadence - needed to exercise the STALE
+   /health state, which only appears after a rebuild has actually run and
+   failed on the timer, not via the on-demand ?at= path. Unset in normal use. */
+const REFRESH_MS = Number(process.env.CLAUDE_USAGE_REFRESH_MS) || 10000;
+                                               /* how often the index is rebuilt */
 const MAX_WORKFLOWS = 24;
 const MAX_SUBTASKS = 40;
 const MAX_SESSIONS = 20;
@@ -86,6 +95,11 @@ const fileState = new Map(); /* path -> { size, mtime, records: [] } */
 
 let snapshot = null;
 let lastQuota = null; /* most recent 429 quotaLimits record seen, if any */
+/* Message of the most recent FAILED rebuild attempt, or null if the most
+   recent attempt succeeded. This is what lets /health tell a snapshot that
+   simply hasn't refreshed apart from one that is refreshing and failing -
+   see the /health handler below for the three states this drives. */
+let lastRebuildError = null;
 
 /* Anthropic's own figures, refreshed on their own slower timer. The index
    rebuilds every 20s but this is an undocumented endpoint on someone else's
@@ -1053,13 +1067,26 @@ function rebuild() {
   const started = Date.now();
   try {
     snapshot = build();
+    /* A rebuild that succeeds clears any earlier failure - the config (or
+       whatever threw) is evidently fine again. Leaving a stale error behind
+       here would be its own version of this task's bug: /health lying about
+       the current state instead of just the current numbers. */
+    lastRebuildError = null;
     if (process.env.CLAUDE_USAGE_VERBOSE) {
       console.log(`rebuilt in ${Date.now() - started}ms  ` +
         `sessions=${snapshot.counts.sessions} workflows=${snapshot.counts.workflows} ` +
         `subtasks=${snapshot.counts.subtasks}`);
     }
   } catch (err) {
+    /* This used to be the whole handler: log to stderr - which
+       start-hidden.vbs discards - and otherwise do nothing, leaving
+       `snapshot` at whatever it was before (null at boot, since this can
+       fire on the very first rebuild if e.g. limits.json is missing a field
+       weeklyWindow() needs). /health and /usage read `snapshot` and
+       `lastRebuildError` below, not this catch block, so recording the
+       failure here is what makes both endpoints able to tell the truth. */
     console.error('rebuild failed:', err.message);
+    lastRebuildError = err.message;
   }
 }
 
@@ -1092,8 +1119,43 @@ const server = http.createServer((req, res) => {
     }
 
     if (req.url === '/health') {
+      /* Three states this feed can be in, and the bug this endpoint exists
+         to fix was collapsing all three into a blanket {ok:true}:
+
+           (a) healthy - a snapshot exists and the most recent rebuild
+               attempt succeeded. The common case.
+           (b) stale   - a snapshot exists (some earlier rebuild succeeded)
+               but the most recent rebuild attempt(s) have failed since, so
+               the numbers being served are real but ageing - e.g. someone
+               hand-edited limits.json into a shape weeklyWindow() cannot
+               use, and every rebuild since has thrown. The feed is still
+               genuinely useful here: it is showing real, if slightly
+               stale, data, not nothing.
+           (c) unbuilt - no snapshot has EVER been produced; `snapshot` is
+               still at its boot value of null. There is nothing behind the
+               feed. This is the exact state the bug produced: /usage
+               answering 200 with the literal 4-byte body `null` while
+               /health answered {ok:true}.
+
+         Decision: `ok` is false ONLY for (c) - there is nothing to serve,
+         which is the one state where a monitor SHOULD treat this as down.
+         (b) keeps `ok:true` because the feed is still working and serving
+         real numbers; a monitor that pages someone at 3am because a
+         still-working feed's LAST rebuild attempt failed, while a perfectly
+         good snapshot from minutes ago is being served, would be a bug of
+         its own. (b) is not silently equated with (a) either, though:
+         `state` says "stale" (not "healthy") and `error` names the failing
+         rebuild, so anyone who wants to alert on staleness specifically -
+         or just go fix limits.json - can see it without it reading as an
+         outage. */
+      const healthState = !snapshot ? 'unbuilt' : (lastRebuildError ? 'stale' : 'healthy');
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, generatedAt: snapshot ? snapshot.generatedAt : null }));
+      res.end(JSON.stringify({
+        ok: healthState !== 'unbuilt',
+        state: healthState,
+        generatedAt: snapshot ? snapshot.generatedAt : null,
+        error: lastRebuildError
+      }));
       return;
     }
     if (req.url === '/' || req.url.startsWith('/usage')) {
@@ -1128,6 +1190,21 @@ const server = http.createServer((req, res) => {
            snapshot below, same as if ?at= had been absent. */
       }
       if (!snapshot) rebuild();
+      /* Even after that attempt, `snapshot` can still be null: state (c)
+         above, nothing has ever built successfully. Serving 200 with the
+         four-byte body `null` here is exactly the bug this task fixes - a
+         caller doing `JSON.parse(body).session` gets a TypeError, or worse,
+         a falsy-but-"successful" read that looks like zero usage. Answer a
+         5xx that names the failure instead, so a caller can tell "nothing
+         built yet" apart from "here is a real snapshot". */
+      if (!snapshot) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'no snapshot has ever been built' +
+            (lastRebuildError ? ': ' + lastRebuildError : '')
+        }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(snapshot));
       return;

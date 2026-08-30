@@ -209,30 +209,39 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       Falsification pass, read-only, seven findings — one line each, detail in
       `.claude/tasks/runs.jsonl` (id `server-js-code-review`):
 
-      - **Finding 1** (critical) server.js:1097 — one malformed `?at=` query
-        string throws uncaught out of the HTTP handler and kills the process;
-        no restart supervision until next logon. → `fix-usage-server-request-handler-crash`
-      - **Finding 2** (high) server.js:838-842 — live-run staleness is judged
+      - **Finding 1** (critical) — FIXED in `5d05fe1`. server.js:1097: one
+        malformed `?at=` query string threw uncaught out of the HTTP handler
+        and killed the process; no restart supervision until next logon. A
+        malformed escape is now answered 400 and anything else 500, with an
+        `uncaughtException` net behind both. `test/http.test.js` is new and
+        covers it. → `fix-usage-server-request-handler-crash`
+      - **Finding 2** (high, still open) server.js:838-842 — live-run staleness is judged
         on the run directory's mtime, which NTFS does not move on an append, so
         a long-running fanned-out workflow drops out at 15 minutes while still
         writing. → `fix-live-run-staleness-uses-dir-mtime`
-      - **Finding 3** (high) server.js:462-484 — a record torn across a read
+      - **Finding 3** (high, still open) server.js:462-484 — a record torn across a read
         boundary is permanently lost: the byte cursor advances past it and
         never revisits. → `fix-incremental-index-torn-line-loss`
-      - **Finding 4** (high) server.js:1061-1063 — a failed rebuild is
-        invisible: `/usage` serves literal `null` with 200 and `/health`
-        reports `ok:true`. → `surface-rebuild-failure-in-health`
-      - **Finding 5** (medium) server.js:213-223 — `watchCredentials` resets
+      - **Finding 4** (high) — FIXED in this change. server.js:1061-1063: a
+        failed rebuild was invisible - `/usage` served literal `null` with 200
+        and `/health` reported `ok:true`. `/health` now reports three states
+        rather than one: `healthy`, `stale` (a snapshot exists but rebuilds are
+        failing - stays `ok:true`, because the data is real if ageing and
+        paging on a still-working feed is its own bug) and `unbuilt`
+        (`ok:false`, nothing has ever built). `/usage` answers 503 naming the
+        failure instead of `200 null` in that last case.
+        → `surface-rebuild-failure-in-health`
+      - **Finding 5** (medium, still open) server.js:213-223 — `watchCredentials` resets
         rate-limit backoff unconditionally on any `.credentials.json` write,
         including the server's own token-rotation writes, twice per rotation.
         → `fix-official-backoff-reset-on-credentials-write`
-      - **Finding 6** (medium, evidence gap — latent, not currently firing:
+      - **Finding 6** (medium, still open, evidence gap — latent, not currently firing:
         every `quotaLimits` record observed in the wild is `five_hour`, so the
         defect has no `seven_day` record to trigger it yet) server.js:430-437
         — `lastQuota` keeps whichever record has the farthest-future
         `resetsAt` rather than the most recently seen one.
         → `fix-lastquota-most-recent-not-max-resetsat`
-      - **Finding 7** (low, certain) server.js:727/1044-1045 —
+      - **Finding 7** (low, still open, certain) server.js:727/1044-1045 —
         `workflowsSeen`/`subtasksSeen` are counted from the already-sliced
         arrays, so the diagnostic can never report truncation past the cap.
         → `fix-seen-counts-taken-after-slice`

@@ -975,6 +975,28 @@ function pagingFixture() {
   f.sessions = buildRows(PAGING_ROWS, 'session');
   return f;
 }
+
+/* No list caps here: renderModels() emits one row per key in byModel with no
+   MAX_ROWS, so a fixture with many models is the only way `.mdl` - a single
+   <table> child of `.col` - ever grows taller than the box itself. The live
+   feed only ever carries a handful of models, so this shape does not occur
+   without deliberately building it. */
+const MANY_MODELS = 30;
+function manyModelByModel() {
+  const by = {};
+  for (let i = 0; i < MANY_MODELS; i++) {
+    by['claude-model-' + i + '-20260101'] = {
+      messages: 3 + i, output: 1000 + i * 777, weighted: MANY_MODELS - i
+    };
+  }
+  return by;
+}
+function manyModelsFixture() {
+  const f = fullStatsFixture();
+  f.session.tokens.byModel = manyModelByModel();
+  f.weekly.tokens.byModel = manyModelByModel();
+  return f;
+}
 function shortFixture() {
   const f = fullStatsFixture();
   f.workflows = buildRows(2, 'workflow');
@@ -1011,11 +1033,32 @@ const SAMPLER = `<script>
       }
       var visible = [];
       var base = el.children.length ? el.children[0].offsetTop : 0;
+      /* A child taller than the box (e.g. .mdl, one <table> per model with no
+         cap) has no boundary of its own past its top, so "the child started"
+         is not "its content is reachable" - the rows living INSIDE it are the
+         thing that actually has to surface. Measured by rect, not offsetTop,
+         because the repeated rows are grandchildren (table > tbody > tr), an
+         extra level offsetTop-from-base does not walk through. */
+      var deep = [];
+      var deepTotal = {};
+      var elRect = el.getBoundingClientRect();
       for (var r = 0; r < el.children.length; r++) {
         var c = el.children[r];
         var t = c.offsetTop - base;
         if (t >= el.scrollTop - 0.5 &&
             t + c.offsetHeight <= el.scrollTop + el.clientHeight + 0.5) visible.push(r);
+        if (c.offsetHeight > el.clientHeight + 0.5) {
+          var host = c;
+          while (host.children.length === 1) host = host.children[0];
+          deepTotal[r] = host.children.length;
+          for (var g = 0; g < host.children.length; g++) {
+            var gr = host.children[g].getBoundingClientRect();
+            var gTop = gr.top - elRect.top + el.scrollTop;
+            var gBottom = gTop + gr.height;
+            if (gTop >= el.scrollTop - 0.5 &&
+                gBottom <= el.scrollTop + el.clientHeight + 0.5) deep.push(r + '.' + g);
+          }
+        }
       }
       out.push({
         id: el.id || el.getAttribute('data-page-key'),
@@ -1026,6 +1069,8 @@ const SAMPLER = `<script>
         dots: pg ? pg.children.length : 0,
         activeDot: active,
         visible: visible,
+        deep: deep,
+        deepTotal: deepTotal,
         fade: box ? box.classList.contains('can-scroll') : null
       });
     }
@@ -1043,11 +1088,11 @@ const SAMPLER = `<script>
 })();
 </script>`;
 
-function writePagingPage(name, taps, fixture, mutate, srcMutate) {
+function writePagingPage(name, taps, fixture, mutate, srcMutate, sampleStep, sampleCount) {
   const inject = html => {
     const withSampler = html.replace('</head>', SAMPLER
-      .replace('__SAMPLE_COUNT__', String(SAMPLE_COUNT))
-      .replace('__SAMPLE_STEP__', String(SAMPLE_STEP)) + '</head>');
+      .replace('__SAMPLE_COUNT__', String(sampleCount || SAMPLE_COUNT))
+      .replace('__SAMPLE_STEP__', String(sampleStep || SAMPLE_STEP)) + '</head>');
     return mutate ? mutate(withSampler) : withSampler;
   };
   /* srcMutate breaks what the widget DOES rather than how it looks - see
@@ -1056,8 +1101,9 @@ function writePagingPage(name, taps, fixture, mutate, srcMutate) {
   return writePageWithMutatedScript(name, taps, fixture, srcMutate, inject);
 }
 
-function renderPaging(page) {
-  const budget = PRE_TAP_MS + POST_TAP_MS + SAMPLE_STEP * SAMPLE_COUNT + 2000;
+function renderPaging(page, sampleStep, sampleCount) {
+  const budget = PRE_TAP_MS + POST_TAP_MS +
+    (sampleStep || SAMPLE_STEP) * (sampleCount || SAMPLE_COUNT) + 2000;
   const args = [
     '--headless', '--disable-gpu', '--hide-scrollbars', '--no-sandbox',
     '--no-first-run', '--no-default-browser-check', '--disable-extensions',
@@ -1088,9 +1134,11 @@ function byScroller(samples) {
     const r = out[s.id] || (out[s.id] = {
       id: s.id, rows: s.rows, clientHeight: s.clientHeight, maxScroll: s.maxScroll,
       dots: s.dots, seen: new Set(), offsets: new Set(), states: [], reachedBottom: false,
-      fadeAtBottom: null
+      fadeAtBottom: null, deepSeen: new Set(), deepTotal: {}
     });
     s.visible.forEach(v => r.seen.add(v));
+    (s.deep || []).forEach(v => r.deepSeen.add(v));
+    Object.assign(r.deepTotal, s.deepTotal || {});
     r.offsets.add(s.scrollTop);
     r.states.push({ scrollTop: s.scrollTop, activeDot: s.activeDot, fade: s.fade });
     if (s.scrollTop === s.maxScroll && s.maxScroll > 0) {
@@ -1161,6 +1209,60 @@ const DETAIL_TAPS = VIEWS.indexOf('detail');
   }
 }
 
+/* ------------------------------------------------------------- tokens paging
+
+   The Activity checks above only ever exercise `.list ul`, where every child
+   is one row shorter than the box. `.cols .col` is the other scroller
+   ClaudeUsage.css pages, and its shape is different: h2, .col-sub, table.tok,
+   .col-note, table.mdl - five children, and .mdl is a SINGLE child whose row
+   count is renderModels()'s `Object.keys(t.byModel).length`, uncapped. A
+   fixture carrying enough models (MANY_MODELS) makes .mdl itself taller than
+   the box, which the Activity fixtures never do - so this is the only path
+   that reaches the bug the pager had: a child taller than clientHeight
+   contributed exactly one offset (its own top), and everything below
+   top+clientHeight inside it was unreachable no matter how long paging ran. */
+const TOKENS_TAPS = VIEWS.indexOf('tokens');
+/* .mdl's own row height is much smaller than an activity li, so MANY_MODELS
+   rows need more page-dwells to cycle through than the Activity fixture's 40
+   rows do - sampled generously rather than tuned to a measured page count,
+   so a future MANY_MODELS change does not silently starve this window. */
+const TOKENS_SAMPLE_STEP = SAMPLE_STEP;
+const TOKENS_SAMPLE_COUNT = 60;
+console.log('paging — a column with more models than fit still reaches the last one:');
+{
+  const r = renderPaging(
+    writePagingPage('paging-tokens', TOKENS_TAPS, manyModelsFixture(), null, null,
+      TOKENS_SAMPLE_STEP, TOKENS_SAMPLE_COUNT),
+    TOKENS_SAMPLE_STEP, TOKENS_SAMPLE_COUNT);
+  check('the Tokens view sampled itself over several page dwells',
+    r.error ? r.error : true, true);
+  if (!r.error) {
+    const cols = byScroller(r.samples);
+    const ids = Object.keys(cols);
+    check('both token columns were found scrolling', ids.length, 2);
+
+    ids.forEach(id => {
+      const c = cols[id];
+      /* The oversized child is `.mdl` at column index 4 (h2, col-sub, tok,
+         col-note, mdl); deepTotal is only populated for a child that did not
+         fit, so this also confirms the fixture actually produced one. */
+      const total = c.deepTotal[4];
+      check(`${id}: .mdl was measured as an oversized child`, total > 0, true);
+      if (total) {
+        const missing = [];
+        for (let g = 0; g < total; g++) if (!c.deepSeen.has('4.' + g)) missing.push(g);
+        check(`${id}: every one of .mdl's ${total} rows became fully readable`,
+          missing.length ? `never fully visible: ${missing.join(',')}` : true, true);
+      }
+
+      check(`${id}: the last page reaches the bottom of the content`,
+        c.reachedBottom, true);
+      check(`${id}: the fade is off once the bottom is reached`,
+        c.fadeAtBottom, false);
+    });
+  }
+}
+
 console.log('the paging checks are not vacuous:');
 {
   /* A row taller than its own box can never be fully visible on any page, so
@@ -1178,6 +1280,35 @@ console.log('the paging checks are not vacuous:');
   check('a row taller than its box trips the reachability check',
     r.error ? `render failed: ${r.error}` : missing.length > 0, true);
   if (missing.length) console.log(`        caught ${missing.length} unreachable row(s): ${missing.join(',')}`);
+}
+{
+  /* The 400px-row mutation above proves the reachability check fires for
+     `.list ul`, where every child is one row shorter than the box. It proves
+     nothing about a DIRECT child taller than the box, which is the shape
+     `.mdl` actually has - so this disables pageOffsets()'s recursive descent
+     into an oversized child's own children (every collect() call is forced
+     to treat its node as a leaf, regardless of height), leaving only the
+     flat clientHeight-step fallback to reach through .mdl. That fallback
+     alone cuts rows at unaligned seams - MEASURED, it left exactly one model
+     row (of the 31) never fully on screen on any page before recursion was
+     added - so the Tokens reachability check above MUST fail against it. */
+  const page = writePagingPage('mutation-tall-child-not-recursed', TOKENS_TAPS, manyModelsFixture(),
+    null, src => src.replace(
+      'if (node.offsetHeight <= el.clientHeight + 0.5 || !kidsN.length) {',
+      'if (true) {'),
+    TOKENS_SAMPLE_STEP, TOKENS_SAMPLE_COUNT);
+  const r = renderPaging(page, TOKENS_SAMPLE_STEP, TOKENS_SAMPLE_COUNT);
+  const cols = r.error ? {} : byScroller(r.samples);
+  const ids = Object.keys(cols);
+  const missing = [];
+  ids.forEach(id => {
+    const total = cols[id].deepTotal[4];
+    if (!total) return;
+    for (let g = 0; g < total; g++) if (!cols[id].deepSeen.has('4.' + g)) missing.push(`${id}:${g}`);
+  });
+  check('a child taller than its box, stepped through no further, trips the .mdl reachability check',
+    r.error ? `render failed: ${r.error}` : missing.length > 0, true);
+  if (missing.length) console.log(`        caught ${missing.length} unreachable .mdl row(s)`);
 }
 {
   /* Restores the pre-fix heading: a loose text node beside the dots is an

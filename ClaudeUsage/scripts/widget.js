@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.13.0';
+  var WIDGET_VERSION = '1.13.1';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -751,19 +751,71 @@
      the fold - paging by a flat clientHeight step would cut one in half at
      every boundary, since the rows do not divide the box evenly (7.2 of them
      fit). The last offset is clamped flush to the bottom so the final page is
-     full rather than a lone row above blank space. */
+     full rather than a lone row above blank space.
+
+     A DIRECT child can itself be taller than clientHeight - e.g. .mdl, a
+     single <table> with one row per model and no cap. Landing on such a
+     child's own top is not enough: everything below top+clientHeight
+     *inside* that child would have no boundary to snap to. So a child that
+     does not fit is expanded into its own children, recursively, exactly as
+     if THEY were being paged directly - down to whichever level finally has
+     pieces that fit (table > tbody > tr for .mdl), which is what keeps a
+     model row from being sliced across a page the same way an activity row
+     never is. Only a leaf with no children left to expand into, and still
+     taller than the box, falls back to a bounded clientHeight step through
+     it - there is truly nothing finer to land on there.
+
+     Measured by getBoundingClientRect() relative to el's own rect, not by
+     offsetTop: a boundary two levels down (a <tr>) does not share el as its
+     offsetParent the way el's direct children do, so offsetTop values from
+     different levels are not comparable. Read at a scrollTop reset to 0,
+     because .cols .col opens with a `position: sticky` <h2> that stays
+     pinned to the same screen position at any scroll offset - MEASURED:
+     a rect taken while scrolled away from the top would not reflect a
+     sticky child's real position in the content, and would misplace every
+     offset computed from it. The real scroll position is restored before
+     anything else runs. */
   function pageOffsets(el) {
     var kids = el.children;
     if (!kids.length) return [0];
     var max = el.scrollHeight - el.clientHeight;
-    var base = kids[0].offsetTop;
+    var savedScrollTop = el.scrollTop;
+    el.scrollTop = 0;
+    var elTop = el.getBoundingClientRect().top;
+    var boundaries = [];
+    function collect(node) {
+      var kidsN = node.children;
+      if (node.offsetHeight <= el.clientHeight + 0.5 || !kidsN.length) {
+        var r = node.getBoundingClientRect();
+        boundaries.push({ top: r.top - elTop, height: r.height });
+        return;
+      }
+      for (var i = 0; i < kidsN.length; i++) collect(kidsN[i]);
+    }
+    for (var i = 0; i < kids.length; i++) collect(kids[i]);
+    el.scrollTop = savedScrollTop;
+    /* A line of inline content can render with its rect starting a hair
+       above el's own padding-box top (font-metric overshoot, MEASURED at a
+       consistent -1px here) - normalizing every boundary against the first
+       one, rather than against el's rect directly, cancels that constant
+       exactly the way the old base-from-kids[0] subtraction did. */
+    if (boundaries.length) {
+      var base = boundaries[0].top;
+      for (var b = 0; b < boundaries.length; b++) boundaries[b].top -= base;
+    }
+
     var offsets = [0];
     var top = 0;
-    for (var i = 0; i < kids.length; i++) {
-      var t = kids[i].offsetTop - base;
-      if (t + kids[i].offsetHeight > top + el.clientHeight + 0.5) {
+    for (var i = 0; i < boundaries.length; i++) {
+      var t = boundaries[i].top;
+      var bottom = t + boundaries[i].height;
+      if (bottom > top + el.clientHeight + 0.5) {
         top = t;
-        offsets.push(Math.min(t, max));
+        offsets.push(Math.min(top, max));
+        while (bottom > top + el.clientHeight + 0.5) {
+          top += el.clientHeight;
+          offsets.push(Math.min(top, max));
+        }
       }
     }
     /* Clamping can collapse the last two boundaries onto the same offset. */

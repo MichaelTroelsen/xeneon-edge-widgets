@@ -1,24 +1,46 @@
 # Handoff - Xeneon Edge widgets
 
-Written 2026-08-30 at HEAD `7084246`, with the tree CLEAN and everything pushed.
-Replaces the version written at `eb90dc3`, every item of which is now closed.
-
 Repo: `C:\Users\mit\claude\icue` -> https://github.com/MichaelTroelsen/xeneon-edge-widgets
 (public, `main`). Two iCUE HTML widgets for a Corsair Xeneon Edge, plus a local
 feed server that supplies one of them.
 
-**Versions, measured at the time of writing rather than remembered:**
+**THIS FILE STATES NO FACT THAT A COMMAND CAN ANSWER.** No HEAD, no version
+numbers, no pids, no check counts, no open-task list. Every one of those has
+gone stale here - three times in one day, the last time within TWO COMMITS of a
+rewrite that followed the rule this file used to prescribe: written last, at a
+clean tree, every figure measured minutes before writing. Five of them were
+wrong anyway.
 
-| | repo | installed on the device |
-|---|---|---|
-| C64 Weather | 1.5.4 | 1.5.4 - matches, do not re-add |
-| Claude Code Usage | **1.12.0** | **1.11.0** - one behind, has no self-paging lists |
+That was never carelessness. It is what happens because work continues, which it
+always does, so no amount of care fixes it. The volatile half is now a set of
+commands instead. Run them. Do not trust a number written down anywhere,
+this file included.
 
-**This file is written LAST, at a clean tree, after everything else is
-committed.** It went stale within the hour three times in one session by being
-written mid-drain, and the previous revision still claimed the device was on
-1.10.0 against a repo at 1.11.0 when both figures had moved. If you are reading
-this and the tree is dirty, the file is already older than the work.
+## Measure the current state first
+
+```bash
+git log --oneline -5 && git status -sb          # HEAD, and whether the tree is clean
+
+# repo versions
+node -e "for (const p of ['ClaudeUsage','C64Weather']) console.log(p, require('./'+p+'/manifest.json').version)"
+# device versions - the pair that has gone stale most often. iCUE's page cache
+# means the FOLDER is not proof of what is running; confirm from the rendered
+# page (capture DISPLAY2, see the device note below) before believing it.
+ls C:/Users/mit/AppData/Roaming/Corsair/CUE5/html_widgets/*/manifest.json
+
+curl -s http://127.0.0.1:41777/health           # feed state
+netstat -ano | grep 41777 | grep LISTENING      # and its pid
+
+for t in usage-server/test/*.test.js ClaudeUsage/test/*.test.js C64Weather/test/*.test.js; do
+  printf '%-44s ' "$t"; node "$t" >/dev/null 2>&1 && echo OK || echo FAIL
+done
+```
+
+And `/whattask --dry-run` for what is open and what blocks it - the plan file
+plus the run log are the only current answer to that, never this document.
+
+Everything below is the part that does not go stale: what was decided, what was
+measured once and still holds, and the traps that cost real time.
 
 <original_task>
 The session opened with **"read what next"**. Everything after came from the
@@ -79,9 +101,11 @@ in half at every boundary. The fade now means "there is more below THIS PAGE"
 and goes out on the last one; a dot per page rides in the heading, costing no
 vertical space.
 
-Layout suite 27 -> 51 checks, asserting per list that every one of its 40 rows
-becomes fully readable, that the last page reaches the bottom, that the fade is
-off there, and that the lit dot is the page actually shown.
+The layout suite gained a whole section for it, asserting per list that every
+row becomes fully readable at some page, that the last page reaches the bottom,
+that the fade is off there, and that the lit dot is the page actually shown -
+sampling the rendered page over virtual time rather than asserting on the
+pager's arithmetic, because the arithmetic was not what broke.
 
 ## The server.js review is CLOSED: seven findings, seven fixed
 
@@ -105,48 +129,47 @@ This session took the last three:
 
 Six further candidates were falsified and are recorded as negative results.
 
-## Tests, all measured at HEAD
+## Tests
 
-| suite | checks |
-|---|---|
-| `usage-server/test/http.test.js` | **94** (49 -> 56 -> 61 -> 69 -> 94 this session) |
-| `usage-server/test/stats.test.js` | 47 |
-| `usage-server/test/statusline.test.js` | 35 |
-| `usage-server/test/live-detection.test.js` | 25 |
-| `ClaudeUsage/test/layout.test.js` | **51** (was 27) |
-| `C64Weather/test/theme.test.js` | 54 |
-| `C64Weather/test/font.test.js` | 26 |
-| `C64Weather/test/layout.test.js` | renders 7 themes, measures every box |
+Every suite is wired into `.github/workflows/tests.yml` as its own step. The
+loop in the command block above runs them all; each prints its own count and
+ends with `all passed`.
 
-All wired into `.github/workflows/tests.yml`, each as its own step.
+No count is written here on purpose. `usage-server/README.md` used to state them
+in prose and they drifted twice in two commits, which is why ce8e4bf replaced
+those numbers with descriptions of what each suite COVERS - the same argument
+this file is now applying to itself.
+
+What is worth knowing and does not drift: `http.test.js` is the largest and most
+active, and is the meta one - it carries the check that cross-references
+`usage-server/README.md`'s `CLAUDE_USAGE_*` names against what server.js
+actually reads, in both directions. `ClaudeUsage/test/layout.test.js` and
+`C64Weather/test/layout.test.js` drive real headless Chrome and measure boxes,
+so they are the slow ones and the ones that catch what no DOM assertion can.
 </work_completed>
 
 <work_remaining>
 
-**Everything open is in `.claude/tasks/whattask.json`, keyed to `642f80a`
-(one commit behind HEAD, docs-only drift). THREE tasks, ALL blocked on the
-human.** There is no ready agent work left in the plan.
+**Run `/whattask --dry-run`.** The plan file and the run log are the only
+current answer; a list written here is wrong within about two commits, which is
+the whole reason this file was restructured.
 
-- **`reload-widgets-for-1-12-0`** (requires-user). The device reads 1.11.0
-  against a repo at 1.12.0, so it does NOT have the self-paging lists. Re-add
-  ONLY Claude Code Usage; C64 Weather matches at 1.5.4 and re-adding it costs a
-  properties reset for no gain. Confirm from the RENDERED page - iCUE's page
-  cache means the installed folder is not proof. Expect a third GUID folder;
-  two already exist from earlier re-adds and are harmless.
-- **`verify-paging-on-device`** (requires-user, depends on the above). **This
-  one matters more than it looks.** Every claim about the pager was measured in
-  headless Chrome, and this device has already diverged from a browser once -
-  that divergence is why the feature exists. The pager moves `scrollTop`
-  programmatically; nothing yet proves the webview honours a programmatic
-  scroll on an `overflow-y: auto` element when it refuses a touch drag. If it
-  does not, the lists sit frozen on page 1 with the dots advancing underneath
-  them, **which looks like working software from a distance**. Check that the
-  ROWS change, not just the dots. Fallback if they do not: page by translating
-  the list content rather than by `scrollTop`.
-- **`replace-prose-check-counts-in-usage-server-readme`** (requires-user). An
-  editorial call: keep the prose check-counts and keep correcting them, or drop
-  them for language about each suite's shape. Evidence for dropping is in the
-  task and below.
+One durable caution that belongs with the work rather than with the status,
+because it is a technical trap rather than a state of play:
+
+**`verify-paging-on-device` cannot be answered by watching the dots.** The pager
+moves `scrollTop` PROGRAMMATICALLY. Touch drags are known not to be forwarded
+(see the finding above); nothing yet proves the webview honours a programmatic
+scroll on an `overflow-y: auto` element either. If it does not, the lists sit
+frozen on page one while the dot indicator advances underneath them - which
+looks like working software from across the room. **Check that the ROWS change.**
+The recorded fallback, if they do not, is to page by translating the list
+content rather than by `scrollTop`.
+
+It also cannot be observed on an idle machine BY DESIGN: a region that fits
+never pages, and the Activity lists only overflow when work is actually in
+flight. It wants doing during a `/runqueue` or `/runbatch` fan-out - which is
+the same command that would otherwise be draining the plan.
 
 </work_remaining>
 
@@ -284,9 +307,8 @@ measures a page where the widget never ran.
 ## The task pipeline
 
 `.claude/tasks/` holds `whattask.json` (keyed to a HEAD sha), `runs.jsonl`
-(append-only, **50 lines**, last-line-per-id wins), `decisions.jsonl` (**6
-lines**, outranks the plan) and `serial.lock` (a JSON array of holder records)
-with a `serial.lock.d` mutex. **The whole `/.claude/` tree is gitignored**, so
+(append-only, last-line-per-id wins), `decisions.jsonl` (outranks the plan) and
+`serial.lock` (a JSON array of holder records) with a `serial.lock.d` mutex. **The whole `/.claude/` tree is gitignored**, so
 none of it is committed and a task that only writes there leaves the git tree
 clean.
 
@@ -322,21 +344,32 @@ In `.claude/tasks/decisions.jsonl`:
 
 <current_state>
 
-- HEAD `7084246` == `origin/main`. **Working tree CLEAN.**
-- `.claude/tasks/serial.lock` is an empty array - no locks held, no cycle in flight.
-- The feed is **healthy**: pid **58812**, `/health` reads
-  `{"ok":true,"state":"healthy","error":null}` with `generatedAt` 16:11 today.
-- All eight suites pass at HEAD, counts as tabled above.
+Measure it with the command block at the top of this file - HEAD, tree, both
+widgets' versions, the feed's health and pid, and the suites. Nothing here.
 
-## Deliverable status
+## What is built
+
+Stated as capability rather than as status, since capability does not drift:
 
 | | |
 |---|---|
-| C64 Weather (themes, boot, machine art, fonts) | COMPLETE and on the device |
-| Usage widget: five views | COMPLETE, on the device at 1.11.0 |
-| Usage widget: self-paging lists | COMPLETE in repo (1.12.0), **NOT on the device** |
-| server.js review | **COMPLETE - 7 findings, 7 fixed** |
-| Feed `stats` block | COMPLETE and live |
+| C64 Weather | seven themes, boot sequence, machine art, fonts - feature-complete |
+| Usage widget | five tap-cycled views, and lists that page themselves |
+| server.js review | seven findings, seven fixed - the review is CLOSED |
+| Feed `stats` block | served from `~/.claude/stats-cache.json`, gated on `version === 5` |
+
+Whether the DEVICE is running any given one of those is a different question,
+and the answer is on the glass, not in this table. Capture it:
+
+```powershell
+Add-Type -AssemblyName System.Drawing
+$b = New-Object System.Drawing.Bitmap 2560,720
+[System.Drawing.Graphics]::FromImage($b).CopyFromScreen(-1881,1440,0,0,$b.Size)
+$b.Save("$env:TEMP\edge.png")
+```
+
+The usage widget prints its own version in its header, so the capture answers
+"what is actually running" in a way the installed folder cannot.
 
 ## Open questions
 

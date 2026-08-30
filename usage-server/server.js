@@ -1074,41 +1074,103 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
 
-  /* Human-readable debug view. An addition alongside /usage, which is
-     deliberately left exactly as the widget expects it. */
-  if (req.url === '/usagehtml' || req.url.startsWith('/usagehtml?')) {
-    if (!snapshot) rebuild();
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(usagehtml.render(snapshot, loadConfig()));
-    return;
-  }
-
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, generatedAt: snapshot ? snapshot.generatedAt : null }));
-    return;
-  }
-  if (req.url === '/' || req.url.startsWith('/usage')) {
-    /* ?at=<epoch ms | ISO> rebuilds as of a past moment, for calibrating
-       against a timestamped screenshot. Never cached. */
-    const q = req.url.indexOf('?') >= 0 ? req.url.slice(req.url.indexOf('?') + 1) : '';
-    const atMatch = /(?:^|&)at=([^&]+)/.exec(q);
-    if (atMatch) {
-      const raw = decodeURIComponent(atMatch[1]);
-      const at = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
-      if (Number.isFinite(at)) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(build(at)));
-        return;
-      }
+  /* Everything below can throw on input we did not anticipate. This used to
+     be unguarded: a single `?at=%` (an incomplete percent-escape) made
+     decodeURIComponent throw synchronously inside this callback, which node
+     has no default recovery for - it tears down the whole process, and
+     start-hidden.vbs launches this with no restart supervision, so the feed
+     and both widgets stayed dead until the next sign-in. One request from
+     one bad `at=` link killed everything. */
+  try {
+    /* Human-readable debug view. An addition alongside /usage, which is
+       deliberately left exactly as the widget expects it. */
+    if (req.url === '/usagehtml' || req.url.startsWith('/usagehtml?')) {
+      if (!snapshot) rebuild();
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(usagehtml.render(snapshot, loadConfig()));
+      return;
     }
-    if (!snapshot) rebuild();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(snapshot));
-    return;
+
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, generatedAt: snapshot ? snapshot.generatedAt : null }));
+      return;
+    }
+    if (req.url === '/' || req.url.startsWith('/usage')) {
+      /* ?at=<epoch ms | ISO> rebuilds as of a past moment, for calibrating
+         against a timestamped screenshot. Never cached. */
+      const q = req.url.indexOf('?') >= 0 ? req.url.slice(req.url.indexOf('?') + 1) : '';
+      const atMatch = /(?:^|&)at=([^&]+)/.exec(q);
+      if (atMatch) {
+        /* atMatch[1] is caller-supplied and still percent-encoded off the
+           wire. decodeURIComponent throws URIError on a malformed escape
+           (a bare "%", "%zz", an unpaired surrogate, ...) - that is the
+           caller sending nonsense, not this server being broken, so it is a
+           4xx answered right here. It must not be allowed to fall into the
+           outer catch below, which exists for OUR bugs and answers 5xx. */
+        let raw;
+        try {
+          raw = decodeURIComponent(atMatch[1]);
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'malformed at= value' }));
+          return;
+        }
+        const at = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
+        if (Number.isFinite(at)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(build(at)));
+          return;
+        }
+        /* Decoded fine but is neither an epoch nor a date Date.parse
+           recognises (e.g. ?at=notadate) - also a caller mistake, not a
+           decode error. Existing behaviour: fall through and serve the live
+           snapshot below, same as if ?at= had been absent. */
+      }
+      if (!snapshot) rebuild();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(snapshot));
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found' }));
+  } catch (err) {
+    /* Reaching here means OUR code threw on a request we thought we handled
+       correctly - not a caller-input problem, which is caught and answered
+       above and never falls through to here. build() is the likeliest
+       source: a transcript/fixture shape this server does not expect. Answer
+       5xx and keep the process alive for the next request, rather than
+       taking the whole feed down over it. */
+    console.error('request handler error:', (err && err.stack) || err);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'internal error' }));
+    } else {
+      res.end();
+    }
   }
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'not found' }));
+});
+
+/* Last-resort net, not the primary fix - the try/catch above is, since it
+   answers the right status code and knows which request failed. This
+   exists for whatever is NOT inside that try/catch: an exception thrown
+   asynchronously (e.g. after res.end() has already returned control, or from
+   a callback the http/net internals invoke outside this request's own call
+   stack) still reaches node as 'uncaughtException' and would otherwise take
+   the whole process down exactly like the bug this task fixes.
+   start-hidden.vbs runs this with no restart supervision (a separate,
+   deliberately out-of-scope change - see the task notes), so for THIS
+   process, staying up in a possibly-degraded state is strictly better than
+   the guaranteed alternative: total silence until the next sign-in. This
+   must not silently swallow - it logs with a stack - and it must not paper
+   over a truly broken process: it does not touch res/req (that request is
+   already lost, and guessing at its state would be the "worse than the
+   crash" bug this task explicitly warns against), it does not retry
+   anything, and rebuild()'s own try/catch plus the 10s setInterval already
+   self-heal the one piece of process-wide state (snapshot) that a stray
+   throw could leave stale. */
+process.on('uncaughtException', (err) => {
+  console.error('uncaughtException (process kept alive):', (err && err.stack) || err);
 });
 
 /* A test server must not poll Anthropic. Without this guard every spawned test

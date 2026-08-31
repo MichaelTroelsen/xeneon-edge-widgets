@@ -28,9 +28,13 @@
   --font-row: calc(var(--layout-unit) * 3.7);
   --font-badge: calc(var(--layout-unit) * 3.1);
   --font-meta: calc(var(--layout-unit) * 3.3);
-  /* One line of the corner clock, which is also the strip .widget-root keeps
-     free for it at the foot of every view. */
-  --clock-h: calc(var(--font-badge) * 1.35);
+  /* The corner clock, and one line of it - which is also the strip reserved
+     for it at the foot of the Tokens view, so the two are derived from each
+     other rather than tuned apart. Its own token, not --font-caption reused:
+     the clock is the one reading here that is looked at from across a room,
+     and it should be resizable without moving the meter captions with it. */
+  --font-clock: calc(var(--layout-unit) * 4.4);
+  --clock-h: calc(var(--font-clock) * 1.35);
 
   /* Dark theme (default) */
   --bg: #1b1b19;
@@ -136,19 +140,23 @@ body {
    a clock line out of .lists puts all three lists into overflow, which costs
    them a page-dot cluster in every heading and a wrapped heading with it. A
    truncated label is the cheaper of the two. */
-.cols { margin-bottom: var(--clock-h); }
+/* Plus a gap: the reserved strip is exactly one clock line, so without it the
+   column's last row and the time are flush against each other and read as one
+   crowded block rather than content and chrome. */
+.cols { margin-bottom: calc(var(--clock-h) + var(--layout-unit) * 1.2); }
 
 /* Bottom right. Absolute rather than a row in the flex column so that it sits
    in the corner rather than after whichever view is on screen; the strip it
-   needs is reserved by the rule above. Sized like the version badge and muted
-   to match: this is chrome beside the figures, not another figure. */
+   needs is reserved by the rule above. Muted rather than in --text: it is
+   chrome beside the figures, not another figure - but read at a glance from
+   further away than any of them, which is why it is not sized like one. */
 .clock {
   position: absolute;
   right: var(--space-pad);
   bottom: var(--space-pad);
   height: var(--clock-h);
   line-height: var(--clock-h);
-  font-size: var(--font-badge);
+  font-size: var(--font-clock);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

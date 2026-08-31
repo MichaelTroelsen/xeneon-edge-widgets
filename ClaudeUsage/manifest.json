@@ -3,7 +3,7 @@
   "id": "com.thordanielz.claudeusage",
   "name": "Claude Code Usage",
   "description": "Plan usage limits for Claude Code: 5-hour session and weekly windows with reset times, plus live lists of running workflows and their subtasks. Reads a local feed on 127.0.0.1; nothing leaves the machine.",
-  "version": "1.14.0",
+  "version": "1.14.1",
   "interactive": true,
   "preview_icon": "resources/icon.svg",
   "min_app_version": "5.47",

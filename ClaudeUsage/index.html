@@ -8,13 +8,14 @@
 
   <meta name="x-icue-property" content="feedUrl" data-label="tr('Feed URL')" data-type="textfield" data-default="'http://127.0.0.1:41777/usage'" />
   <meta name="x-icue-property" content="colorTheme" data-label="tr('Theme')" data-type="combobox" data-default="'dark'" data-values="[{'key':'dark','value':tr('Dark')},{'key':'light','value':tr('Light')}]" />
+  <meta name="x-icue-property" content="timeFormat" data-label="tr('Clock')" data-type="combobox" data-default="'auto'" data-values="[{'key':'auto','value':tr('Auto')},{'key':'12','value':tr('12-hour')},{'key':'24','value':tr('24-hour')}]" />
   <meta name="x-icue-property" content="refreshSeconds" data-label="tr('Refresh Interval')" data-type="slider" data-default="10" data-min="5" data-max="120" data-step="5" data-unit-label="tr('sec')" />
 
   <script type="application/json" id="x-icue-groups">
   [
     {
       "title": "tr('Claude Code Usage')",
-      "properties": ["feedUrl", "colorTheme", "refreshSeconds"],
+      "properties": ["feedUrl", "colorTheme", "timeFormat", "refreshSeconds"],
       "info": "tr('Requires the local usage feed to be running. It reads your plan utilisation from Anthropic and falls back to locally measured token counts if that is unavailable.')"
     }
   ]
@@ -162,6 +163,15 @@
       <div class="msg">Usage feed unreachable</div>
       <div class="hint" id="error-hint"></div>
     </div>
+
+    <!-- Wall clock, bottom right. A sibling of the state wrappers rather than
+         a row inside one: every view is measured to the pixel at 840x344 (see
+         the .why comment in the stylesheet), and a new flex row would take
+         height from all five of them. It floats over the corner instead, and
+         is deliberately outside .content so it survives the loading and error
+         states too - a widget that cannot reach the feed still shows the
+         time. -->
+    <div class="clock" id="clock"></div>
   </div>
 
   <script type="text/javascript" src="scripts/widget.js"></script>

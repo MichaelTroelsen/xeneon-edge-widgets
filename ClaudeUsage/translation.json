@@ -6,6 +6,10 @@
       "Theme": "Theme",
       "Dark": "Dark",
       "Light": "Light",
+      "Clock": "Clock",
+      "Auto": "Auto",
+      "12-hour": "12-hour",
+      "24-hour": "24-hour",
       "Refresh Interval": "Refresh Interval",
       "sec": "sec",
       "Requires the local usage feed to be running. It reads your plan utilisation from Anthropic and falls back to locally measured token counts if that is unavailable.": "Requires the local usage feed to be running. It reads your plan utilisation from Anthropic and falls back to locally measured token counts if that is unavailable."

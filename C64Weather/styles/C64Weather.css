@@ -177,26 +177,45 @@ body {
 .range[data-empty],
 .load-line[data-empty],
 .ready-line[data-empty],
+.clock[data-empty],
 .version-tag[data-empty] { display: none; }
 
-/* Modern's only version marker: a small caption in the corner, not console
-   furniture. Absolute so it takes no part in the flex column and cannot push
-   the readout around; sized well under --font-boot so it reads as a caption. */
+/* The bottom-right corner: the clock, with the version caption tucked under
+   it. Absolute so the pair takes no part in the flex column and cannot push
+   the readout around, and ONE column rather than two independently-anchored
+   boxes, so the two things that want this corner stack instead of colliding.
+   It shares its row with the READY prompt, which is short and on the far left,
+   and clears the stats column, which is centred in the stage above it. */
 /* Hidden while booting, because the machine drawing is also anchored
    bottom-right and the two were placed independently - the Amiga is the one
-   theme that has both, and they overlapped. The tag exists to show the version
-   on the SETTLED screen, which is where a stale cached copy would go unnoticed;
-   during the two-second boot the Amiga is already showing its ROM banner. */
-.widget-root.is-booting .version-tag { display: none; }
-
-.version-tag {
+   theme that has both, and they overlapped. The corner exists to show the time
+   and the version on the SETTLED screen, which is where a stale cached copy
+   would go unnoticed; during the two-second boot the Amiga is already showing
+   its ROM banner. */
+.corner {
   position: absolute;
   right: var(--space-pad);
   bottom: var(--space-pad);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(var(--layout-unit) * 0.8);
+  pointer-events: none;
+}
+
+.widget-root.is-booting .corner { display: none; }
+
+/* Sized like the boot and stat text, not like the version caption under it:
+   this is a reading someone is meant to read across a room. */
+.clock {
+  font-size: var(--font-boot);
+  color: var(--c64-border);
+}
+
+.version-tag {
   font-size: calc(var(--layout-unit) * 3);
   color: var(--c64-grey);
   opacity: 0.6;
-  pointer-events: none;
 }
 
 .sprite-cell {

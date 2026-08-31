@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.13.2';
+  var WIDGET_VERSION = '1.14.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -56,6 +56,39 @@
 
   function readRefreshSeconds() {
     return clampRange(getIcueProperty('refreshSeconds'), 5, 120, 10);
+  }
+
+  /* 'auto' means the runtime's own locale rather than a hard default, so the
+     corner clock matches the machine the dashboard is plugged into. */
+  function readTimeFormat() {
+    var pref = String(getIcueProperty('timeFormat') || 'auto');
+    if (pref === '12' || pref === '24') return pref;
+    return systemPrefers12Hour() ? '12' : '24';
+  }
+
+  /* resolvedOptions().hour12 is the direct answer but is not reported by every
+     engine, so fall back to formatting an afternoon and looking for a meridiem
+     in it. Neither working means 24-hour. */
+  function systemPrefers12Hour() {
+    try {
+      var opts = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions();
+      if (typeof opts.hour12 === 'boolean') return opts.hour12;
+    } catch (e) { /* no Intl in this context */ }
+    try {
+      return /[ap]\.?m/i.test(new Date(2000, 0, 1, 13, 0).toLocaleTimeString());
+    } catch (e) { /* no locale data either */ }
+    return false;
+  }
+
+  function timeString(now, format) {
+    var h = now.getHours();
+    var m = now.getMinutes();
+    var mm = (m < 10 ? '0' : '') + m;
+    if (format === '12') {
+      var h12 = h % 12;
+      return (h12 === 0 ? 12 : h12) + ':' + mm + ' ' + (h < 12 ? 'AM' : 'PM');
+    }
+    return (h < 10 ? '0' : '') + h + ':' + mm;
   }
 
   /* ---------- formatting ---------- */
@@ -1006,6 +1039,17 @@
     timer = setInterval(fetchFeed, readRefreshSeconds() * 1000);
   }
 
+  function renderTimeOfDay() {
+    if (els.clock) els.clock.textContent = timeString(new Date(), readTimeFormat());
+  }
+
+  /* Once a second, not once a minute: a minute-aligned timer drifts on a device
+     that suspends its page, and the redraw is one text node. */
+  function startTimeOfDay() {
+    renderTimeOfDay();
+    setInterval(renderTimeOfDay, 1000);
+  }
+
   /* Reset captions are relative, so tick them between polls. */
   function startClock() {
     setInterval(function () {
@@ -1019,6 +1063,7 @@
 
   function onIcueDataUpdated() {
     applyTheme();
+    renderTimeOfDay();
     render();
     schedule();
     fetchFeed();
@@ -1081,6 +1126,7 @@
     els.updated = document.getElementById('updated');
     els.live = document.getElementById('live');
     els.version = document.getElementById('version');
+    els.clock = document.getElementById('clock');
     if (els.version) els.version.textContent = 'v' + WIDGET_VERSION;
   }
 
@@ -1137,6 +1183,7 @@
   })();
 
   showState('loading-state');
+  startTimeOfDay();
   startClock();
   startPaging();
   fetchFeed();

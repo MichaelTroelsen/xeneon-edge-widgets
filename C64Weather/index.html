@@ -15,13 +15,14 @@
   <meta name="x-icue-property" content="theme" data-label="tr('Theme')" data-type="combobox" data-default="'c64'" data-values="[{'key':'c64','value':'Commodore 64'},{'key':'pet','value':'Commodore PET'},{'key':'bbc','value':'BBC Micro'},{'key':'cpc','value':'Amstrad CPC'},{'key':'spectrum','value':'ZX Spectrum'},{'key':'amiga','value':'Amiga'},{'key':'modern','value':'Modern'}]" />
   <meta name="x-icue-property" content="cityName" data-label="tr('Location')" data-type="textfield" data-default="'Copenhagen'" />
   <meta name="x-icue-property" content="tempUnit" data-label="tr('Temperature Unit')" data-type="combobox" data-default="'auto'" data-values="[{'key':'auto','value':tr('Auto')},{'key':'C','value':tr('Celsius')},{'key':'F','value':tr('Fahrenheit')}]" />
+  <meta name="x-icue-property" content="timeFormat" data-label="tr('Clock')" data-type="combobox" data-default="'auto'" data-values="[{'key':'auto','value':tr('Auto')},{'key':'12','value':tr('12-hour')},{'key':'24','value':tr('24-hour')}]" />
   <meta name="x-icue-property" content="refreshMinutes" data-label="tr('Refresh Interval')" data-type="slider" data-default="15" data-min="5" data-max="120" data-step="5" data-unit-label="tr('min')" />
 
   <script type="application/json" id="x-icue-groups">
   [
     {
       "title": "tr('C64 Weather')",
-      "properties": ["theme", "cityName", "tempUnit", "refreshMinutes"],
+      "properties": ["theme", "cityName", "tempUnit", "timeFormat", "refreshMinutes"],
       "info": "tr('Tap the widget to step through the themes. Enter a city name or latitude,longitude. Weather data comes from Open-Meteo; no account or API key is required.')"
     }
   ]
@@ -95,15 +96,27 @@
           <span class="cursor"></span>
         </div>
 
-        <!-- Modern AND Amiga have no load line to carry the version - both set
-             load: '' in THEMES - so a widget sitting on either could not be
-             told from a stale cached copy. They get a quiet corner caption
-             instead. It is gated on the load line being empty rather than on a
-             theme name, so any future theme without one gets it too; the five
-             themes that do print a load line keep it hidden via setLine's
-             data-empty handling, and theme.test.js asserts every theme
-             surfaces the version exactly once. -->
-        <div class="version-tag" id="version-tag"></div>
+        <!-- Bottom-right corner. A stack, not two independently-positioned
+             boxes: the clock and the version caption both want that corner,
+             and anchoring each to it separately is how they would end up on
+             top of each other on the two themes that show both. -->
+        <div class="corner" id="corner">
+          <!-- Wall clock, 12- or 24-hour per the setting. The device's own
+               clock, not the location's: it reads the runtime's Date, so it
+               stays right even when the weather is a cached reading fetched
+               from another timezone. -->
+          <div class="clock" id="clock"></div>
+
+          <!-- Modern AND Amiga have no load line to carry the version - both set
+               load: '' in THEMES - so a widget sitting on either could not be
+               told from a stale cached copy. They get a quiet corner caption
+               instead. It is gated on the load line being empty rather than on a
+               theme name, so any future theme without one gets it too; the five
+               themes that do print a load line keep it hidden via setLine's
+               data-empty handling, and theme.test.js asserts every theme
+               surfaces the version exactly once. -->
+          <div class="version-tag" id="version-tag"></div>
+        </div>
       </div>
     </div>
   </div>

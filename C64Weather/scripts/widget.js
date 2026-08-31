@@ -12,7 +12,7 @@
   var DEFAULT_LOCATION = 'Copenhagen';
   /* Keep in step with manifest.json - the boot banner is where the widget
      reports its own version on the device. */
-  var WIDGET_VERSION = '1.5.5';
+  var WIDGET_VERSION = '1.6.0';
 
   /* ---------- themes ----------
      Each theme is a palette (CSS class), a startup screen, and a font mode. The
@@ -197,6 +197,7 @@
   var retryTimer = null;
   var retryDelayMs = 0;   /* 0 = not currently in a retry backoff */
   var RETRY_INITIAL_MS = 10000;
+  var clockTimer = null;  /* ticks the wall clock in the corner */
   var lastQuery = null;   /* location string the current data was fetched for */
   var current = null;     /* normalised reading, always in Celsius */
   var offline = false;    /* last fetch failed and we are showing older data */
@@ -242,6 +243,30 @@
 
   function readRefreshMinutes() {
     return clampRange(getIcueProperty('refreshMinutes'), 5, 120, 15);
+  }
+
+  /* 'auto' means the runtime's own locale rather than a guess keyed off the
+     temperature unit: someone in Denmark reading Fahrenheit still wants a
+     24-hour clock, and the two settings are independent on purpose. */
+  function readTimeFormat() {
+    var pref = String(getIcueProperty('timeFormat') || 'auto');
+    if (pref === '12' || pref === '24') return pref;
+    return systemPrefers12Hour() ? '12' : '24';
+  }
+
+  /* resolvedOptions().hour12 is the direct answer but is not reported by every
+     engine, so fall back to formatting an afternoon and looking for a
+     meridiem in it. Neither working means 24-hour, which is what every machine
+     on this screen printed. */
+  function systemPrefers12Hour() {
+    try {
+      var opts = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions();
+      if (typeof opts.hour12 === 'boolean') return opts.hour12;
+    } catch (e) { /* no Intl in this context */ }
+    try {
+      return /[ap]\.?m/i.test(new Date(2000, 0, 1, 13, 0).toLocaleTimeString());
+    } catch (e) { /* no locale data either */ }
+    return false;
   }
 
   /* ---------- persistence ---------- */
@@ -444,6 +469,19 @@
       : Math.round(kmh) + 'KM/H';
   }
 
+  /* The wall clock in the corner. Unlike clockString below this IS a Date
+     read: it is the device's own time, not a timestamp the API sent. */
+  function timeString(now, format) {
+    var h = now.getHours();
+    var m = now.getMinutes();
+    var mm = (m < 10 ? '0' : '') + m;
+    if (format === '12') {
+      var h12 = h % 12;
+      return (h12 === 0 ? 12 : h12) + ':' + mm + ' ' + (h < 12 ? 'AM' : 'PM');
+    }
+    return (h < 10 ? '0' : '') + h + ':' + mm;
+  }
+
   /* "2026-08-28T05:42" -> "05:42". Substring, not Date: the API already
      returned it in the location's own timezone. */
   function clockString(iso) {
@@ -531,6 +569,19 @@
     PETSCII.setText(el, text);
   }
 
+  function renderClock() {
+    setLine(els.clock, timeString(new Date(), readTimeFormat()));
+  }
+
+  /* Once a second, not once a minute: a minute-aligned timer drifts on a device
+     that suspends its page, and the redraw is one short SVG run. renderClock
+     is idempotent, so an early or late tick costs nothing but the redraw. */
+  function scheduleClock() {
+    if (clockTimer) clearInterval(clockTimer);
+    renderClock();
+    clockTimer = setInterval(renderClock, 1000);
+  }
+
   function renderBootLines(lines) {
     if (!els.boot) return;
     els.boot.innerHTML = '';
@@ -558,6 +609,7 @@
        can tell a stale cached copy from a current one, same as the load line
        does for the other five. */
     setLine(els.versionTag, theme.load ? '' : 'v' + WIDGET_VERSION);
+    renderClock();
     playBoot(appliedTheme, theme.boot.length > 0);
     PETSCII.setText(els.loadingA, 'SEARCHING FOR WEATHER');
     PETSCII.setText(els.loadingB, 'LOADING');
@@ -682,6 +734,7 @@
     els.ready = document.getElementById('ready-text');
     els.readyLine = document.querySelector('.ready-line');
     els.versionTag = document.getElementById('version-tag');
+    els.clock = document.getElementById('clock');
     els.temp = document.getElementById('temp');
     els.condition = document.getElementById('condition');
     els.city = document.getElementById('city');
@@ -764,6 +817,7 @@
   cacheElements();
   loadThemeOverride();
   renderStatic();
+  scheduleClock();
   showState('loading-state');
   current = loadCache();
   if (current) render();

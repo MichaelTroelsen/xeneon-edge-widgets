@@ -28,6 +28,9 @@
   --font-row: calc(var(--layout-unit) * 3.7);
   --font-badge: calc(var(--layout-unit) * 3.1);
   --font-meta: calc(var(--layout-unit) * 3.3);
+  /* One line of the corner clock, which is also the strip .widget-root keeps
+     free for it at the foot of every view. */
+  --clock-h: calc(var(--font-badge) * 1.35);
 
   /* Dark theme (default) */
   --bg: #1b1b19;
@@ -104,6 +107,52 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-gap);
+  /* The clock in the corner anchors to this box. */
+  position: relative;
+}
+
+/* ------------------------------------------------------------------- clock */
+
+/* The clock is drawn OVER the views, so a region that fills its slot to the
+   bottom-right has to END above it rather than be covered - which is what the
+   tokens view did, drawing the time on top of the OUTPUT figure in its last
+   row. That view is the one that does: its columns page their own content, so
+   the strip costs a fraction of a page rather than a row nobody can read.
+
+   MARGIN, not padding: padding inside a scroller only adds scrollable space
+   below the content, leaving the visible box - and so the last row on every
+   page but the last - exactly where the clock is. The box itself has to be
+   shorter.
+
+   Reserved on the container rather than on the last column alone, so the two
+   columns stay the same height as each other, and not as bottom padding on
+   .widget-root, which was the blunter fix: the usage view is sized against
+   22.3px of slack (see .why), and a clock line out of every view spends most
+   of it and pushes the weekly meter out of its own box.
+
+   The activity lists are deliberately NOT reserved. Their rows ellipsis at the
+   column edge rather than carrying a figure there, so the worst the clock can
+   cover is the tail of one truncated label in the right-hand list - and taking
+   a clock line out of .lists puts all three lists into overflow, which costs
+   them a page-dot cluster in every heading and a wrapped heading with it. A
+   truncated label is the cheaper of the two. */
+.cols { margin-bottom: var(--clock-h); }
+
+/* Bottom right. Absolute rather than a row in the flex column so that it sits
+   in the corner rather than after whichever view is on screen; the strip it
+   needs is reserved by the rule above. Sized like the version badge and muted
+   to match: this is chrome beside the figures, not another figure. */
+.clock {
+  position: absolute;
+  right: var(--space-pad);
+  bottom: var(--space-pad);
+  height: var(--clock-h);
+  line-height: var(--clock-h);
+  font-size: var(--font-badge);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* The state wrapper must itself be the full-height column, otherwise .body has

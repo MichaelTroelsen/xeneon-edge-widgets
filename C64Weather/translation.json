@@ -7,6 +7,9 @@
       "Auto": "Auto",
       "Celsius": "Celsius",
       "Fahrenheit": "Fahrenheit",
+      "Clock": "Clock",
+      "12-hour": "12-hour",
+      "24-hour": "24-hour",
       "Refresh Interval": "Refresh Interval",
       "min": "min",
       "Enter a city name or latitude,longitude. Weather data comes from Open-Meteo; no account or API key is required.": "Enter a city name or latitude,longitude. Weather data comes from Open-Meteo; no account or API key is required."

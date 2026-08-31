@@ -408,14 +408,25 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ## Notes for future work
 
+- **Updating is a file mirror, not a re-import** — `tools/deploy.ps1`. The three
+  notes below are why, and all three are now avoided rather than lived with:
+  the GUID folder that is already registered is mirrored from the repo
+  directory, so the registration, its place on the dashboard and its properties
+  are never touched. MEASURED: `cityName` was still `Hammel, DK` across a
+  1.5.4 → 1.6.0 deploy.
 - **Re-importing a `.icuewidget` mints a new registration** under a fresh GUID in
   `%APPDATA%\Corsair\CUE5\html_widgets\` and leaves the old one behind, unplaced.
   Removing a widget from the dashboard deletes its folder, so remove-then-re-add
   is the clean way to reload; re-importing is what accumulates duplicates.
 - **Widget properties reset on re-add** — `cityName` goes back to Copenhagen
   every time.
-- **iCUE caches the loaded page.** Updating files on disk does nothing until the
-  widget is removed and re-added; the version in the header is the quickest way
-  to tell which build is actually running.
+- **iCUE caches the loaded page.** Updating files on disk does nothing while it
+  runs. Remove-and-re-add is NOT the only way to clear it, which is what this
+  note used to say: **restarting iCUE.exe is enough**, measured — both widgets
+  went from 1.5.4/1.12.0 to 1.6.0/1.14.0 on the panel across one stop/start,
+  with no dashboard edit. `deploy.ps1` mirrors while it is stopped, which also
+  keeps the copy clear of any file handle. The version on the widget is still
+  the quickest way to tell which build is actually running, and
+  `tools/capture-device.ps1` is how to read it without leaving the terminal.
 - **Headless Chrome's `--window-size` includes window chrome** — see the
   verification section in `README.md` before trusting any layout screenshot.

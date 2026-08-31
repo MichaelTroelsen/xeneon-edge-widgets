@@ -4,7 +4,53 @@ Two HTML widgets for the Xeneon Edge dashboard display, plus the local feed one
 of them needs. Both target `dashboard_lcd` and adapt across every Edge slot
 size in both orientations.
 
-Build and install with the [iCUE Widget CLI](https://www.corsair.com/us/en/s/downloads):
+## Deploying
+
+```powershell
+pwsh tools/deploy.ps1                      # both widgets, patch bump
+pwsh tools/deploy.ps1 -Widget C64Weather -Bump minor
+pwsh tools/deploy.ps1 -DryRun              # print every step, change nothing
+```
+
+One command replaces the whole manual round: test, bump the version in
+`manifest.json` **and** `scripts/widget.js` together, `icuewidget validate` +
+`package`, then install.
+
+Installing is a file mirror onto the GUID folder that is already registered in
+`%APPDATA%\Corsair\CUE5\html_widgets\`, **not** a re-import. That matters:
+importing a `.icuewidget` mints a new registration under a fresh GUID, leaves
+the old one behind unplaced, and resets every widget property — `cityName` goes
+back to Copenhagen on every update. Mirroring keeps the registration, its place
+on the dashboard, and its settings.
+
+iCUE holds the page it loaded at startup, so the mirror happens with iCUE
+stopped and iCUE is started again after — which is also why the copy can never
+hit a file lock. `-NoRestart` skips that and leaves the new build sitting unread
+on disk.
+
+The previous contents of each GUID folder are copied to
+`%LOCALAPPDATA%\icue-deploy-backups\<timestamp>-<widget>-<guid>` first, and a
+failed install is rolled back from there.
+
+Tests run *before* the version bump, so a red suite leaves the working tree
+byte-identical. A widget that has never been imported stops the run early with
+the one thing that does have to be done by hand, once:
+
+```
+Import c64-weather.icuewidget once through iCUE's UI — Dashboard, add a
+widget, Import — and every update after that one can come through this script.
+```
+
+To check what is genuinely running, screenshot the panel rather than reading
+`manifest.json` back — the folder can hold a new build while iCUE is still
+showing the page it loaded:
+
+```powershell
+pwsh tools/capture-device.ps1 -Path edge.png
+```
+
+The [iCUE Widget CLI](https://www.corsair.com/us/en/s/downloads) can also be
+driven directly:
 
 ```bash
 icuewidget validate C64Weather

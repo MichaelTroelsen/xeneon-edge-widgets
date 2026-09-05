@@ -1308,6 +1308,31 @@ const server = http.createServer((req, res) => {
         ? { sessions: snapshot.sessions, workflows: snapshot.workflows,
             subtasks: snapshot.subtasks }
         : null;
+      /* ?project=<name> answers with just that project's task list, and
+         nothing else. Its own response rather than a block in the overview:
+         the five real queues hold 210 tasks and 297KB, of which 295KB is prose
+         no 840x344 slot can show; trimmed they are still 49KB against the
+         overview's 2.4KB, and the widget only ever looks at one project at a
+         time. So the overview stays small and this is fetched on demand.
+         Percent-decoded inside the same try as everything else - a malformed
+         escape is the caller's mistake, answered 4xx below, never a throw that
+         takes the process down. */
+      const q = req.url.indexOf('?') >= 0 ? req.url.slice(req.url.indexOf('?') + 1) : '';
+      const projectMatch = /(?:^|&)project=([^&]*)/.exec(q);
+      if (projectMatch) {
+        let name;
+        try {
+          name = decodeURIComponent(projectMatch[1]);
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'project= is not valid percent-encoding' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(tasks.projectTasks(name)));
+        return;
+      }
+
       const raw = /(?:\?|&)raw=1(?:&|$)/.test(req.url);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(tasks.build(live, { raw: raw })));

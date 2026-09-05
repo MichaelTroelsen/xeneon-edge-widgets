@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  var WIDGET_VERSION = '1.1.2';
+  var WIDGET_VERSION = '1.2.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/tasks';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -27,11 +27,11 @@
   var timer = null;
   var data = null;
   var lastError = '';
-  var VIEWS = ['queue', 'live', 'history', 'files'];
+  var VIEWS = ['queue', 'live', 'history', 'files', 'projects'];
   var view = 'queue';   /* tapping the widget cycles through VIEWS */
 
   var TITLES = { queue: 'Task queue', live: 'Running now', history: 'Runs',
-                 files: 'Task files' };
+                 files: 'Task files', projects: 'Projects' };
   function getIcueProperty(name) {
     if (typeof window !== 'undefined' && Object.prototype.hasOwnProperty.call(window, name)) {
       var value = window[name];
@@ -173,10 +173,17 @@
      rather than as a feed that failed. The suffix differs per column because
      a held lock and an open session are different things: "2 held" and
      "3 active" must not be mistakable for two halves of one number. */
-  function setHeading(ul, total, suffix) {
+  function setHeading(ul, total, suffix, base) {
     var h = ul.parentNode && ul.parentNode.querySelector('h2');
     if (!h) return;
-    if (!h.getAttribute('data-base')) h.setAttribute('data-base', h.textContent);
+    /* The base is cached because most headings are fixed words in the markup
+       and re-reading them after the first render would compound the count into
+       itself. A caller whose heading CHANGES - the projects view, whose
+       heading is the selected project's name - passes the new base explicitly;
+       without that the cache pinned the first project's name to every other
+       project's count. */
+    if (base != null) h.setAttribute('data-base', base);
+    else if (!h.getAttribute('data-base')) h.setAttribute('data-base', h.textContent);
     var word = suffix || 'active';
     h.textContent = h.getAttribute('data-base') + ' · ' +
       (total ? total + ' ' + word : 'none ' + word);
@@ -465,6 +472,132 @@
     els.filetable.appendChild(table);
   }
 
+  /* ---------- the projects view ---------- */
+
+  var selectedProject = null;   /* survives a refresh; falls back if it vanishes */
+  var projectData = null;
+  var projectError = '';
+  var projectPending = null;
+
+  /* The overview's repo list is the source of truth for which tabs exist, so a
+     project that disappears from the feed cannot stay selected. */
+  function projectNames() {
+    return (data && data.repos ? data.repos : []).map(function (r) { return r.name; });
+  }
+
+  function currentProject() {
+    var names = projectNames();
+    if (!names.length) return null;
+    if (selectedProject && names.indexOf(selectedProject) >= 0) return selectedProject;
+    return names[0];
+  }
+
+  function selectProject(name) {
+    if (name === selectedProject) return;
+    selectedProject = name;
+    projectData = null;      /* do not show one project's tasks under another's tab */
+    projectError = '';
+    render();
+    fetchProject();
+  }
+
+  /* Its own request, on the same cadence as the overview but only while this
+     view is showing. The response is ~24KB for the largest queue against the
+     overview's 2.4KB, which is exactly why it is not folded into it. */
+  function fetchProject() {
+    var name = currentProject();
+    if (!name) return;
+    var url = readFeedUrl() + (readFeedUrl().indexOf('?') >= 0 ? '&' : '?') +
+      'project=' + encodeURIComponent(name);
+    if (projectPending === name) return;
+    projectPending = name;
+
+    var controller = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timeout = setTimeout(function () { if (controller) controller.abort(); }, REQUEST_TIMEOUT_MS);
+
+    fetch(url, controller ? { signal: controller.signal, cache: 'no-store' } : { cache: 'no-store' })
+      .then(function (res) {
+        clearTimeout(timeout);
+        return res.json();
+      })
+      .then(function (json) {
+        projectPending = null;
+        /* A late answer for a tab the reader has already left must not
+           overwrite the one they are looking at now. */
+        if (json && json.project !== currentProject()) return;
+        projectData = json;
+        projectError = (json && json.error) || '';
+        if (view === 'projects') render();
+      })
+      .catch(function (err) {
+        clearTimeout(timeout);
+        projectPending = null;
+        projectError = (err && err.message) ? err.message : 'request failed';
+        if (view === 'projects') render();
+      });
+  }
+
+  function renderProjects() {
+    var names = projectNames();
+    var current = currentProject();
+
+    els.tabs.textContent = '';
+    for (var i = 0; i < names.length; i++) {
+      var tab = document.createElement('button');
+      tab.className = 'tab' + (names[i] === current ? ' is-active' : '');
+      tab.setAttribute('data-project', names[i]);
+      tab.textContent = names[i];
+      els.tabs.appendChild(tab);
+    }
+
+    if (!names.length) {
+      setNote(els.projectsNote, (data && data.unavailable) ||
+        'no repo on this machine has a queue to show');
+      els.listTasks.style.display = 'none';
+      return;
+    }
+    els.projectsNote.style.display = 'none';
+    els.listTasks.style.display = '';
+
+    if (projectError) {
+      /* The feed's own words, not a guess at what went wrong. */
+      setNote(els.projectsNote, projectError);
+      els.listTasks.style.display = 'none';
+      return;
+    }
+
+    var tasks = (projectData && projectData.tasks) || [];
+    var blocked = 0;
+    for (var b = 0; b < tasks.length; b++) if (tasks[b].blocked) blocked++;
+
+    setHeading(els.taskRows, tasks.length,
+      'open' + (blocked ? ' · ' + blocked + ' blocked' : ''), current);
+
+    els.taskRows.textContent = '';
+    for (var t = 0; t < tasks.length; t++) {
+      var task = tasks[t];
+      var li = document.createElement('li');
+      if (task.blocked) li.classList.add('is-blocked');
+
+      var top = document.createElement('span');
+      top.className = 'row-name';
+      top.textContent = (task.blocked ? '⚠ ' : '') + (task.title || task.id);
+      li.appendChild(top);
+
+      var meta = document.createElement('span');
+      meta.className = 'row-figure';
+      /* The blocking reason displaces the model and effort rather than joining
+         them: it is the thing that decides what happens to this task next, and
+         the row has one line. */
+      meta.textContent = task.blocked
+        ? task.blocked
+        : [task.mode, task.model + '/' + task.effort].join(' · ');
+      li.appendChild(meta);
+
+      els.taskRows.appendChild(li);
+    }
+  }
+
   /* ---------- the dispatcher ---------- */
 
   function render() {
@@ -476,7 +609,8 @@
     if (view === 'queue') renderQueue();
     else if (view === 'live') renderLive();
     else if (view === 'history') renderHistory();
-    else renderFiles();
+    else if (view === 'files') renderFiles();
+    else renderProjects();
 
     refreshPaging();
   }
@@ -487,6 +621,9 @@
     els.viewLive.classList.toggle('is-active', view === 'live');
     els.viewHistory.classList.toggle('is-active', view === 'history');
     els.viewFiles.classList.toggle('is-active', view === 'files');
+    els.viewProjects.classList.toggle('is-active', view === 'projects');
+    /* The project detail is only fetched while its view is on screen. */
+    if (view === 'projects') fetchProject();
     Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
       d.classList.toggle('is-active', d.getAttribute('data-view') === view);
     });
@@ -891,6 +1028,13 @@
     els.alarms = document.getElementById('alarms');
     els.filetable = document.getElementById('filetable');
 
+    els.viewProjects = document.querySelector('.view-projects');
+    els.tabs = document.getElementById('tabs');
+    els.listTasks = document.getElementById('list-tasks');
+    els.taskRows = document.getElementById('task-rows');
+    els.tasksHead = document.getElementById('tasks-head');
+    els.projectsNote = document.getElementById('projects-note');
+
     if (els.version) els.version.textContent = 'v' + WIDGET_VERSION;
   }
   /* A single false read of iCUE_initialized is a race, not proof of a browser. */
@@ -933,7 +1077,19 @@
       tracking = false;
       var moved = Math.abs(e.clientX - startX) > TAP_SLOP_PX ||
                   Math.abs(e.clientY - startY) > TAP_SLOP_PX;
-      if (!moved && (Date.now() - startT) <= TAP_MAX_MS) toggleView();
+      if (moved || (Date.now() - startT) > TAP_MAX_MS) return;
+
+      /* A tap that lands on a project tab selects it; anything else still
+         cycles the views. Resolved by elementFromPoint rather than by trusting
+         e.target: the pointerup can be delivered on a different element from
+         the pointerdown, and the tab's own text node is not the button. */
+      var hit = document.elementFromPoint(e.clientX, e.clientY);
+      var tab = hit && hit.closest ? hit.closest('.tab') : null;
+      if (tab && view === 'projects') {
+        selectProject(tab.getAttribute('data-project'));
+        return;
+      }
+      toggleView();
     }
 
     if (typeof window.PointerEvent === 'function') {

@@ -616,5 +616,72 @@ console.log('orphaned holder records:');
   check('nothing held and nothing dead means no alarms', tasks.build().alarms, []);
 }
 
+console.log('one project\'s task list:');
+
+const LONG_TITLE = 'A title that runs on well past ninety characters so the cap can be seen doing its work rather than assumed, padding padding';
+const LONG_BLOCK = 'A blocking reason that also runs on well past a hundred and ten characters, because the real ones in this repo are paragraphs and the glass has one line for them';
+
+{
+  const proj = makeRepo('detailed', {
+    tasks: [
+      { id: 'a', title: 'A plain task', mode: 'subtask', model: 'sonnet',
+        effort: 'medium', lane: 'parallel',
+        /* The prose fields are what make the file 297KB and none of them fit
+           on an 840x344 slot, so none of them may travel. */
+        verify: 'x'.repeat(4000), why_model: 'y'.repeat(2000),
+        why_effort: 'z'.repeat(2000), why_lane: 'w'.repeat(2000),
+        evidence: 'e'.repeat(2000), touches: ['a', 'b'], depends_on: ['q'] },
+      { id: 'b', title: LONG_TITLE, mode: 'requires-user',
+        blocked_on: LONG_BLOCK },
+      { id: 'c' }
+    ],
+    closed: [{ id: 'z' }]
+  });
+  const tasks = load(writeRegistry([proj]));
+
+  const got = tasks.projectTasks('detailed');
+  check('the named project answers', got.project, 'detailed');
+  check('with a row per open task', got.tasks.length, 3);
+  check('and no error', got.error, null);
+
+  const a = got.tasks[0];
+  check('the fields the view draws are carried',
+    Object.keys(a).sort(),
+    ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'title']);
+  check('the prose fields are NOT - they are 297KB of the 300KB and unshowable',
+    [a.verify, a.why_model, a.evidence, a.touches], [undefined, undefined, undefined, undefined]);
+  check('a task with no blocked_on carries null, not a string', a.blocked, null);
+
+  const b = got.tasks[1];
+  check('an over-long title is capped at 90', b.title.length, 90);
+  check('and an over-long blocking reason at 110', b.blocked.length, 110);
+
+  const c = got.tasks[2];
+  check('a task with nothing on it still renders as something',
+    [c.title, c.mode, c.model, c.effort], ['c', 'unknown', 'unknown', 'unknown']);
+}
+
+{
+  const tasks = load(writeRegistry([makeRepo('known', { tasks: [], closed: [] })]));
+  const missing = tasks.projectTasks('not-a-project');
+  check('an unknown project name is an error, not a crash', missing.tasks, []);
+  check('and says which name it could not find',
+    /not-a-project/.test(missing.error || ''), true);
+}
+
+{
+  /* The whole point of the separate endpoint: asking for the overview must not
+     start shipping every task with it. */
+  const big = makeRepo('big', {
+    tasks: Array.from({ length: 50 }, (_, i) => ({ id: 't' + i, title: 'T' + i, verify: 'v'.repeat(500) })),
+    closed: []
+  });
+  const tasks = load(writeRegistry([big]));
+  const base = tasks.build();
+  check('the overview carries no task list', base.repos[0].tasks, undefined);
+  check('and stays small even beside a fat queue',
+    JSON.stringify(base).length < 4096, true);
+}
+
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
 process.exit(failures ? 1 : 0);

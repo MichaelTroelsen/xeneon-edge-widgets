@@ -1168,3 +1168,73 @@ body {
    container fills the view in order to centre the text in it, so measuring or
    padding the container is measuring the wrong box. */
 .note-text { display: block; max-width: 100%; }
+
+/* ---------------------------------------------------------------- projects */
+
+.view-projects { gap: calc(var(--layout-unit) * 0.8); }
+
+/* One tab per project, across the top. Buttons rather than divs so the tap
+   target is a real control; the widget resolves the hit with elementFromPoint
+   because the pointerup can land on the text node rather than the button. */
+.tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: calc(var(--layout-unit) * 0.5);
+  min-width: 0;
+}
+
+/* Shrink with ellipsis rather than wrap or overflow. Five projects fit at
+   840px today, and that is not a property worth depending on - a sixth must
+   narrow the others, not push one off the edge. */
+.tab {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: calc(var(--layout-unit) * 0.45) calc(var(--layout-unit) * 0.7);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.92em;
+  text-align: center;
+  cursor: pointer;
+}
+
+/* The selected tab has to be obvious from across a room, so it carries a fill
+   and not only a border - a border-only treatment is the first thing to
+   disappear at that distance. */
+.tab.is-active {
+  background: var(--fill);
+  border-color: var(--fill);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+#list-tasks {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Same clock reservation as every other view that ends in a list of rows
+     carrying a figure at the right edge. */
+  margin-bottom: calc(var(--space-pad) + var(--clock-h) + var(--layout-unit) * 0.9);
+}
+
+/* A blocked task leads with a marker and is the only row type coloured: the
+   whole point of the view is telling what is waiting from what is merely
+   queued. */
+#task-rows li.is-blocked .row-name { color: var(--warn); }
+#task-rows li.is-blocked .row-figure { color: var(--warn); }
+
+.projects-note {
+  display: none;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 calc(var(--layout-unit) * 2)
+           calc(var(--space-pad) + var(--clock-h));
+  color: var(--muted);
+  line-height: 1.45;
+}

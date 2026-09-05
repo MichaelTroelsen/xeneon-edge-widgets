@@ -367,6 +367,54 @@ function datedHistory(repoPath, runs) {
   };
 }
 
+/* Measured, not chosen by eye: 90 is the longest title in the real queues, and
+   a blocking reason is a paragraph there - the glass has one line for it. */
+const TITLE_MAX = 90;
+const BLOCKED_MAX = 110;
+
+function clip(value, max) {
+  if (typeof value !== 'string' || !value) return null;
+  return value.length > max ? value.slice(0, max) : value;
+}
+
+/* One project's open tasks, trimmed to what a row actually draws.
+ *
+ * Its own call rather than a block inside build(): the five real queues hold
+ * 210 tasks and 297KB, of which 295KB is prose - verify, why_model, why_lane,
+ * evidence - that cannot be shown on an 840x344 slot at any size. Trimmed they
+ * are still 49KB, twenty times the whole overview payload, and the widget only
+ * ever looks at one project at a time. So the overview stays 2.4KB and this is
+ * fetched on demand.
+ */
+function projectTasks(name) {
+  const repo = discover().find(r => r.name === name);
+  if (!repo) {
+    return {
+      project: name, tasks: [],
+      error: 'no project called "' + name + '" has a .claude/tasks/whattask.json'
+    };
+  }
+  let plan;
+  try {
+    plan = JSON.parse(fs.readFileSync(whattaskFile(repo.path), 'utf8'));
+  } catch (err) {
+    return { project: name, tasks: [], error: 'whattask.json could not be read: ' + err.message };
+  }
+  const raw = (plan && Array.isArray(plan.tasks)) ? plan.tasks : [];
+  const tasks = raw.map(t => ({
+    id: (t && t.id) || '',
+    /* An id is a worse label than a title but a far better one than nothing,
+       and every record has one. */
+    title: clip((t && t.title) || (t && t.id) || '', TITLE_MAX) || '',
+    mode: field(t, 'mode'),
+    model: modelFamily(t && t.model),
+    effort: field(t, 'effort'),
+    lane: field(t, 'lane'),
+    blocked: clip(t && t.blocked_on, BLOCKED_MAX)
+  }));
+  return { project: name, tasks: tasks, error: null };
+}
+
 function mergeCounts(into, from) {
   for (const key of Object.keys(from)) into[key] = (into[key] || 0) + from[key];
   return into;
@@ -556,5 +604,6 @@ module.exports = {
   REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
   runsFile, readRuns, commitTimes, datedHistory, readHolders, build,
   readFiles, readMutex, pidAlive, isOrphan, TASK_FILES, MUTEX_STALE_MS, THIS_HOST,
+  projectTasks, TITLE_MAX, BLOCKED_MAX,
   aggregateHistory, modelFamily, dayKey
 };

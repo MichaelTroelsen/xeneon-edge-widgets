@@ -123,6 +123,25 @@ async function main() {
     const raw = JSON.parse((await get('/tasks?raw=1')).body);
     check('?raw=1 adds them for debugging', Array.isArray(raw.historyRecords), true);
 
+    console.log('one project over http:');
+    const proj = JSON.parse((await get('/tasks?project=flat-repo')).body);
+    check('the named project answers with its own task list', proj.tasks.length, 1);
+    check('and carries only the fields a row draws',
+      Object.keys(proj.tasks[0]).sort(),
+      ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'title']);
+    check('the nested project is reachable the same way',
+      JSON.parse((await get('/tasks?project=nested-repo')).body).tasks.length, 2);
+    const unknown = JSON.parse((await get('/tasks?project=nope')).body);
+    check('an unknown name answers with an error rather than an empty success',
+      typeof unknown.error === 'string' && unknown.error.length > 0, true);
+    /* A malformed escape is the caller's mistake, and must not be allowed to
+       throw inside the request handler - that tears the whole process down and
+       the feed is launched with no restart supervision. */
+    const bad = await get('/tasks?project=%');
+    check('a malformed percent-escape is a 4xx, not a dead server', bad.status, 400);
+    check('and the server is still answering afterwards',
+      (await get('/tasks')).status, 200);
+
     console.log('the /usage route, which must not have moved:');
     const usage = await get('/usage');
     check('/usage still answers 200 alongside /tasks', usage.status, 200);

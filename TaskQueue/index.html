@@ -30,7 +30,7 @@
         <span class="title" id="title">Task queue</span>
         <span class="repos" id="repos"></span>
         <span class="updated" id="updated"></span>
-        <span class="dots" aria-hidden="true"><i class="dot" data-view="queue"></i><i class="dot" data-view="live"></i><i class="dot" data-view="history"></i><i class="dot" data-view="files"></i></span>
+        <span class="dots" aria-hidden="true"><i class="dot" data-view="queue"></i><i class="dot" data-view="live"></i><i class="dot" data-view="history"></i><i class="dot" data-view="files"></i><i class="dot" data-view="projects"></i></span>
         <span class="version" id="version"></span>
       </header>
 
@@ -109,6 +109,19 @@
       <div class="view view-files">
         <div class="alarms" id="alarms"></div>
         <div class="filetable" id="filetable"></div>
+      </div>
+      <!-- One project at a time, chosen by tapping its tab. A tap on a tab
+           selects; a tap anywhere else still cycles views. The task list is
+           fetched separately from the overview: the five real queues hold 210
+           tasks and 297KB, almost all of it prose that cannot be shown here,
+           so the overview stays small and this is pulled on demand. -->
+      <div class="view view-projects">
+        <div class="tabs" id="tabs"></div>
+        <div class="list" id="list-tasks">
+          <h2 id="tasks-head">Tasks</h2>
+          <ul id="task-rows"></ul>
+        </div>
+        <div class="projects-note" id="projects-note"></div>
       </div>
     </div>
 

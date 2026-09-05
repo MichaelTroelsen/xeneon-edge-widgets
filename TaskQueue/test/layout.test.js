@@ -103,7 +103,7 @@ const VIEWS = extractArray(widgetSrc, 'VIEWS');
 const START_VIEW = extractString(widgetSrc, 'view');
 
 console.log('metrics:');
-check('VIEWS was read out of widget.js', VIEWS, ['queue', 'live', 'history', 'files']);
+check('VIEWS was read out of widget.js', VIEWS, ['queue', 'live', 'history', 'files', 'projects']);
 check('the widget starts on the "queue" view', START_VIEW, 'queue');
 if (failures) {
   console.log('\nthe source constants could not be read; every tap count below would be aimed at the wrong view');
@@ -345,6 +345,53 @@ function alarmFixture() {
   return f;
 }
 
+/* One project's task list, as ?project= answers it. Titles at the measured
+   90-character cap and a blocking reason at 110, because those are the widths
+   that have to fit. */
+function projectFixture(name, count, blockedEvery) {
+  const tasks = [];
+  for (let i = 0; i < count; i++) {
+    const blocked = blockedEvery && i % blockedEvery === 0;
+    tasks.push({
+      id: name + '-task-' + i,
+      title: blocked
+        ? 'A blocked one whose title runs the full ninety characters the feed caps them at, pad'
+        : 'sdi-corpus-part-count-anomaly-non-descending-' + i,
+      mode: blocked ? 'requires-user' : (i % 3 === 0 ? 'main' : 'subtask'),
+      model: i % 2 ? 'sonnet' : 'opus',
+      effort: ['low', 'medium', 'high', 'unknown'][i % 4],
+      lane: i % 2 ? 'serial' : 'parallel',
+      blocked: blocked
+        ? 'a remove-and-re-add in the iCUE desktop UI, which no agent can perform, and which resets'
+        : null
+    });
+  }
+  return { project: name, tasks: tasks, error: null };
+}
+
+const PROJECT_BODIES = {
+  SIDM2: projectFixture('SIDM2', 120, 4),
+  h2g: projectFixture('h2g', 83, 0),
+  'claude-setup': projectFixture('claude-setup', 3, 3),
+  icue: projectFixture('icue', 2, 1),
+  'tdz-c64-knowledge': projectFixture('tdz-c64-knowledge', 2, 0)
+};
+
+/* Eight projects, to prove the tab strip narrows rather than overflowing. Five
+   fit at 840px today and that is not a property worth depending on. */
+function manyProjectsFixture() {
+  const f = baseFixture();
+  const extra = ['another-long-project-name', 'sixth-project', 'seventh-one'];
+  for (const n of extra) {
+    f.repos.push({ name: n, path: 'C:/x/' + n, open: 1, closed: 1, blocked: 0,
+      byMode: { subtask: 1 }, byLane: { unknown: 1 }, holders: [],
+      lastRunAt: 1, error: null, historyError: null,
+      files: {}, mutex: { held: false, stale: false, since: null, owner: null, reason: null } });
+  }
+  f.totals.repos = f.repos.length;
+  return f;
+}
+
 function noHistoryFixture() {
   const f = baseFixture();
   f.repos[0].historyError = HISTORY_ERROR;
@@ -354,6 +401,7 @@ function noHistoryFixture() {
 
 const HARNESS = `<script>
 window.__FIXTURE__ = __PAYLOAD__;
+window.__PROJECTS__ = __PROJECT_BODIES__;
 (function () {
   var style = document.createElement('style');
   /* Calibration 3: transitions do not advance under --virtual-time-budget, and
@@ -375,7 +423,20 @@ window.__FIXTURE__ = __PAYLOAD__;
     window.__ERRORS__.push('unhandled rejection: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)));
   });
 
-  window.fetch = function () {
+  /* Two endpoints now: the overview, and ?project=<name> for one project's
+     task list. The stub routes on the query string exactly as the server does,
+     so a widget asking the wrong one would show the wrong thing here too. */
+  window.fetch = function (url) {
+    var m = /[?&]project=([^&]*)/.exec(String(url || ''));
+    if (m) {
+      var name = decodeURIComponent(m[1]);
+      var body = (window.__PROJECTS__ || {})[name] ||
+        { project: name, tasks: [], error: 'no project called "' + name + '"' };
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: function () { return Promise.resolve(body); }
+      });
+    }
     return Promise.resolve({
       ok: true, status: 200,
       json: function () { return Promise.resolve(window.__FIXTURE__); }
@@ -677,13 +738,55 @@ window.__FIXTURE__ = __PAYLOAD__;
       }
     }
 
+    /* --- projects view --- */
+    out.tabNames = Array.prototype.map.call(
+      document.querySelectorAll('#tabs .tab'), function (e) { return e.textContent; });
+    out.tabActive = Array.prototype.map.call(
+      document.querySelectorAll('#tabs .tab.is-active'), function (e) { return e.textContent; });
+    out.taskRowCount = Array.prototype.filter.call(
+      document.querySelectorAll('#task-rows li'), function (e) { return e.offsetParent !== null; }).length;
+    out.taskRowsInDom = document.querySelectorAll('#task-rows li').length;
+    out.blockedRowCount = document.querySelectorAll('#task-rows li.is-blocked').length;
+    out.taskHeadingText = (function () {
+      var h = document.querySelector('#list-tasks h2');
+      return h ? h.textContent.trim() : null;
+    })();
+    var pnote = document.getElementById('projects-note');
+    out.projectsNoteText = pnote ? pnote.textContent : null;
+    out.projectsNoteDisplay = pnote ? window.getComputedStyle(pnote).display : null;
+    out.queuedTaskMeta = (function () {
+      var e = document.querySelector('#task-rows li:not(.is-blocked) .row-figure');
+      return e ? e.textContent : null;
+    })();
+    out.blockedTaskMeta = (function () {
+      var e = document.querySelector('#task-rows li.is-blocked .row-figure');
+      return e ? e.textContent : null;
+    })();
+
     out.pageErrors = (window.__ERRORS__ || []).slice(0, 5);
     return out;
   }
 
 
+  /* Tap at a POINT, the way a finger does. The widget resolves which tab was
+     hit with elementFromPoint, so aiming at coordinates is what exercises that
+     path; dispatching a click on the button would prove nothing about it. */
+  function tapAt(x, y) {
+    var opts = { clientX: x, clientY: y, bubbles: true, cancelable: true };
+    document.dispatchEvent(new PointerEvent('pointerdown', opts));
+    document.dispatchEvent(new PointerEvent('pointerup', opts));
+  }
+
   setTimeout(function () {
     for (var i = 0; i < __TAPS__; i++) tap();
+    var wantTab = __TAB_INDEX__;
+    if (wantTab >= 0) {
+      var tabs = document.querySelectorAll('#tabs .tab');
+      if (tabs[wantTab]) {
+        var tb = tabs[wantTab].getBoundingClientRect();
+        tapAt(tb.left + tb.width / 2, tb.top + tb.height / 2);
+      }
+    }
     setTimeout(function () {
       var payload;
       try { payload = JSON.stringify(measure()); }
@@ -703,9 +806,12 @@ check('the widget script tag was found, so the harness has somewhere to go',
 const PRE_TAP_MS = 200;   /* time for the stubbed fetch's microtask chain and first render */
 const POST_TAP_MS = 150;  /* time for the tap(s) to be handled and the DOM to settle */
 
-function writePage(name, taps, fixture, mutate) {
+function writePage(name, taps, fixture, mutate, projects, tabIndex) {
   const payloadJson = JSON.stringify(fixture).replace(/<\/script/gi, '<\\/script');
+  const projectsJson = JSON.stringify(projects || {}).replace(/<\/script/gi, '<\\/script');
   let html = indexSrc.replace(SCRIPT_TAG, HARNESS
+    .replace('__TAB_INDEX__', String(tabIndex == null ? -1 : tabIndex))
+    .replace('__PROJECT_BODIES__', projectsJson)
     .replace('__PAYLOAD__', payloadJson)
     .replace(/__TAPS__/g, String(taps))
     .replace('__PRE_TAP_MS__', String(PRE_TAP_MS))
@@ -837,9 +943,25 @@ const CASES = [
   { name: 'files-alarms', taps: 3, want: 'files', fixture: alarmFixture() }
 ];
 
+/* The projects view needs the second endpoint stubbed and, for the tab test, a
+   tap aimed at a tab's centre after the view taps. */
+const PROJECT_CASES = [
+  { name: 'projects', taps: 4, want: 'projects', fixture: baseFixture(), tab: null },
+  { name: 'projects-tab-2', taps: 4, want: 'projects', fixture: baseFixture(), tab: 1 },
+  { name: 'projects-many', taps: 4, want: 'projects', fixture: manyProjectsFixture(), tab: null },
+  { name: 'projects-none', taps: 4, want: 'projects', fixture: unavailableFixture(), tab: null }
+];
+
 const results = [];
 for (const c of CASES) {
   const r = render(writePage(c.name, c.taps, c.fixture));
+  r.name = c.name;
+  r.wantView = c.want;
+  results.push(r);
+  if (r.error) fail(`${c.name}: ${r.error}`);
+}
+for (const c of PROJECT_CASES) {
+  const r = render(writePage(c.name, c.taps, c.fixture, null, PROJECT_BODIES, c.tab));
   r.name = c.name;
   r.wantView = c.want;
   results.push(r);
@@ -965,6 +1087,45 @@ console.log('colours that carry meaning actually resolve:');
   check('an alarm sign is not just body text', files.alarmSign !== files.bodyText, true);
   check('a stale mutex cell is not just body text', files.staleMutex !== files.bodyText, true);
 }
+
+console.log('the projects view:');
+check('a tab per project', byName['projects'].tabNames, 
+  ['SIDM2', 'h2g', 'claude-setup', 'icue', 'tdz-c64-knowledge']);
+check('exactly one is selected', byName['projects'].tabActive.length, 1);
+check('and it is the first until something is pressed',
+  byName['projects'].tabActive[0], 'SIDM2');
+check('whose tasks are what is listed',
+  byName['projects'].taskHeadingText, 'SIDM2 · 120 open · 30 blocked');
+check('rows render rather than merely existing',
+  byName['projects'].taskRowCount, byName['projects'].taskRowsInDom);
+check('a queued row shows its mode, model and effort',
+  /^(subtask|main) · (sonnet|opus)\/(low|medium|high|unknown)$/
+    .test(byName['projects'].queuedTaskMeta || ''), true);
+/* The reason DISPLACES the model and effort rather than joining them: it is
+   what decides what happens to the task next, and the row has one line. */
+check('a blocked row shows the reason instead',
+  /remove-and-re-add/.test(byName['projects'].blockedTaskMeta || ''), true);
+check('and blocked rows are marked as such',
+  byName['projects'].blockedRowCount > 0, true);
+
+/* The tap is aimed at the tab's centre in page coordinates, so this exercises
+   the elementFromPoint path the device will take - not a synthetic click. */
+console.log('pressing a tab:');
+check('selects that project instead of cycling the view',
+  byName['projects-tab-2'].tabActive, ['h2g']);
+check('the view did NOT advance', byName['projects-tab-2'].activeDotView, 'projects');
+check('and the list follows the tab',
+  byName['projects-tab-2'].taskHeadingText, 'h2g · 83 open');
+
+console.log('more projects than fit comfortably:');
+check('every tab is still present', byName['projects-many'].tabNames.length, 8);
+check('and none of them is pushed off the edge - they narrow instead',
+  overflowsIn(byName['projects-many']).map(o => o.path).filter(p => /tab/.test(p)), []);
+
+console.log('no project to show:');
+check('says so rather than drawing an empty tab strip',
+  /no repo on this machine/.test(byName['projects-none'].projectsNoteText || ''), true);
+check('and lists nothing', byName['projects-none'].taskRowCount, 0);
 
 /* -------------------------------------------------------------------- ellipsis */
 

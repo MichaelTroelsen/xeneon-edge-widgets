@@ -287,8 +287,8 @@ debugging.
 | `timeFormat` | combobox | `auto` / `12` / `24` |
 | `refreshSeconds` | slider 5–120 | 15 |
 
-**Tap the widget** to cycle four views: the queue, what is running, the run
-history, and the state of the task files.
+**Tap the widget** to cycle five views: the queue, what is running, the run
+history, the state of the task files, and one project's task list.
 
 ### Which repos it finds
 
@@ -397,6 +397,34 @@ stale only on proof: the `pid` is not running on this host **and** the recorded
 never called stale at any age — that is a hung run, which the view says instead.
 A directory with no `owner` file in it is *held by someone still starting up*,
 not stale, and is reported as exactly that.
+
+### Projects
+
+One project at a time, chosen by tapping its tab. The tabs run across the top,
+one per repo with a queue; the selected one is filled rather than merely
+outlined, because a border-only treatment is the first thing to disappear at
+the distance this display is read from. More projects narrow the tabs rather
+than pushing one off the edge — five fit at 840px today and that is not a
+property worth depending on.
+
+Underneath, that project's open tasks, paging themselves like every other list
+here. A queued row carries its mode, model and effort; a **blocked row shows
+the reason instead**, because that is what decides what happens to the task
+next and the row has one line for it.
+
+**A tap on a tab selects; a tap anywhere else still cycles the views.** The hit
+is resolved with `elementFromPoint` rather than by trusting the event target —
+the `pointerup` can be delivered on a different element from the `pointerdown`,
+and a tab's text node is not the button.
+
+**The task list is fetched separately**, at `/tasks?project=<name>`, and only
+while this view is on screen. The five real queues hold 210 tasks across 297KB,
+of which about 295KB is prose — `verify`, `why_model`, `why_lane`, `evidence` —
+that no 840×344 slot can show at any size. Trimmed to what a row draws they are
+still 49KB against the overview's 2.4KB, and the widget only ever looks at one
+project at a time, so the overview stays small and this is pulled on demand.
+Titles are capped at 90 characters and blocking reasons at 110; 90 is the
+longest title that actually occurs.
 
 ### What the feed sends
 

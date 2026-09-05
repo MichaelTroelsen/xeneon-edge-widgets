@@ -458,10 +458,12 @@ body {
   transition: width 0.4s ease;
 }
 
-/* Amber from 80%, red from 95%. is-critical is declared last so it wins when
-   both classes are set. */
-.meter.is-high .fill { background: var(--warn); }
-.meter.is-critical .fill,
+/* No is-high/is-critical here: this meter shows Finished (closed / (open +
+   closed)), where a high percentage is the BEST state, unlike the plan-
+   utilisation meter this stylesheet's shell was ported from - so the fill
+   never picks up a warning or danger colour. is-blocked is unrelated to that
+   pair; nothing in this widget applies it today, but the rule is left as the
+   hook for a future state that would mean it, same as it stood before. */
 .meter.is-blocked .fill { background: var(--bad); }
 
 /* ------------------------------------------------------------------- lists */
@@ -1182,6 +1184,20 @@ body {
   justify-content: center;
 }
 #task-rows li.st-more .row-name { flex: 0 0 auto; }
+
+/* The gap before the tab's own answer has arrived - not a claim that it came
+   back empty. Italic like .st-more (also "not a task"), but its own class:
+   the two must never be conflated in a selector, since one is a truthful
+   footer and the other is a placeholder for an answer not on screen yet. */
+#task-rows li.st-pending .row-name {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* The heading takes the same treatment as the row underneath it, so the
+   whole box - not merely one line inside it - reads as "not answered yet"
+   rather than "answered: nothing". */
+#list-tasks h2.is-pending { color: var(--muted); font-style: italic; }
 
 /* The name may ellipsis; the count never does, which is the whole reason it is
    its own element rather than text appended to the name. */

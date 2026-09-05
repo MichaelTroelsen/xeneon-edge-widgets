@@ -1,6 +1,6 @@
 # iCUE widgets — TODO
 
-## C64 Weather — 1.5.3
+## C64 Weather — 1.6.0
 
 ### Done
 
@@ -121,7 +121,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       TabButtonsEditorSetting.qml:33 calls `rowCount()` on a QVariantList, which
       throws for every possible payload — Corsair's bundled widgets included.
 
-## Claude Code Usage — 1.11.0
+## Claude Code Usage — 1.14.1
 
 ### Done
 
@@ -396,7 +396,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       cache reads free, per-request cost, non-linear curve, reporting lag. Two
       readings cannot separate those.
 
-## Task Queue — 1.3.6
+## Task Queue — 1.3.8
 
 ### Done
 
@@ -414,6 +414,14 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 - [x] **Layout suite** at 840×344, 107 checks, including visible-row counts
       (not DOM counts), resolved colours for the states that carry meaning, and
       a refresh driven through `onDataUpdated()` with a different second body.
+- [x] **The overlap check is vacuous** — repointed at computed `position`
+      instead of an inline-style selector nothing sets. Independently
+      re-verified with a second, different overlay: it caught eight elements
+      across seven renders, confirming the fixed probe actually fails.
+- [x] **Orphan detection has a documented blind spot** — one README paragraph
+      says Windows PID reuse can make a dead runner read as alive and silence
+      the orphan alarm, and that this is deliberate per `LOCKING.md` (a false
+      reap is worse than a missed one).
 
 ### Open
 
@@ -476,13 +484,6 @@ currently saying something untrue in the first three; the rest are gaps.
       `widget.js:582` yields `"undefined"` prepended to the title for any
       state not in the map; `task.waitingOn.join()` at `:597` throws if
       `waitingOn` is null. → `taskqueue-guard-state-mark-and-waitingon`
-- [ ] **The overlap check is vacuous** (test debt, high). When the clock was
-      removed the probe was repointed at
-      `.widget-root > [style*="position: absolute"]`
-      (`TaskQueue/test/layout.test.js:763`) — an INLINE style nothing sets —
-      so it finds no element and the assertion at `:1133` passes
-      unconditionally. Probe computed `position` instead, or delete it and
-      say so. → `taskqueue-overlap-probe-cannot-fail`
 - [ ] **Nothing verifies any slot but 840×344, while README.md:4 claims every
       slot size in both orientations** (test debt, medium). The inherited
       media queries in `TaskQueue.css:662-689` reference `.body` and
@@ -519,14 +520,6 @@ currently saying something untrue in the first three; the rest are gaps.
       `startClock` no longer names what it does. `TaskQueue.css`: roughly
       300 inherited lines (`.cols`, `.why`, `.models`, `.tok`, `.mdl`,
       `.lists-detail`) matching nothing. → `taskqueue-remove-dead-code`
-- [ ] **Orphan detection has a documented blind spot** (note, not a fix).
-      `pidAlive()`/`isOrphan()` at `tasks.js:117-135`: Windows reuses PIDs
-      aggressively, so a dead runner's PID taken by an unrelated process reads
-      as alive and the alarm stays quiet. `LOCKING.md` accepts this
-      deliberately — better than reaping live work. Worth one line in the
-      README so nobody trusts a silent Files view more than it deserves.
-      → `taskqueue-document-pid-reuse-blind-spot`
-
 ## All three widgets
 
 - [x] **tab-buttons throws in iCUE's settings panel** (fixed in `c1f7644` by

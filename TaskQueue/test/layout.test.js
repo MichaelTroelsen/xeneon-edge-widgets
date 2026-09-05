@@ -216,6 +216,16 @@ function emptyHistory() {
            span: { from: null, to: null } };
 }
 
+/* A queue that is nearly DONE - 96% closed. Finished is the best state this
+   meter can be in, so its fill must never pick up a warning or danger colour
+   the way a plan-utilisation meter's would at the same percentage. */
+function finishedFixture() {
+  const f = baseFixture();
+  f.repos = [repo('SIDM2', 4, 96, 0, { subtask: 4 })];
+  f.totals = { open: 4, closed: 96, repos: 1, blocked: 0, byMode: { subtask: 4 } };
+  return f;
+}
+
 /* No repo on this machine has a queue: the view must SAY so rather than draw
    a meter at zero, which would read as a queue that is finished. */
 function unavailableFixture() {
@@ -437,6 +447,16 @@ function manyProjectsFixture() {
   return f;
 }
 
+/* A reading old enough that no reasonable person would call the feed live:
+   45s, against the default 10s refresh interval's 30s (3-cycle) threshold.
+   Used with a rejecting poll, below, to prove a dead feed is marked as one
+   rather than quietly kept looking current. */
+function staleFixture() {
+  const f = baseFixture();
+  f.generatedAt = Date.now() - 45000;
+  return f;
+}
+
 function noHistoryFixture() {
   const f = baseFixture();
   f.repos[0].historyError = HISTORY_ERROR;
@@ -448,6 +468,17 @@ const HARNESS = `<script>
 window.__FIXTURE__ = __PAYLOAD__;
 window.__PROJECTS__ = __PROJECT_BODIES__;
 window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
+/* How the ?project= stub is allowed to misbehave: a status other than 200 with
+   a body of its own, or - for the race - an answer that is never given at all
+   until the timeline below hands it over. */
+window.__PROJECT_CONTROL__ = __CONTROL_JSON__;
+/* How the OVERVIEW poll is allowed to misbehave: 0 means every call succeeds;
+   an N > 0 makes the Nth call to the overview endpoint (1-indexed, so 2 is
+   "the poll after the first good one") reject outright - a dropped
+   connection, not an HTTP error with a body, which is the shape a rejected
+   fetch() promise actually has. */
+window.__FEED_FAIL_AT__ = __FEED_FAIL_ON__;
+window.__FEED_CALLS__ = 0;
 (function () {
   var style = document.createElement('style');
   /* Calibration 3: transitions do not advance under --virtual-time-budget, and
@@ -477,16 +508,40 @@ window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
     if (m) {
       var name = decodeURIComponent(m[1]);
       window.__PROJECT_FETCHES__ = (window.__PROJECT_FETCHES__ || 0) + 1;
+      /* WHICH project was asked for, and in what order. A bare count cannot
+         tell a first request for the tab the reader moved TO from a second one
+         fired on top of it, and those are different defects. */
+      window.__PROJECT_LOG__ = window.__PROJECT_LOG__ || [];
+      window.__PROJECT_LOG__.push(name);
       /* A second body for the second request, so "did it refetch" is
          answerable from what is on screen rather than from a call count. */
       var later = window.__PROJECTS_AFTER__ || {};
       var body = (window.__PROJECT_FETCHES__ > 1 && later[name]) ||
         (window.__PROJECTS__ || {})[name] ||
         { project: name, tasks: [], error: 'no project called "' + name + '"' };
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: function () { return Promise.resolve(body); }
-      });
+      var ctl = window.__PROJECT_CONTROL__ || {};
+      var status = ctl.status || 200;
+      var answer = {
+        ok: status >= 200 && status < 300, status: status,
+        json: function () { return Promise.resolve(ctl.body || body); }
+      };
+      /* HELD, not answered. The race below needs one request still outstanding
+         while the next goes out, which a stub that resolves immediately can
+         never produce - every interleaving collapses to the same one. */
+      if (ctl.hold) {
+        window.__HELD__ = window.__HELD__ || [];
+        return new Promise(function (resolve) {
+          window.__HELD__.push({
+            name: name, settled: false,
+            release: function () { resolve(answer); }
+          });
+        });
+      }
+      return Promise.resolve(answer);
+    }
+    window.__FEED_CALLS__ += 1;
+    if (window.__FEED_FAIL_AT__ && window.__FEED_CALLS__ === window.__FEED_FAIL_AT__) {
+      return Promise.reject(new Error('network error'));
     }
     return Promise.resolve({
       ok: true, status: 200,
@@ -663,6 +718,8 @@ window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
     out.doneFillPercent = (doneFill && doneTrack && doneTrack.getBoundingClientRect().width)
       ? Math.round((doneFill.getBoundingClientRect().width /
                     doneTrack.getBoundingClientRect().width) * 100) : null;
+    var doneMeter = document.getElementById('m-done');
+    out.doneMeterClasses = doneMeter ? Array.prototype.slice.call(doneMeter.classList) : [];
     out.doneValueText = (document.getElementById('done-value') || {}).textContent || null;
     out.doneSubText = (document.getElementById('done-sub') || {}).textContent || null;
     out.reposText = (document.getElementById('repos') || {}).textContent || null;
@@ -745,6 +802,13 @@ window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
     out.errorHintText = errorHintEl ? errorHintEl.textContent : null;
     out.errorStateVisible = errorStateEl ?
       window.getComputedStyle(errorStateEl).display !== 'none' : null;
+
+    /* A failed poll must not silently re-render the old reading with no sign
+       it is stale - see .head .updated.is-stale in TaskQueue.css. */
+    var updatedEl = document.getElementById('updated');
+    out.updatedIsStale = updatedEl ? updatedEl.classList.contains('is-stale') : null;
+    out.updatedText = updatedEl ? updatedEl.textContent : null;
+    out.feedCalls = window.__FEED_CALLS__ || 0;
 
     var activeView = document.querySelector('.view.is-active');
     out.activeViewClasses = activeView ? activeView.getAttribute('class') : null;
@@ -864,6 +928,14 @@ window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
       return e ? e.textContent : null;
     })();
 
+    /* --- what was actually asked of the feed, and what is still unanswered --- */
+    out.projectFetchLog = (window.__PROJECT_LOG__ || []).slice();
+    out.raceInFlightAtRelease = window.__RACE_INFLIGHT__ || null;
+    out.raceReleased = window.__RACE_RELEASED__ || null;
+    out.projectsUnanswered = (window.__HELD__ || [])
+      .filter(function (h) { return !h.settled; })
+      .map(function (h) { return h.name; });
+
     out.pageErrors = (window.__ERRORS__ || []).slice(0, 5);
     return out;
   }
@@ -892,6 +964,30 @@ window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
        what re-fetches the feed - rather than by poking the widget's internals.
        The 15s poll is far too long for a harness, and asserting that the
        source contains a call would prove nothing about whether it runs. */
+    /* THE INTERLEAVING. Two requests are outstanding - one for the tab the
+       reader left, one for the tab they are on. The ABANDONED one is answered
+       first, and only after that does the poll come round again. Every step is
+       on its own timeout rather than left to microtask order, so this is the
+       sequence that runs rather than whichever one the engine happens to pick.
+       Both requests answering instantly, as they do everywhere else in this
+       file, makes the defect this constructs unreachable. */
+    var release = __RACE_RELEASE__;
+    if (release) {
+      var held = window.__HELD__ || [];
+      window.__RACE_INFLIGHT__ = held.filter(function (h) { return !h.settled; })
+        .map(function (h) { return h.name; });
+      window.__RACE_RELEASED__ = null;
+      for (var hi = 0; hi < held.length; hi++) {
+        if (held[hi].name === release && !held[hi].settled) {
+          held[hi].settled = true;
+          window.__RACE_RELEASED__ = release;
+          held[hi].release();
+          break;
+        }
+      }
+      /* The poll, after the stale answer has been fully handled. */
+      setTimeout(function () { window.TaskQueue.onDataUpdated(); }, 40);
+    }
     if (__REFRESH__) window.TaskQueue.onDataUpdated();
     setTimeout(function () {
       var payload;
@@ -912,13 +1008,17 @@ check('the widget script tag was found, so the harness has somewhere to go',
 const PRE_TAP_MS = 200;   /* time for the stubbed fetch's microtask chain and first render */
 const POST_TAP_MS = 150;  /* time for the tap(s) to be handled and the DOM to settle */
 
-function writePage(name, taps, fixture, mutate, projects, tabIndex, projectsAfter, refresh) {
+function writePage(name, taps, fixture, mutate, projects, tabIndex, projectsAfter, refresh, opts) {
+  const o = opts || {};
   const payloadJson = JSON.stringify(fixture).replace(/<\/script/gi, '<\\/script');
   const projectsJson = JSON.stringify(projects || {}).replace(/<\/script/gi, '<\\/script');
   const afterJson = JSON.stringify(projectsAfter || {}).replace(/<\/script/gi, '<\\/script');
   let html = indexSrc.replace(SCRIPT_TAG, HARNESS
     .replace('__TAB_INDEX__', String(tabIndex == null ? -1 : tabIndex))
     .replace('__REFRESH__', refresh ? 'true' : 'false')
+    .replace('__CONTROL_JSON__', () => JSON.stringify(o.control || {}))
+    .replace('__FEED_FAIL_ON__', String(o.feedFailOn || 0))
+    .replace('__RACE_RELEASE__', () => JSON.stringify(o.release || null))
     .replace('__PROJECT_BODIES_AFTER__', afterJson)
     .replace('__PROJECT_BODIES__', projectsJson)
     .replace('__PAYLOAD__', payloadJson)
@@ -1042,6 +1142,7 @@ console.log('renders:');
 
 const CASES = [
   { name: 'queue', taps: 0, want: 'queue', fixture: baseFixture() },
+  { name: 'queue-finished', taps: 0, want: 'queue', fixture: finishedFixture() },
   { name: 'queue-unavailable', taps: 0, want: 'queue', fixture: unavailableFixture() },
   { name: 'queue-repo-error', taps: 0, want: 'queue', fixture: repoErrorFixture() },
   { name: 'live', taps: 1, want: 'live', fixture: runningFixture() },
@@ -1049,7 +1150,19 @@ const CASES = [
   { name: 'history', taps: 2, want: 'history', fixture: historyFixture() },
   { name: 'history-none', taps: 2, want: 'history', fixture: noHistoryFixture() },
   { name: 'files', taps: 3, want: 'files', fixture: filesFixture() },
-  { name: 'files-alarms', taps: 3, want: 'files', fixture: alarmFixture() }
+  { name: 'files-alarms', taps: 3, want: 'files', fixture: alarmFixture() },
+  /* THE STALE READING. Data older than 3 refresh cycles is already rendered,
+     and the poll that comes after it rejects outright - a dropped connection,
+     not a bad HTTP status. The old reading must stay on screen (2fe3364's
+     "keep the last good reading" rule still holds) but marked stale, so the
+     panel does not claim a dead queue is a live one. */
+  { name: 'queue-stale-after-reject', taps: 0, want: 'queue', fixture: staleFixture(),
+    refresh: true, feedFailOn: 2 },
+  /* THE OPPOSITE CLAIM. A fresh reading, refreshed again successfully, must
+     NOT be marked stale - otherwise "is-stale" could be passing above for the
+     wrong reason (always on) rather than because the poll actually failed. */
+  { name: 'queue-fresh-after-refresh', taps: 0, want: 'queue', fixture: baseFixture(),
+    refresh: true }
 ];
 
 /* The projects view needs the second endpoint stubbed and, for the tab test, a
@@ -1070,18 +1183,54 @@ const PROJECT_BODIES_AFTER = {
   })()
 };
 
+/* What the server answers a project request with when it cannot serve one -
+   the same shape the overview's 503 carries, because it is the same contract.
+   As long as a real filesystem error, because that is what has to fit. */
+const PROJECT_ERROR_TEXT =
+  'whattask.json could not be read for SIDM2: EBUSY, resource busy or locked';
+
+/* A 200 whose body is not a task list at all: a proxy's own JSON, a half-built
+   snapshot, a renamed field. There is no `project` in it, so nothing can match
+   it to the tab on screen - and the tab on screen already has rows. */
+const SHAPELESS_AFTER = {
+  SIDM2: { ok: true, generatedAt: Date.now(), items: [] }
+};
+
 const PROJECT_CASES = [
   { name: 'projects', taps: 4, want: 'projects', fixture: baseFixture(), tab: null },
   { name: 'projects-tab-2', taps: 4, want: 'projects', fixture: baseFixture(), tab: 1 },
   { name: 'projects-many', taps: 4, want: 'projects', fixture: manyProjectsFixture(), tab: null },
   { name: 'projects-none', taps: 4, want: 'projects', fixture: unavailableFixture(), tab: null },
   { name: 'projects-refreshed', taps: 4, want: 'projects', fixture: baseFixture(),
-    tab: null, after: PROJECT_BODIES_AFTER, refresh: true }
+    tab: null, after: PROJECT_BODIES_AFTER, refresh: true },
+  /* The project endpoint's own three-state contract, same as the overview's:
+     a non-2xx carries the real reason in a JSON body. Read it. */
+  { name: 'projects-http-error', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: null, control: { status: 503, body: { error: PROJECT_ERROR_TEXT } } },
+  /* A 200 that is not a task list. The first answer is a real one, so there
+     ARE rows on screen for the second - shapeless - answer to leave standing. */
+  { name: 'projects-shapeless', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: null, after: SHAPELESS_AFTER, refresh: true },
+  /* Two requests outstanding at once, the abandoned tab's answered first. */
+  { name: 'projects-race', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: 1, control: { hold: true }, release: 'SIDM2' },
+  /* THE GAP. `control: { hold: true }` with no `release` never answers at
+     all within the render, which is exactly "the fetch resolves LATE" as far
+     as anything measured here can tell - there is no data yet and there is
+     not going to be one before the page measures itself. First entry into
+     the view: the very first ?project= request the widget ever makes. */
+  { name: 'projects-pending-first', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: null, control: { hold: true } },
+  /* Same gap, reached the other way: a tab already showing SIDM2 is pressed
+     to h2g, whose own request is the one left outstanding. */
+  { name: 'projects-pending-tab', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: 1, control: { hold: true } }
 ];
 
 const results = [];
 for (const c of CASES) {
-  const r = render(writePage(c.name, c.taps, c.fixture));
+  const r = render(writePage(c.name, c.taps, c.fixture, null, null, null, null, c.refresh,
+                             { feedFailOn: c.feedFailOn }));
   r.name = c.name;
   r.wantView = c.want;
   results.push(r);
@@ -1089,7 +1238,8 @@ for (const c of CASES) {
 }
 for (const c of PROJECT_CASES) {
   const r = render(writePage(c.name, c.taps, c.fixture, null, PROJECT_BODIES, c.tab,
-                             c.after, c.refresh));
+                             c.after, c.refresh,
+                             { control: c.control, release: c.release }));
   r.name = c.name;
   r.wantView = c.want;
   results.push(r);
@@ -1328,6 +1478,56 @@ check('three running rows now, where the first fetch had two',
 check('while a view that was never refreshed still shows the first answer',
   byName['projects'].rowStates.filter(v => v === 'running').length, 2);
 
+/* The project endpoint gets the same three-state treatment the overview got in
+   2fe3364: a non-2xx carries the reason in a JSON body, and dropping it left
+   the tab showing an empty list, which reads as "this project has no work". */
+console.log('the project endpoint answers with an error:');
+{
+  const e = byName['projects-http-error'];
+  check('the reason is on screen rather than an empty list',
+    { shown: e.projectsNoteDisplay !== 'none', text: e.projectsNoteText },
+    { shown: true, text: PROJECT_ERROR_TEXT });
+  check('and no task rows are drawn under it', e.taskRowCount, 0);
+}
+
+/* A 200 whose body is not a task list matched no tab, so it was dropped in
+   silence and the previous project's rows stayed on screen underneath - a
+   stale list that looks live, which is worse than an empty one. */
+console.log('the project endpoint answers 200 with something else:');
+{
+  const s = byName['projects-shapeless'];
+  check('the rows the shapeless answer replaced are gone',
+    { rows: s.taskRowCount, noteShown: s.projectsNoteDisplay !== 'none' },
+    { rows: 0, noteShown: true });
+  check('and the note names the project it could not get a list for',
+    s.projectsNoteText, 'the feed answered without a task list for SIDM2');
+  /* The first answer WAS a real one, so there were rows to leave standing -
+     without this the check above could pass on a view that never had any. */
+  check('while the same page before the second answer did have rows',
+    byName['projects'].taskRowCount > 0, true);
+}
+
+/* THE RACE. Both requests are in flight; the abandoned tab's answers first.
+   Clearing projectPending on it reports the CURRENT tab's request as finished
+   while it is still outstanding, so the next poll fires a second one on top of
+   it - two requests for one tab, and whichever lands last wins. */
+console.log('a late answer for a tab the reader left:');
+{
+  const q = byName['projects-race'];
+  check('two requests really were outstanding at once',
+    q.raceInFlightAtRelease, ['SIDM2', 'h2g']);
+  check('and it was the abandoned tab\'s that was answered',
+    { released: q.raceReleased, onScreen: q.tabActive }, { released: 'SIDM2', onScreen: ['h2g'] });
+  check('the current tab\'s request was still unanswered when the poll came round',
+    q.projectsUnanswered.indexOf('h2g') >= 0, true);
+  /* The assertion this case exists for: after the poll, the feed has been
+     asked for h2g ONCE. Twice means the stale answer cleared the in-flight
+     marker. Named in order rather than counted, so a run that asked for the
+     wrong project cannot pass. */
+  check('so the poll did not fire a second request on top of it',
+    q.projectFetchLog, ['SIDM2', 'h2g']);
+}
+
 console.log('the projects list does not page itself:');
 /* Every other list advances because the webview forwards no drags and a row
    below the fold would otherwise be unreachable. This one is long and meant to
@@ -1345,6 +1545,33 @@ check('the view did NOT advance', byName['projects-tab-2'].activeDotView, 'proje
 check('and the list follows the tab',
   byName['projects-tab-2'].taskHeadingText, 'h2g · 83 open');
 
+/* "X · none open" is a claim about the queue - it says the feed was asked and
+   answered empty. During the gap before an answer exists at all, that claim
+   is false: showing it here is the bug this file exists to catch, not a
+   cosmetic one - the panel is read from across a room with no way to tell a
+   flash from a fact. */
+console.log('the gap before an answer exists:');
+{
+  const first = byName['projects-pending-first'];
+  check('first entry into the view reads as pending, not as an empty project',
+    { headingSaysNoneOpen: /none open/.test(first.taskHeadingText || ''),
+      headingSaysChecking: /checking/i.test(first.taskHeadingText || '') },
+    { headingSaysNoneOpen: false, headingSaysChecking: true });
+  check('naming the tab it is checking',
+    first.taskHeadingText, 'SIDM2 · checking…');
+  check('and no task rows are drawn as if the list had already answered',
+    first.taskRowCount > 0 && first.rowStates.length === 0, true);
+
+  const tabP = byName['projects-pending-tab'];
+  check('the tab really did switch to the one pressed', tabP.tabActive, ['h2g']);
+  check('a tab press with its own request still in flight reads as pending too',
+    { headingSaysNoneOpen: /none open/.test(tabP.taskHeadingText || ''),
+      headingSaysChecking: /checking/i.test(tabP.taskHeadingText || '') },
+    { headingSaysNoneOpen: false, headingSaysChecking: true });
+  check('naming the tab just pressed, not the one left',
+    tabP.taskHeadingText, 'h2g · checking…');
+}
+
 console.log('more projects than fit comfortably:');
 check('every tab is still present', byName['projects-many'].tabNames.length, 8);
 check('and none of them is pushed off the edge - they narrow instead',
@@ -1354,6 +1581,43 @@ console.log('no project to show:');
 check('says so rather than drawing an empty tab strip',
   /no repo on this machine/.test(byName['projects-none'].projectsNoteText || ''), true);
 check('and lists nothing', byName['projects-none'].taskRowCount, 0);
+
+/* THE HEADER SUBTITLE, #repos, across all five views reached by 0-4 taps.
+   Only renderQueue and renderFiles ever wrote it, so on the other three it
+   held whatever the LAST view to draw it left behind - a sentence about a
+   view the reader is no longer looking at. "changed since the last view"
+   would pass on two wrong strings; "non-empty" would pass on stale text
+   itself. The real property: under view N, #repos is either blank or a
+   statement about N - so only queue's and files' own shapes are accepted,
+   and anything under live/history/projects that is not blank is, by
+   construction, some other view's sentence. */
+console.log('the header subtitle does not go stale across views:');
+{
+  const NAMES = ['queue', 'live', 'history', 'files', 'projects'];
+  check('all five view renders came back with no error',
+    NAMES.map(n => !!byName[n] && !byName[n].error), NAMES.map(() => true));
+  check('and the tap sequence actually landed on each one',
+    NAMES.map(n => byName[n] && byName[n].activeDotView), NAMES);
+
+  function subtitleIsAboutItsOwnView(view, text) {
+    if (!text) return true;                 /* silence is never stale */
+    if (view === 'queue') return /^\d+ repos? · /.test(text);
+    if (view === 'files') return /^\d+ repos? · (all clear|\d+ alarms?|\d+ mutex held)$/.test(text);
+    return false;   /* live, history and projects have nothing of their own to say here */
+  }
+  const stale = NAMES
+    .map(n => ({ n, text: byName[n] && byName[n].reposText }))
+    .filter(({ n, text }) => !subtitleIsAboutItsOwnView(n, text));
+  check('#repos names its own view, or says nothing, in every one of the five',
+    stale.map(s => `${s.n}: saw "${s.text}"`), []);
+
+  /* Not vacuous: queue and files really do carry their own non-empty
+     subtitle here, so the check above is not merely confirming #repos is
+     blank everywhere or that the views never rendered. */
+  check('queue and files really do have their own subtitle (the check above is not just "always blank")',
+    { queue: byName['queue'].reposText, files: byName['files'].reposText },
+    { queue: '5 repos · 5 waiting on you', files: '5 repos · all clear' });
+}
 
 /* -------------------------------------------------------------------- ellipsis */
 
@@ -1382,11 +1646,44 @@ check('both raw counts are shown, not only the percentage',
 check('the count the human is blocking is called out on its own',
   byName['queue'].reposText, '5 repos · 5 waiting on you');
 
+console.log('a nearly-finished queue:');
+/* Finished is the BEST state this meter can be in - it is not a plan
+   utilisation gauge running out of room, it is closed / (open + closed).
+   A high percentage must never pick up the amber/red styling a high-is-bad
+   meter would use at the same number. */
+check('96% closed carries neither is-high nor is-critical',
+  byName['queue-finished'].doneMeterClasses.filter(c => c === 'is-high' || c === 'is-critical'),
+  []);
+
 console.log('a repo that could not be read:');
 check('is still listed rather than dropped',
   byName['queue-repo-error'].repoRowCount, 5);
 check('and shows its reason instead of a zero that would read as an empty queue',
   byName['queue-repo-error'].repoRowErrors, 1);
+
+/* A failed poll must not silently re-render the old reading with no sign it
+   is stale - the usage widget's .head .updated.is-stale is the precedent
+   (2fe3364's sibling). Three missed refresh cycles (30s at the 10s default),
+   not one: a single dropped poll on a flaky connection is not the same event
+   as a feed that has actually gone quiet, and the panel must not cry wolf on
+   the first miss. */
+console.log('a poll that fails leaves a visible mark on the Updated stamp:');
+check('the second poll (the one made to reject) actually ran',
+  byName['queue-stale-after-reject'].feedCalls, 2);
+check('the rejection was caught rather than left unhandled',
+  byName['queue-stale-after-reject'].pageErrors, []);
+check('the stamp is marked stale rather than looking current',
+  byName['queue-stale-after-reject'].updatedIsStale, true);
+check('and the reading itself is still shown, not blanked',
+  !!byName['queue-stale-after-reject'].updatedText, true);
+/* THE OPPOSITE CLAIM: could the check above pass because is-stale is set on
+   EVERY render, poll outcome be damned? A fresh reading, refreshed again
+   successfully, proves it is not - if it were unconditional this would also
+   read stale. */
+check('a healthy poll of fresh data leaves the stamp unmarked',
+  byName['queue-fresh-after-refresh'].updatedIsStale, false);
+check('and the plain first render of fresh data is unmarked too',
+  byName['queue'].updatedIsStale, false);
 
 console.log('no queue anywhere:');
 check('the reason replaces the meter',

@@ -20,8 +20,6 @@
   var TAP_SLOP_PX = 12;       /* movement beyond this is a scroll, not a tap */
   var TAP_MAX_MS = 700;
   var PAGE_MS = 5000;         /* dwell on each page of an overflowing region */
-  var HIGH_WATER = 80;        /* percent at which a bar turns amber */
-  var CRITICAL_WATER = 95;    /* and red */
 
   var els = {};
   var timer = null;
@@ -125,13 +123,16 @@
 
   /* ---------- rendering ---------- */
 
-  /* One place decides bar width and colour, so the session and week bars cannot
-     drift apart on their thresholds. */
+  /* No amber/red thresholds here, unlike the usage widget this shell was
+     ported from: there the meter shows PLAN UTILISATION, where a high
+     percentage means you are running out, so amber-at-80/red-at-95 is right.
+     This meter shows FINISHED - closed / (open + closed) - where a high
+     percentage is the best state, so a danger colour would say the opposite
+     of what it means. The fill stays the plain accent colour at every
+     percentage; only its width (still run through clampRange) changes. */
   function setBar(meterEl, fillEl, percent) {
     var p = clampRange(percent, 0, 100, 0);
     fillEl.style.width = p + '%';
-    meterEl.classList.toggle('is-high', p >= HIGH_WATER && p < CRITICAL_WATER);
-    meterEl.classList.toggle('is-critical', p >= CRITICAL_WATER);
   }
   function cell(tag, text, cls) {
     var el = document.createElement(tag);
@@ -156,9 +157,24 @@
        project's count. */
     if (base != null) h.setAttribute('data-base', base);
     else if (!h.getAttribute('data-base')) h.setAttribute('data-base', h.textContent);
+    h.classList.remove('is-pending');
     var word = suffix || 'active';
     h.textContent = h.getAttribute('data-base') + ' · ' +
       (total ? total + ' ' + word : 'none ' + word);
+  }
+
+  /* The gap before an answer exists at all - a fetch still in flight, or one
+     never even started yet - is not "zero of them": feeding it through
+     setHeading as a count of 0 reads as "checked, and it is empty", which is
+     a claim about the queue the widget cannot back up yet. This is its own
+     path with its own wording and its own class, not a suffix trick layered
+     on the real one. */
+  function setHeadingPending(ul, base) {
+    var h = ul.parentNode && ul.parentNode.querySelector('h2');
+    if (!h) return;
+    h.setAttribute('data-base', base);
+    h.classList.add('is-pending');
+    h.textContent = base + ' · checking…';
   }
 
   /* The note's own box fills the view so its text can be centred in it, which
@@ -473,8 +489,14 @@
     selectedProject = name;
     projectData = null;      /* do not show one project's tasks under another's tab */
     projectError = '';
-    render();
+    /* fetchProject() FIRST: it sets projectPending synchronously, before any
+       fetch actually settles. Rendering before that call painted the gap with
+       whatever projectPending held from the tab the reader just left - never
+       this one - so renderProjects had no way to tell "fetching h2g" from
+       "nothing was ever asked for h2g" and fell through to the empty-project
+       wording. Same order applyView() already used for the first-entry case. */
     fetchProject();
+    render();
   }
 
   /* Its own request, on the same cadence as the overview but only while this
@@ -488,26 +510,57 @@
     if (projectPending === name) return;
     projectPending = name;
 
+    /* Only the request that is still the pending one may report itself
+       finished. An answer for a tab the reader has left arrives while the
+       CURRENT tab's request is in flight; clearing the marker on it says that
+       one is done, and the next poll then fires a second request on top of it
+       - two in flight for one tab, and whichever lands last wins. */
+    function settle(who) {
+      if (projectPending === who) projectPending = null;
+    }
+
     var controller = (typeof AbortController === 'function') ? new AbortController() : null;
     var timeout = setTimeout(function () { if (controller) controller.abort(); }, REQUEST_TIMEOUT_MS);
 
     fetch(url, controller ? { signal: controller.signal, cache: 'no-store' } : { cache: 'no-store' })
       .then(function (res) {
         clearTimeout(timeout);
+        if (!res.ok) {
+          /* Same three-state contract as the overview: a non-2xx carries the
+             real cause in a JSON body. Read it before throwing - a status
+             code alone tells the reader nothing about which project could
+             not be served, or why. */
+          return res.json().catch(function () { return null; }).then(function (body) {
+            var err = new Error('HTTP ' + res.status);
+            if (body && typeof body.error === 'string' && body.error) err.message = body.error;
+            throw err;
+          });
+        }
         return res.json();
       })
       .then(function (json) {
-        projectPending = null;
+        settle(name);
         /* A late answer for a tab the reader has already left must not
            overwrite the one they are looking at now. */
-        if (json && json.project !== currentProject()) return;
+        if (name !== currentProject()) return;
+        /* An answer with no task list in it is not this project's. Dropping it
+           in silence leaves the PREVIOUS project's rows standing under this
+           tab, which reads as a live list rather than as a failure. */
+        if (!json || json.project !== name) {
+          projectData = null;
+          projectError = 'the feed answered without a task list for ' + name;
+          if (view === 'projects') render();
+          return;
+        }
         projectData = json;
-        projectError = (json && json.error) || '';
+        projectError = json.error || '';
         if (view === 'projects') render();
       })
       .catch(function (err) {
         clearTimeout(timeout);
-        projectPending = null;
+        settle(name);
+        if (name !== currentProject()) return;
+        projectData = null;
         projectError = (err && err.message) ? err.message : 'request failed';
         if (view === 'projects') render();
       });
@@ -549,6 +602,24 @@
       /* The feed's own words, not a guess at what went wrong. */
       setNote(els.projectsNote, projectError);
       els.listTasks.style.display = 'none';
+      return;
+    }
+
+    /* No answer for the tab on screen yet - either it was just pressed, or
+       this is the first time the view has ever been opened - and one really
+       is on its way (projectPending says so). Rendering the empty-tasks
+       branch below in this gap would print "<project> · none open", which is
+       a claim about the queue: it says checked-and-empty when the truth is
+       not-checked-yet. Once the fetch settles projectData or projectError is
+       set and this branch stops matching, real data included. */
+    var pending = !projectData && !projectError && projectPending === current;
+    if (pending) {
+      setHeadingPending(els.taskRows, current);
+      els.taskRows.textContent = '';
+      var waitLi = document.createElement('li');
+      waitLi.className = 'st-pending';
+      waitLi.appendChild(cell('span', 'checking ' + current + '…', 'row-name'));
+      els.taskRows.appendChild(waitLi);
       return;
     }
 
@@ -621,11 +692,32 @@
 
   /* ---------- the dispatcher ---------- */
 
+  /* THE SUBTITLE RULE, for #repos under the header: the dispatcher clears it
+     before handing off to a view, and a view fills it in only when it has its
+     own true statement to make about itself (renderQueue and renderFiles do;
+     renderLive, renderHistory and renderProjects say nothing here because
+     their own headings already carry their counts). Clearing centrally rather
+     than requiring every view to write something - even an empty string - is
+     the point: a sixth view added later that never touches #repos inherits an
+     empty line for free, instead of silently inheriting whatever the view
+     before it left behind. That inheriting-the-previous-view's-sentence bug
+     is exactly what shipped: #repos held the queue or files text underneath
+     live/history/projects until they were next drawn. */
   function render() {
     if (!data) return;
     showState('content');
 
     els.updated.textContent = data.generatedAt ? formatStamp(data.generatedAt) : '';
+    /* Same rule as the usage widget's .updated.is-stale (2fe3364's sibling):
+       three missed refresh cycles, not one. A single failed poll on a flaky
+       connection keeps rendering the last good reading unmarked - the feed
+       could still be alive and merely slow - but once three cycles have gone
+       by with no successful fetch, generatedAt is that old and the panel says
+       so instead of quietly showing a dead queue as a live one. */
+    var staleAfter = readRefreshSeconds() * 3000;
+    els.updated.classList.toggle('is-stale',
+      !!data.generatedAt && (Date.now() - data.generatedAt) > staleAfter);
+    els.repos.textContent = '';
 
     if (view === 'queue') renderQueue();
     else if (view === 'live') renderLive();

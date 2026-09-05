@@ -489,6 +489,97 @@ window.__FIXTURE__ = __PAYLOAD__;
       }
     }
 
+    /* THE CLOCK COVERS NOTHING. An overlap is not an overflow: the clock is
+       absolutely positioned over the views (see .clock in ClaudeUsage.css), so
+       when it lands on a row both boxes are still legitimately inside
+       .widget-root and the overflow loop above sees nothing wrong - that is
+       exactly how the why-strip collision reached hardware on 2026-09-05.
+       Ported from TaskQueue/test/layout.test.js. Collect any visible leaf that
+       carries text and intersects the clock's box. */
+    var clockEl = document.getElementById('clock');
+    out.clockPresent = !!clockEl;
+    /* Whether the clock is genuinely ABSENT (not merely non-overlapping)
+       matters on its own: with the clock gone entirely, "does not overlap
+       the strip" is trivially true and proves nothing. This is what lets a
+       check tell "dropped while has-why" apart from "dropped everywhere". */
+    out.clockDisplay = clockEl ? window.getComputedStyle(clockEl).display : null;
+    var viewUsageEl = document.querySelector('.view-usage');
+    out.hasWhy = viewUsageEl ? viewUsageEl.classList.contains('has-why') : false;
+    /* An inline style attribute is not how anything here gets positioned - the
+       stylesheet does that - so probing for one always misses. What actually
+       takes an element out of flow and over its siblings is a COMPUTED
+       position of absolute or fixed; that is what must be probed for. */
+    var overlay = clockEl;
+    if (!overlay) {
+      var overlayCandidates = root.querySelectorAll('*');
+      for (var oi = 0; oi < overlayCandidates.length; oi++) {
+        var candidatePos = window.getComputedStyle(overlayCandidates[oi]).position;
+        if (candidatePos === 'absolute' || candidatePos === 'fixed') {
+          overlay = overlayCandidates[oi];
+          break;
+        }
+      }
+    }
+    out.clockOverlaps = [];
+    if (overlay && window.getComputedStyle(overlay).display !== 'none') {
+      var c = overlay.getBoundingClientRect();
+      if (c.width > 0 && c.height > 0) {
+        var allLeaves = root.querySelectorAll('*');
+        for (var li = 0; li < allLeaves.length; li++) {
+          var lel = allLeaves[li];
+          if (lel === overlay || lel.children.length) continue;
+          if (!(lel.textContent || '').trim()) continue;
+          if (lel.offsetParent === null) continue;
+          var lbb = lel.getBoundingClientRect();
+          if (lbb.width <= 0 || lbb.height <= 0) continue;
+          var lsc = scrollingAncestor(lel);
+          var lsr = lsc ? lsc.getBoundingClientRect() : null;
+
+          /* Many labels here (.note, .fig .v, table cells) are block/flex
+             children stretched to their container's full width with
+             white-space:nowrap + text-overflow:ellipsis, so the ELEMENT's box
+             routinely reaches past where its short, left-aligned text
+             actually ends - measuring the box would flag the clock as
+             "covered" by empty space nowhere near the glyphs. A Range over
+             the element's text gives the actual painted glyph rects (one per
+             line), which is what "a leaf that carries text ... intersects the
+             clock's box" means. */
+          var rects;
+          try {
+            var range = document.createRange();
+            range.selectNodeContents(lel);
+            rects = Array.prototype.slice.call(range.getClientRects());
+          } catch (e) { rects = null; }
+          if (!rects || !rects.length) rects = [lbb];
+
+          for (var ri = 0; ri < rects.length; ri++) {
+            var lr = rects[ri];
+            if (lr.width <= 0 || lr.height <= 0) continue;
+            var rTop = lr.top, rBottom = lr.bottom, rLeft = lr.left, rRight = lr.right;
+            /* A row scrolled out of view inside a paging list still reports
+               its unclipped layout rect, which can sit anywhere - including
+               over the clock. It is not PAINTED there, so it is not an
+               overlap. Clip to what the scrolling ancestor actually shows,
+               rather than a binary in/out test - a row straddling the
+               scroller's own bottom edge is genuinely painted only above that
+               edge, and the clipped-away remainder must not count. */
+            if (lsr) {
+              rTop = Math.max(rTop, lsr.top);
+              rBottom = Math.min(rBottom, lsr.bottom);
+              if (rBottom <= rTop + 0.5) continue;
+            }
+            var lover = rLeft < c.right && rRight > c.left &&
+                        rTop < c.bottom && rBottom > c.top;
+            if (lover) {
+              out.clockOverlaps.push(pathOf(lel, root) +
+                ' ("' + (lel.textContent || '').trim().slice(0, 32) + '")');
+              break;
+            }
+          }
+        }
+      }
+    }
+
     /* Why-this-is-not-live. Captured as three separate things on purpose:
        what the badge SAYS (the state, which was never the problem), what the
        badge's title holds (the desktop-only affordance, which must not be
@@ -540,6 +631,18 @@ window.__FIXTURE__ = __PAYLOAD__;
       weeklyNote: edgesOf('#weekly-note'),
       whyWrap: edgesOf('#why-wrap')
     };
+
+    /* The clock-overlap fix reserves space by shrinking ul#d-subtasks (and its
+       sibling scrollers) - a fix that instead made the rows vanish, or made
+       the whole list come up empty, would ALSO satisfy "nothing overlaps the
+       clock" and be worse than the bug it replaced. Row count and text come
+       from the DOM, not from the fixture, so a fix that renders nothing here
+       cannot pass by coincidence. */
+    var dSubtasksEl = document.getElementById('d-subtasks');
+    out.dSubtasks = dSubtasksEl ? {
+      rowCount: dSubtasksEl.children.length,
+      text: dSubtasksEl.textContent
+    } : null;
 
     var errorHintEl = document.getElementById('error-hint');
     var errorStateEl = document.querySelector('.error-state');
@@ -739,6 +842,19 @@ const WHY_STATES = [
   { name: 'why-stale', fixture: staleFixture() },
   { name: 'why-partial', fixture: partialFixture() }
 ];
+/* has-why set AND a different view active. Nothing else renders this: the
+   four why states are all drawn at 0 taps, and the view-detail render uses a
+   fixture with no reason at all, so `has-why while inactive` had no coverage.
+   It is the case that separates a rule keyed on the CLASS from one keyed on
+   the class AND the active view - .view-usage keeps has-why while hidden
+   (views are display:none, not removed), so a class-only rule hides the clock
+   here too, on a view whose layout still reserves space for it. */
+const whyOnDetail = render(writePage('why-local-on-detail',
+  VIEWS.indexOf('detail'), localFixture()));
+whyOnDetail.name = 'why-local-on-detail';
+whyOnDetail.wantView = 'detail';
+results.push(whyOnDetail);
+
 WHY_STATES.forEach(({ name, fixture }) => {
   const page = writePage(name, VIEWS.indexOf('usage'), fixture);
   const r = render(page);
@@ -830,6 +946,125 @@ console.log('overflow — nothing reaches outside .widget-root:');
   if (tight) {
     console.log(`  note  tightest fit: ${tight.name} ${tight.tightest.path}` +
       `, ${(-tight.tightest.by).toFixed(1)}px of headroom`);
+  }
+}
+
+/* ------------------------------------------------------------- clock overlap */
+
+console.log('clock overlap — nothing the clock is drawn over:');
+{
+  let bad = 0;
+  for (const r of ok) {
+    for (const o of (r.clockOverlaps || [])) {
+      bad++;
+      fail(`${r.name}: ${o} sits under the clock`);
+    }
+  }
+  if (!bad) console.log(`  pass  the clock overlaps nothing in any of ${ok.length} renders`);
+}
+
+/* This check must not be able to pass by finding nothing to test: prove the
+   clock and the why-strip are both actually present and on screen in at
+   least one render, so an absent strip or a hidden clock could not be why
+   the loop above stayed clean. */
+check('the clock element is present and visible in at least one render',
+  ok.some(r => r.clockPresent), true);
+const whyOnScreenRender = ok.find(r => r.why && r.why.onScreen);
+check('the why-strip is present and on screen in at least one render (proves the overlap probe had a real strip to check)',
+  !!whyOnScreenRender, true);
+
+/* ------------------------------------------------------- the clock is dropped,
+   exactly and only, while the reason strip is on screen */
+
+console.log('the clock is dropped exactly while the fallback-reason strip is on screen:');
+{
+  /* The strip is ON SCREEN only when the usage view is the ACTIVE one AND it
+     carries has-why - the class alone is not the state, because .view-usage
+     keeps it while hidden. Scoping the drop to that pair is what the rule is
+     actually supposed to say; the complementary case (has-why set, another
+     view showing, clock still drawn) is asserted separately below, so the two
+     together pin more than a single `r.hasWhy` filter ever did. */
+  const stripOnScreen = ok.filter(r => r.hasWhy && r.wantView === 'usage');
+  const hasWhyRenders = stripOnScreen;
+  const noWhyRenders = ok.filter(r => !r.hasWhy);
+
+  /* Neither half of this check can pass vacuously: there has to be a real
+     has-why render and a real non-has-why render to tell apart, or "the
+     clock is absent exactly there" and "the clock is absent nowhere" would
+     both pass by finding nothing of one kind to look at. */
+  check('at least one render actually carries has-why (a real "strip on screen" case exists)',
+    hasWhyRenders.length > 0, true);
+  check('at least one render does not carry has-why (a real "other view" case exists)',
+    noWhyRenders.length > 0, true);
+
+  /* Assertion 1: not "does not overlap" (trivially true once it is gone) but
+     genuinely ABSENT - computed display:none, not merely positioned clear of
+     the strip. */
+  const stillDrawnWithWhy = hasWhyRenders
+    .filter(r => r.clockDisplay !== 'none')
+    .map(r => `${r.name}: clock display is "${r.clockDisplay}"`);
+  check('assertion 1: with has-why set, the clock is genuinely absent (display:none)',
+    stillDrawnWithWhy, []);
+
+  /* Assertion 2: dropped ONLY there - every other view, view-detail included,
+     still draws it. A change that hid the clock everywhere would pass
+     assertion 1 and be wrong; this is what catches that. */
+  const droppedElsewhere = noWhyRenders
+    .filter(r => r.clockDisplay === 'none')
+    .map(r => `${r.name}: clock display is "none"`);
+  check('assertion 2: the clock is still drawn on every other view',
+    droppedElsewhere, []);
+
+  const detailRender = ok.find(r => r.name === 'view-detail');
+  check('assertion 2, named: view-detail specifically still draws the clock',
+    detailRender ? detailRender.clockDisplay !== 'none' : false, true);
+
+  /* The case the :has() rule got wrong, and the reason this assertion exists:
+     with a reason present the class sits on .view-usage even while the detail
+     view is the one on screen, so a selector that tests the class alone drops
+     the clock here. Fails against `.widget-root:has(.view-usage.has-why)`,
+     passes against syncClock()'s view-aware toggle. */
+  const whyElsewhere = ok.find(r => r.name === 'why-local-on-detail');
+  check('the reason is set but another view is showing, so has-why really is on the hidden view',
+    whyElsewhere ? whyElsewhere.hasWhy : null, true);
+  check('and the clock is still drawn there - the drop follows the ACTIVE view, not just the class',
+    whyElsewhere ? whyElsewhere.clockDisplay !== 'none' : false, true);
+
+  /* The opposite failure mode: the clock-overlap fix reserves space by
+     shrinking ul#d-subtasks, and a fix that instead emptied the list, or
+     dropped the very rows the overlap probe used to catch, would ALSO read
+     as "nothing overlaps the clock" - and be worse than the collision it
+     replaced. Checked against real content (the row count MAX_ROWS caps at,
+     and the two project names the overlap probe named by text) rather than
+     "something is there", so a fix that renders the right NUMBER of rows but
+     empty ones, or the wrong rows, still fails this. */
+  const dSubtasks = detailRender && detailRender.dSubtasks;
+  check('view-detail: #d-subtasks still renders all 18 rows the FULL fixture sends (baseFixture: buildRows(18, ...))',
+    dSubtasks ? dSubtasks.rowCount : -1, 18);
+  check('view-detail: #d-subtasks still carries the text of both rows the clock used to cover',
+    dSubtasks ? ['claude-code-internal-tooling', 'xeneon-edge-firmware-bridge']
+      .filter(name => !dSubtasks.text.includes(name)) : ['(no #d-subtasks in the render)'],
+    []);
+}
+
+/* Mutation check, forward direction: reintroduce the exact collision the
+   has-why rule prevents (force the clock back on while the strip is
+   showing) and prove the ported overlap probe actually catches it, by name,
+   rather than the fix simply never having been tested against a real
+   overlap. */
+console.log('mutation check: forcing the clock back on over the strip is caught by the overlap probe:');
+{
+  const page = writePage('mutation-clock-back-on', VIEWS.indexOf('usage'), localFixture(), html =>
+    html.replace('</head>',
+      '<style>.widget-root:has(.view-usage.has-why) .clock { display: block !important; }</style></head>'));
+  const r = render(page);
+  if (r.error) {
+    fail(`mutation-clock-back-on: ${r.error}`);
+  } else {
+    console.log(`        clockDisplay=${r.clockDisplay} hasWhy=${r.hasWhy} ` +
+      `clockOverlaps=${JSON.stringify(r.clockOverlaps)}`);
+    check('mutation check: with the clock forced back on, the probe reports at least one named overlap',
+      Array.isArray(r.clockOverlaps) && r.clockOverlaps.length > 0, true);
   }
 }
 
@@ -1368,13 +1603,24 @@ console.log('the paging checks are not vacuous:');
 {
   /* Restores the pre-fix heading: a loose text node beside the dots is an
      anonymous flex item that will not shrink, so the longest heading wraps and
-     its column loses a row. This is the regression itself, re-created. */
+     its column loses a row. This is the regression itself, re-created.
+     Scoped to the Workflows column alone (":has(#d-workflows)", valid only in
+     this injected test stylesheet, never in production CSS) rather than every
+     `.list h2 .htext` - with the clock's reservation now taking a row out of
+     all three lists, 40 rows needs one more page than before, and at that
+     wider dot cluster ALL THREE labels clear the wrap threshold when the fix
+     is lifted everywhere, which proves nothing (three equal, shorter boxes is
+     still "equal box heights", vacuously passing the height-INEQUALITY this
+     check exists to catch). Lifting the fix on the longest label only, while
+     Sessions and Subtasks keep the real nowrap/ellipsis CSS, reproduces the
+     original regression deterministically regardless of page count: one
+     column wraps, the other two provably cannot. */
   const page = writePagingPage('mutation-wrapping-heading', DETAIL_TAPS, pagingFixture(), html =>
     html.replace('</head>',
       /* flex: 0 1 auto, NOT 0 0 auto - an item that cannot shrink sizes to
          max-content and never wraps, so the mutation would not fire at all.
          This is the loose-text-node behaviour the fix replaced. */
-      '<style>.list h2 .htext { white-space: normal !important; overflow: visible !important; ' +
+      '<style>.list:has(#d-workflows) h2 .htext { white-space: normal !important; overflow: visible !important; ' +
       'text-overflow: clip !important; flex: 0 1 auto !important; }</style></head>'));
   const r = renderPaging(page);
   const lists = r.error ? {} : byScroller(r.samples);

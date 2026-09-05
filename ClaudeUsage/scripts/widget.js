@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.14.1';
+  var WIDGET_VERSION = '1.15.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -590,6 +590,7 @@
   function setWhy(text) {
     if (!els.why || !els.viewUsage) return;
     els.viewUsage.classList.toggle('has-why', !!text);
+    syncClock();
     if (els.why.getAttribute('data-why') === (text || '')) return;
     els.why.setAttribute('data-why', text || '');
     while (els.why.firstChild) els.why.removeChild(els.why.firstChild);
@@ -954,6 +955,28 @@
     pageTimer = setInterval(advancePages, PAGE_MS);
   }
 
+  /* The clock is not drawn while the fallback-reason strip is on screen. That
+     is the human's answer to a measured trade-off: this view has no slack to
+     reserve a clock-height strip out of - reserving one shrinks .meters until
+     the weekly note overflows it - so the clock gives way instead and the
+     meters keep their full box.
+
+     It is driven from here rather than from CSS because the state is "the
+     usage view is ACTIVE and carries has-why", and CSS cannot see the first
+     half. Views are hidden with display:none rather than removed, so
+     .view-usage keeps has-why while some other view is showing; a rule
+     testing the class alone therefore hides the clock on EVERY view. That is
+     not hypothetical - it is what the `.widget-root:has(.view-usage.has-why)`
+     rule this replaces actually did, while its own comment claimed the
+     opposite. That rule was also the only :has() in this repo, against a
+     webview whose Chrome version nobody has recorded, where an unsupported
+     selector fails silently and the headless suite still passes. */
+  function syncClock() {
+    if (!els.clock || !els.viewUsage) return;
+    els.clock.classList.toggle('is-hidden',
+      view === 'usage' && els.viewUsage.classList.contains('has-why'));
+  }
+
   function applyView() {
     els.title.textContent = TITLES[view];
     els.viewUsage.classList.toggle('is-active', view === 'usage');
@@ -961,6 +984,7 @@
     els.viewTokens.classList.toggle('is-active', view === 'tokens');
     els.viewStats.classList.toggle('is-active', view === 'stats');
     els.viewModels.classList.toggle('is-active', view === 'models');
+    syncClock();
     Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
       d.classList.toggle('is-active', d.getAttribute('data-view') === view);
     });

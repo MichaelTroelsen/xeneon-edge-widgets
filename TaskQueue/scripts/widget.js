@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  var WIDGET_VERSION = '1.3.8';
+  var WIDGET_VERSION = '1.4.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/tasks';
   var REQUEST_TIMEOUT_MS = 6000;
   var TAP_SLOP_PX = 12;       /* movement beyond this is a scroll, not a tap */

@@ -163,6 +163,13 @@ body {
   pointer-events: none;
 }
 
+/* Set by syncClock() in widget.js while the usage view is ACTIVE and carrying
+   has-why - the reasoning is there. Deliberately a plain class rather than a
+   :has() rule on the root: the state depends on WHICH VIEW IS ACTIVE, which a
+   selector on .view-usage alone cannot see, so the rule this replaced hid the
+   clock on every view once a reason existed. */
+.clock.is-hidden { display: none; }
+
 /* The state wrapper must itself be the full-height column, otherwise .body has
    no height to distribute and every flex-basis:0 child collapses to nothing. */
 .content {
@@ -361,9 +368,21 @@ body {
 
 /* Three lists side by side. Even 840px has room for them; the meta column is
    what gets dropped there, not a whole list. */
+/* Same reservation .cols makes, and for the same reason: the clock sits
+   absolutely positioned over every view, and this one has three scrollers
+   (ul#d-sessions/d-workflows/d-subtasks) whose last rows otherwise land
+   directly under it - .list ul is one of the two scrolling selectors in this
+   file, so its rows are what the overlap probe clips to and checks. Reserved
+   on .lists-detail (the section itself, a flex column child of .view-detail)
+   rather than on the uls, since shrinking the section is what shrinks every
+   .list - and therefore every ul - inside it; a reservation on the ul alone
+   would fight the column's own height and move nothing. Clock height plus the
+   same space-pad .cols adds - clock-h alone leaves a gap exactly one pad
+   short, which is the mistake this comment exists to head off. */
 .lists-detail {
   flex: 1 1 auto;
   flex-direction: row;
+  margin-bottom: calc(var(--clock-h) + var(--layout-unit) * 1.2);
 }
 
 @media (max-width: 900px) {

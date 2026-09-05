@@ -123,9 +123,28 @@ function extractString(src, varName) {
 const VIEWS = extractArray(widgetSrc, 'VIEWS');
 const START_VIEW = extractString(widgetSrc, 'view');
 
+/* The header renders WIDGET_VERSION, not manifest.json's version - and this
+   repo's device-verification discipline is "confirm the running version from
+   the RENDERED PAGE, never the installed folder", because iCUE caches the
+   page it loaded at startup. So WIDGET_VERSION is the one number a human
+   trusts, and nothing else here ever compared it to the manifest. Read both
+   AT TEST TIME - hard-coding today's versions would just be a third place to
+   drift. */
+const WIDGET_VERSION_VALUE = extractString(widgetSrc, 'WIDGET_VERSION');
+const VERSION_SHAPE = /^\d+\.\d+\.\d+$/;
+const manifestSrc = fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8');
+const MANIFEST_VERSION = JSON.parse(manifestSrc).version;
+
 console.log('metrics:');
 check('VIEWS was read out of widget.js', VIEWS, ['usage', 'detail', 'tokens', 'stats', 'models']);
 check('the widget starts on the "usage" view', START_VIEW, 'usage');
+/* Extraction-succeeded is its own check, before any comparison - a regex that
+   silently matches nothing yields null, and null === null would otherwise
+   pass this vacuously the day that line gets reformatted. */
+check('widget.js\'s WIDGET_VERSION was extracted and looks like a version',
+  typeof WIDGET_VERSION_VALUE === 'string' && VERSION_SHAPE.test(WIDGET_VERSION_VALUE), true);
+check(`manifest.json's version agrees with widget.js's WIDGET_VERSION (manifest ${MANIFEST_VERSION}, script ${WIDGET_VERSION_VALUE})`,
+  MANIFEST_VERSION, WIDGET_VERSION_VALUE);
 if (failures) {
   console.log('\nthe source constants could not be read; every tap count below would be aimed at the wrong view');
   console.log(`${failures} FAILED`);

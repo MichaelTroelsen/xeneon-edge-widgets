@@ -33,6 +33,61 @@ function whattaskFile(repoPath) {
   return path.join(repoPath, '.claude', 'tasks', 'whattask.json');
 }
 
+/* Per-build read cache. `cache`, when a caller passes one, is a Map from
+   absolute file path to { text } or { err } - built fresh by whoever starts a
+   build (build() and projectTasks() below, and server.js's collectQueuedTasks,
+   which shares one across its own readRepo() and readPlan() calls) and thrown
+   away when that build finishes. whattask.json and runs.jsonl are each read
+   from more than one place in a single build, and the files on disk change
+   BETWEEN builds, ten seconds apart - a cache kept across builds would show a
+   build a plan or a run log from before its own read, which is the same
+   staleness doneIds() below exists to fix, one layer up. So there is no
+   module-level default: no `cache` argument means no caching at all, one real
+   read per call, which is what every caller not assembling a build already
+   wants and gets today.
+
+   `fileReadCount` is incremented on every actual disk read (a cache miss, or
+   no cache at all) and never on a hit. It costs one integer add per read and
+   production code never looks at it - exposed only so a test can assert "one
+   read per file per build" without monkeypatching fs, the same shape
+   `gitSpawnCount` further down already uses for the commit-time cache. */
+let fileReadCount = 0;
+function getFileReadCount() { return fileReadCount; }
+function resetFileReadCount() { fileReadCount = 0; }
+
+function readFileCached(cache, filePath) {
+  if (cache && cache.has(filePath)) return cache.get(filePath);
+  fileReadCount++;
+  let result;
+  try {
+    result = { text: fs.readFileSync(filePath, 'utf8') };
+  } catch (err) {
+    result = { err: err };
+  }
+  if (cache) cache.set(filePath, result);
+  return result;
+}
+
+/* whattask.json, read and JSON.parsed once per (repoPath, cache) pair rather
+   than once per call site: readRepo(), projectTasks() and server.js's
+   collectQueuedTasks() all need the same plan and, within one build, are
+   reading a file that cannot have changed between them. */
+function readPlan(repoPath, cache) {
+  const r = readFileCached(cache, whattaskFile(repoPath));
+  if (r.err) return { tasks: [], closed: [], error: r.err };
+  let plan;
+  try {
+    plan = JSON.parse(r.text);
+  } catch (err) {
+    return { tasks: [], closed: [], error: err };
+  }
+  return {
+    tasks: (plan && Array.isArray(plan.tasks)) ? plan.tasks : [],
+    closed: (plan && Array.isArray(plan.closed)) ? plan.closed : [],
+    error: null
+  };
+}
+
 function discover() {
   let registry;
   try {
@@ -219,9 +274,9 @@ function readMutex(repoPath) {
    Only `done` counts. `partial` is explicitly still open, which is the same
    rule the runners themselves apply when deciding whether a dependency is
    satisfied, so a task half-finished is not quietly retired here either. */
-function doneIds(repoPath) {
+function doneIds(repoPath, cache) {
   const done = new Set();
-  for (const run of readRuns(repoPath).runs) {
+  for (const run of readRuns(repoPath, cache).runs) {
     if (!run || typeof run.id !== 'string') continue;
     /* Append-only, so a later line supersedes an earlier one for the same id -
        a task can be recorded partial and then done, or done and then reopened. */
@@ -231,7 +286,7 @@ function doneIds(repoPath) {
   return done;
 }
 
-function readRepo(repo) {
+function readRepo(repo, cache) {
   const base = {
     name: repo.name,
     path: repo.path,
@@ -251,17 +306,15 @@ function readRepo(repo) {
   } catch (err) {
     base.lastRunAt = null;
   }
-  let plan;
-  try {
-    plan = JSON.parse(fs.readFileSync(whattaskFile(repo.path), 'utf8'));
-  } catch (err) {
-    base.error = 'whattask.json could not be read: ' + err.message;
+  const parsed = readPlan(repo.path, cache);
+  if (parsed.error) {
+    base.error = 'whattask.json could not be read: ' + parsed.error.message;
     return base;
   }
-  const planned = (plan && Array.isArray(plan.tasks)) ? plan.tasks : [];
-  const closed = (plan && Array.isArray(plan.closed)) ? plan.closed : [];
+  const planned = parsed.tasks;
+  const closed = parsed.closed;
   /* Finished since the plan was written, so not open however the file reads. */
-  const finished = doneIds(repo.path);
+  const finished = doneIds(repo.path, cache);
   const tasks = planned.filter(t => !(t && finished.has(t.id)));
 
   base.open = tasks.length;
@@ -284,15 +337,11 @@ function runsFile(repoPath) {
 
 /* runs.jsonl is appended to by concurrent runners, so its last line can be a
    torn partial write. That costs the line, never the file. */
-function readRuns(repoPath) {
-  let text;
-  try {
-    text = fs.readFileSync(runsFile(repoPath), 'utf8');
-  } catch (err) {
-    return { runs: [], error: null };   /* no runs yet is not a failure */
-  }
+function readRuns(repoPath, cache) {
+  const r = readFileCached(cache, runsFile(repoPath));
+  if (r.err) return { runs: [], error: null };   /* no runs yet is not a failure */
   const runs = [];
-  for (const line of text.split('\n')) {
+  for (const line of r.text.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
@@ -311,17 +360,49 @@ function readRuns(repoPath) {
    available, and it travels labelled as such (atSource: "commit") so a view
    never presents it as when the run happened.
  *
- * One `git cat-file --batch` process for the whole set, not one per record:
- * 62 lines here carry only 23 distinct heads, and spawning git per line would
- * cost seconds on every rebuild. */
+ * A commit's committer date is immutable once the object exists, so once a
+ * repoPath+SHA pair has resolved to a time it never needs re-resolving. The
+ * cache is keyed on the pair (not the SHA alone) since the same abbreviated
+ * SHA could in principle mean different objects in different repos.
+ *
+ * Deliberately NOT caching misses: a SHA git doesn't know today (still being
+ * pushed, or the object arrives after a rebase) must stay eligible to resolve
+ * on a later rebuild, so unresolved SHAs are simply retried every call -
+ * never written to the cache as a permanent negative.
+ *
+ * One `git cat-file --batch` process for the SHAs not already cached, not one
+ * per record and not one per rebuild: 62 lines here carry only 23 distinct
+ * heads, and re-resolving all of them every 10s would spawn git forever for
+ * dates that can never change once cached. */
+const commitTimeCache = new Map();
+function cacheKey(repoPath, sha) { return repoPath + '\u0000' + sha; }
+
+/* Exposed only so the test can assert "no git spawned" without monkeypatching
+   child_process; production code never reads this. */
+let gitSpawnCount = 0;
+
 function commitTimes(repoPath, shas) {
   const unique = Array.from(new Set(shas.filter(s => typeof s === 'string' && s)));
   if (!unique.length) return { times: {}, error: null };
+
+  const resolved = {};
+  const toResolve = [];
+  for (const sha of unique) {
+    const key = cacheKey(repoPath, sha);
+    if (commitTimeCache.has(key)) {
+      resolved[sha] = commitTimeCache.get(key);
+    } else {
+      toResolve.push(sha);
+    }
+  }
+  if (!toResolve.length) return { times: resolved, error: null };
+
   let out;
   try {
+    gitSpawnCount++;
     out = execFileSync('git', ['cat-file', '--batch=%(objectname) %(objecttype)'], {
       cwd: repoPath,
-      input: unique.join('\n') + '\n',
+      input: toResolve.join('\n') + '\n',
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -351,12 +432,18 @@ function commitTimes(repoPath, shas) {
   /* Records carry abbreviated heads (7 characters, as git log --oneline
      prints them) but --batch echoes the FULL objectname, so a lookup by the
      requested key alone finds nothing. Map each requested SHA onto whichever
-     resolved name it prefixes. */
-  const resolved = {};
-  for (const sha of unique) {
-    if (times[sha] != null) { resolved[sha] = times[sha]; continue; }
-    const full = Object.keys(times).find(f => f.startsWith(sha));
-    if (full) resolved[sha] = times[full];
+     resolved name it prefixes. Only resolved SHAs are cached - a miss is left
+     uncached so the next call retries it. */
+  for (const sha of toResolve) {
+    let at = times[sha];
+    if (at == null) {
+      const full = Object.keys(times).find(f => f.startsWith(sha));
+      if (full) at = times[full];
+    }
+    if (at != null) {
+      commitTimeCache.set(cacheKey(repoPath, sha), at);
+      resolved[sha] = at;
+    }
   }
   return { times: resolved, error: null };
 }
@@ -438,20 +525,24 @@ function projectTasks(name) {
       error: 'no project called "' + name + '" has a .claude/tasks/whattask.json'
     };
   }
-  let plan;
-  try {
-    plan = JSON.parse(fs.readFileSync(whattaskFile(repo.path), 'utf8'));
-  } catch (err) {
-    return { project: name, tasks: [], error: 'whattask.json could not be read: ' + err.message };
+  /* This project's own build: whattask.json and runs.jsonl are each read once
+     below (readPlan, then doneIds) rather than twice, and the cache is what
+     would let a third read into either file, added later, share that read
+     instead of costing a second one. Local to this call, thrown away when it
+     returns - never kept across requests. */
+  const cache = new Map();
+  const parsed = readPlan(repo.path, cache);
+  if (parsed.error) {
+    return { project: name, tasks: [], error: 'whattask.json could not be read: ' + parsed.error.message };
   }
-  const raw = (plan && Array.isArray(plan.tasks)) ? plan.tasks : [];
-  const closed = (plan && Array.isArray(plan.closed)) ? plan.closed : [];
+  const raw = parsed.tasks;
+  const closed = parsed.closed;
 
   /* A holder names its task by the id the queue uses - verified against a real
      lock, where every holder's `task` matched an open task's id. A holder for a
      task the queue does not have adds no row: the lock is a claim about work,
      not a source of work. */
-  const finishedSincePlan = doneIds(repo.path);
+  const finishedSincePlan = doneIds(repo.path, cache);
 
   const held = new Set(readHolders(repo.path)
     .map(h => h && h.task)
@@ -655,7 +746,15 @@ function aggregateHistory(records) {
 }
 
 function build(live, opts) {
-  const repos = discover().map(readRepo);
+  /* One cache for the whole build: whattask.json (inside readRepo, via
+     readPlan) and runs.jsonl (inside readRepo's doneIds, and again below for
+     datedHistory) are each read from two places here, and the files cannot
+     change mid-build. Scoped to this call and discarded when it returns - the
+     files DO change between builds, ten seconds apart, and a cache that
+     outlived one build would show the next build a plan or a run log that is
+     already stale, exactly what doneIds() above exists to prevent. */
+  const cache = new Map();
+  const repos = discover().map(repo => readRepo(repo, cache));
   const totals = {
     open: 0, closed: 0, repos: repos.length, blocked: 0, byMode: {}
   };
@@ -726,7 +825,7 @@ function build(live, opts) {
       });
     }
 
-    const read = readRuns(repo.path);
+    const read = readRuns(repo.path, cache);
     const dated = datedHistory(repo.path, read.runs);
     repo.historyError = dated.error;
     history = history.concat(dated.history);
@@ -766,10 +865,15 @@ function build(live, opts) {
   return payload;
 }
 
+function getGitSpawnCount() { return gitSpawnCount; }
+function resetCommitTimeCache() { commitTimeCache.clear(); gitSpawnCount = 0; }
+
 module.exports = {
   REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
   runsFile, readRuns, commitTimes, datedHistory, readHolders, build,
   readFiles, readMutex, pidAlive, isOrphan, TASK_FILES, MUTEX_STALE_MS, THIS_HOST,
   projectTasks, TITLE_MAX, BLOCKED_MAX, DONE_MAX, doneIds,
-  aggregateHistory, modelFamily, dayKey
+  aggregateHistory, modelFamily, dayKey,
+  getGitSpawnCount, resetCommitTimeCache,
+  readPlan, getFileReadCount, resetFileReadCount
 };

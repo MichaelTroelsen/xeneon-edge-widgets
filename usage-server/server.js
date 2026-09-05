@@ -108,6 +108,12 @@ let lastQuota = null; /* most recent 429 quotaLimits record seen, if any */
    see the /health handler below for the three states this drives. */
 let lastRebuildError = null;
 
+/* Cumulative across the process, like tasks.js's own gitSpawnCount - so the
+   verbose rebuild line below reports the DELTA for just this rebuild, which
+   is what "one read per file per build" is actually a claim about. Read only
+   under CLAUDE_USAGE_VERBOSE; production rebuilds never touch it. */
+let lastTaskFileReads = 0;
+
 /* Anthropic's own figures, refreshed on their own slower timer. The index
    rebuilds every 20s but this is an undocumented endpoint on someone else's
    server, so it is polled far less often and always from cache in between. */
@@ -1094,15 +1100,18 @@ function collectLiveRuns() {
 function collectQueuedTasks() {
   const found = [];
   for (const repo of tasks.discover()) {
-    const read = tasks.readRepo(repo);
+    /* One cache per repo, shared between this readRepo() call and the
+       readPlan() call right after it, so whattask.json - already read once
+       inside readRepo() - is not read a second time here for the same repo.
+       tasks.js's own build() scopes its cache the same way, per build, for
+       the reason given there: the file changes between rebuilds, so nothing
+       here keeps this cache past the one repo it was made for. */
+    const cache = new Map();
+    const read = tasks.readRepo(repo, cache);
     if (read.error) continue;
-    let plan;
-    try {
-      plan = JSON.parse(fs.readFileSync(tasks.whattaskFile(repo.path), 'utf8'));
-    } catch (err) {
-      continue;
-    }
-    for (const task of (plan.tasks || [])) {
+    const parsed = tasks.readPlan(repo.path, cache);
+    if (parsed.error) continue;
+    for (const task of parsed.tasks) {
       found.push({
         label: task.title || task.id,
         model: (task.model || '').replace(/^claude-/, ''),
@@ -1249,9 +1258,11 @@ function rebuild() {
        the current state instead of just the current numbers. */
     lastRebuildError = null;
     if (process.env.CLAUDE_USAGE_VERBOSE) {
+      const reads = tasks.getFileReadCount();
       console.log(`rebuilt in ${Date.now() - started}ms  ` +
         `sessions=${snapshot.counts.sessions} workflows=${snapshot.counts.workflows} ` +
-        `subtasks=${snapshot.counts.subtasks}`);
+        `subtasks=${snapshot.counts.subtasks} taskFileReads=${reads - lastTaskFileReads}`);
+      lastTaskFileReads = reads;
     }
   } catch (err) {
     /* This used to be the whole handler: log to stderr - which

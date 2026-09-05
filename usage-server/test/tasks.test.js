@@ -255,6 +255,76 @@ function makeGitRepo(name, lines) {
     tasks.readRuns(noRuns), { runs: [], error: null });
 }
 
+console.log('commit time caching:');
+
+{
+  /* The point of the cache: a commit's committer date cannot change once the
+     object exists, so a SHA that resolved on one build must not cost a git
+     process on the next. Five real repos rebuilding every 10s, forever, is
+     the cost this removes. */
+  const { dir, shas } = makeGitRepo('cache-repo', s => ([
+    { id: 'one', head: s[0], outcome: 'done' },
+    { id: 'two', head: s[1], outcome: 'done' }
+  ]));
+  const tasks = load(writeRegistry([dir]));
+
+  tasks.resetCommitTimeCache();
+  const first = tasks.build();
+  const spawnsAfterFirst = tasks.getGitSpawnCount();
+  check('the first build over a fresh cache does spawn git', spawnsAfterFirst > 0, true);
+
+  const second = tasks.build();
+  check('a second build over the SAME unchanged repo spawns NO git process',
+    tasks.getGitSpawnCount(), spawnsAfterFirst);
+  check('and still dates every record from the cache',
+    second.history.runs, first.history.runs);
+
+  /* A new head - a real /runtask appending a fresh line - must still resolve,
+     never permanently hidden by the cache. */
+  fs.writeFileSync(path.join(dir, 'f-new.txt'), 'y');
+  execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-q', '-m', 'c-new'], {
+    cwd: dir, stdio: 'pipe',
+    env: Object.assign({}, process.env, {
+      GIT_AUTHOR_DATE: '2026-03-01T12:00:00+00:00',
+      GIT_COMMITTER_DATE: '2026-03-01T12:00:00+00:00'
+    })
+  });
+  const newHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  fs.appendFileSync(path.join(dir, '.claude', 'tasks', 'runs.jsonl'),
+    JSON.stringify({ id: 'three', head: newHead, outcome: 'done' }) + '\n');
+
+  const spawnsBeforeThird = tasks.getGitSpawnCount();
+  const third = tasks.build();
+  check('a NEW head still resolves, growing runs.jsonl is not permanently undated',
+    third.history.runs, 3);
+  check('resolving the new head spawns git again (it was never in the cache)',
+    tasks.getGitSpawnCount() > spawnsBeforeThird, true);
+
+  const spawnsAfterThird = tasks.getGitSpawnCount();
+  tasks.build();
+  check('once the new head is cached too, the next build again spawns no git',
+    tasks.getGitSpawnCount(), spawnsAfterThird);
+}
+
+{
+  /* A SHA git does not know yet must be retried every call, not cached as a
+     permanent negative - a rebase or a slow push can make it resolvable
+     later, and a negative cache would hide it forever. */
+  const { dir } = makeGitRepo('cache-miss-repo', s => ([
+    { id: 'known', head: s[0], outcome: 'done' },
+    { id: 'unknown', head: '1111111111111111111111111111111111111111', outcome: 'done' }
+  ]));
+  const tasks = load(writeRegistry([dir]));
+  tasks.resetCommitTimeCache();
+
+  tasks.build();
+  const spawnsAfterFirst = tasks.getGitSpawnCount();
+  tasks.build();
+  check('an unresolved SHA is retried on every build, so git is spawned again',
+    tasks.getGitSpawnCount() > spawnsAfterFirst, true);
+}
+
 console.log('lock holders:');
 
 {
@@ -1015,6 +1085,86 @@ console.log('tasks a runner has already finished:')
     /plan has not been rewritten/.test(by['already-done'].reason || ''), true);
   check('the partial one is still queued', by['half-done'].state, 'queued');
   check('and so is the one that was reopened', by['done-then-reopened'].state, 'queued');
+}
+
+console.log('per-build read cache:');
+
+{
+  /* Plain fixtures, no git: this section is about disk reads, not commit
+     resolution, and a runs.jsonl naming a head with no matching commit just
+     leaves that record undated - already covered above. */
+  const dir = makeRepo('read-count', { tasks: [{ id: 'a' }], closed: [] });
+  fs.writeFileSync(path.join(dir, '.claude', 'tasks', 'runs.jsonl'),
+    JSON.stringify({ id: 'z', head: 'deadbeef', outcome: 'done' }) + '\n');
+  const tasks = load(writeRegistry([dir]));
+
+  tasks.resetFileReadCount();
+  tasks.build();
+  check('one repo, one build: whattask.json and runs.jsonl are read once EACH',
+    tasks.getFileReadCount(), 2);
+
+  tasks.build();
+  check('a SECOND build reads both files again, not from a leftover cache',
+    tasks.getFileReadCount(), 4);
+
+  /* The scoping requirement itself: a cache that outlived its build would
+     show this second edit stale data, same as the bug doneIds() exists to
+     fix one layer up. */
+  fs.writeFileSync(path.join(dir, '.claude', 'tasks', 'whattask.json'),
+    JSON.stringify({ tasks: [{ id: 'a' }, { id: 'b' }], closed: [] }));
+  const after = tasks.build();
+  check('a plan edited BETWEEN builds is reflected in the very next one - the cache did not hide it',
+    after.repos[0].open, 2);
+  check('and that third build still cost exactly one read per file, not zero',
+    tasks.getFileReadCount(), 6);
+}
+
+{
+  /* projectTasks() is its own build (a per-project one), so it gets the same
+     treatment: readPlan() then doneIds() must not cost whattask.json or
+     runs.jsonl a second read between them. */
+  const dir = makeRepo('project-read-count', {
+    tasks: [{ id: 'a', title: 'A' }], closed: []
+  });
+  fs.writeFileSync(path.join(dir, '.claude', 'tasks', 'runs.jsonl'), '');
+  const tasks = load(writeRegistry([dir]));
+
+  tasks.resetFileReadCount();
+  tasks.projectTasks('project-read-count');
+  check('projectTasks() reads whattask.json and runs.jsonl once EACH',
+    tasks.getFileReadCount(), 2);
+}
+
+{
+  /* This is the exact pattern server.js's collectQueuedTasks() now uses:
+     readRepo() for the aggregate, then readPlan() for the raw task list it
+     alone needs, sharing one cache so the second call is a hit, not a second
+     read of the same whattask.json. */
+  const dir = makeRepo('shared-cache', {
+    tasks: [{ id: 'a', title: 'A' }], closed: []
+  });
+  const tasks = load(writeRegistry([dir]));
+  const repo = tasks.discover()[0];
+
+  tasks.resetFileReadCount();
+  const cache = new Map();
+  const read = tasks.readRepo(repo, cache);
+  const plan = tasks.readPlan(repo.path, cache);
+  check('readRepo() alone already cost one read of each file',
+    tasks.getFileReadCount(), 2);
+  check('readPlan() sharing that cache raw-lists the same tasks readRepo saw',
+    plan.tasks.map(t => t.id), ['a']);
+  check('and calling it did not cost a second whattask.json read',
+    tasks.getFileReadCount(), 2);
+  check('readRepo() itself is unaffected by the cache being shared', read.open, 1);
+
+  /* Without a cache at all, the same two calls really do read twice - proving
+     the count above is the cache doing something, not a coincidence. */
+  tasks.resetFileReadCount();
+  tasks.readRepo(repo);
+  tasks.readPlan(repo.path);
+  check('the SAME two calls with no cache passed cost two whattask.json reads',
+    tasks.getFileReadCount(), 2 + 1);
 }
 
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);

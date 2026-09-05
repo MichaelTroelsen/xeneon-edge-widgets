@@ -166,6 +166,48 @@ async function main() {
     server.kill();
   }
 
+  console.log('collectQueuedTasks() reads each file once per rebuild:');
+  {
+    /* A second server, same fixtures, with CLAUDE_USAGE_VERBOSE on so the
+       rebuild log names its own read count - tasks.js's fileReadCount is
+       process-local, so this is how a read count from a SPAWNED server (as
+       opposed to a require()'d one) reaches the test at all. Two repos, one
+       whattask.json and one runs.jsonl file read site each in
+       collectQueuedTasks() now (readRepo() then a cache-shared readPlan()) -
+       so one read per file per repo, 4 total, however many times it rebuilds. */
+    const verboseServer = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+      env: Object.assign({}, process.env, {
+        PORT: String(PORT),
+        CLAUDE_USAGE_NO_REMOTE: '1',
+        CLAUDE_USAGE_VERBOSE: '1',
+        CLAUDE_USAGE_REFRESH_MS: '150',
+        CLAUDE_TASKS_REGISTRY: registry,
+        CLAUDE_USAGE_PROJECTS_DIR: projectsDir
+      }),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let out = '';
+    verboseServer.stdout.on('data', c => { out += c; });
+    try {
+      if (!await waitForServer(10000)) {
+        console.log('  FAIL  the verbose server never came up');
+        failures++;
+      } else {
+        /* The startup rebuild fires before the interval does; wait long
+           enough for the interval to fire a few more times too, so a cache
+           that only looked right on the FIRST build would still be caught. */
+        await new Promise(r => setTimeout(r, 900));
+        const reads = Array.from(out.matchAll(/taskFileReads=(\d+)/g)).map(m => Number(m[1]));
+        check('the verbose log recorded more than one rebuild',
+          reads.length > 1, true);
+        check('every rebuild reads whattask.json and runs.jsonl once EACH, for both repos (4), never more',
+          reads.every(n => n === 4), true);
+      }
+    } finally {
+      verboseServer.kill();
+    }
+  }
+
   console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
   process.exit(failures ? 1 : 0);
 }

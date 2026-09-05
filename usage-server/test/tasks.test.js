@@ -255,5 +255,120 @@ function makeGitRepo(name, lines) {
     tasks.readRuns(noRuns), { runs: [], error: null });
 }
 
+console.log('lock holders:');
+
+{
+  const held = makeRepo('held', { tasks: [{ id: 'a', mode: 'subtask' }], closed: [] });
+  fs.writeFileSync(path.join(held, '.claude', 'tasks', 'serial.lock'), JSON.stringify([
+    { run: 'runqueue', task: 'fix-the-pager', paths: ['ClaudeUsage/scripts'],
+      at: '2026-09-05T10:00:00Z' }
+  ]));
+  const tasks = load(writeRegistry([held]));
+  const r = tasks.readRepo(tasks.discover()[0]);
+  check('a holder record is read off serial.lock', r.holders.length, 1);
+  check('and keeps the task it names', r.holders[0].task, 'fix-the-pager');
+}
+
+{
+  /* [] is serial.lock's RESTING state - it is empty in all five real repos
+     right now, and only fills while a /runqueue is mid-flight. An empty lock
+     is not an error and not an absence. */
+  const idle = makeRepo('idle', { tasks: [], closed: [] });
+  fs.writeFileSync(path.join(idle, '.claude', 'tasks', 'serial.lock'), '[]');
+  const tasks = load(writeRegistry([idle]));
+  const r = tasks.readRepo(tasks.discover()[0]);
+  check('an empty lock reads as no holders, with no error',
+    [r.holders.length, r.error], [0, null]);
+}
+
+{
+  const noLock = makeRepo('no-lock', { tasks: [], closed: [] });
+  const tasks = load(writeRegistry([noLock]));
+  const r = tasks.readRepo(tasks.discover()[0]);
+  check('an absent serial.lock is not an error either',
+    [r.holders.length, r.error], [0, null]);
+}
+
+{
+  const badLock = makeRepo('bad-lock', { tasks: [], closed: [] });
+  fs.writeFileSync(path.join(badLock, '.claude', 'tasks', 'serial.lock'), '{ torn');
+  const tasks = load(writeRegistry([badLock]));
+  check('a malformed lock costs the holders, not the whole repo reading',
+    tasks.readRepo(tasks.discover()[0]).holders, []);
+}
+
+console.log('the assembled payload:');
+
+{
+  const one = makeRepo('one', {
+    tasks: [{ id: 'a', mode: 'subtask' }, { id: 'b', mode: 'requires-user', blocked_on: 'x' }],
+    closed: [{ id: 'z' }]
+  });
+  const two = makeRepo('two', {
+    tasks: [{ id: 'c', mode: 'subtask' }],
+    closed: [{ id: 'y' }, { id: 'w' }]
+  });
+  const tasks = load(writeRegistry([one, two]));
+  const snap = tasks.build();
+
+  check('every discovered repo is in the payload',
+    snap.repos.map(r => r.name), ['one', 'two']);
+  check('totals sum the open counts', snap.totals.open, 3);
+  check('totals sum the closed counts', snap.totals.closed, 3);
+  check('totals count the repos', snap.totals.repos, 2);
+  check('totals sum the blocked counts', snap.totals.blocked, 1);
+  check('totals merge byMode across repos',
+    snap.totals.byMode, { subtask: 2, 'requires-user': 1 });
+  check('the payload is stamped', typeof snap.generatedAt, 'number');
+  check('a payload with repos is not unavailable', snap.unavailable, null);
+}
+
+{
+  const tasks = load(writeRegistry([]));
+  const snap = tasks.build();
+  check('no repos at all is stated, not served as an empty success',
+    typeof snap.unavailable === 'string' && snap.unavailable.length > 0, true);
+  check('and the repo list is still an array', Array.isArray(snap.repos), true);
+}
+
+{
+  /* The live block server.js supplies is merged in beside the holders, and
+     the two kinds of "running" stay distinguishable by kind - a lock holder
+     and a Claude session are different claims about the machine. */
+  const mixed = makeRepo('mixed', { tasks: [], closed: [] });
+  fs.writeFileSync(path.join(mixed, '.claude', 'tasks', 'serial.lock'), JSON.stringify([
+    { run: 'runqueue', task: 'a-task', at: '2026-09-05T10:00:00Z' }
+  ]));
+  const tasks = load(writeRegistry([mixed]));
+  const snap = tasks.build({
+    sessions: [{ label: 'a session', project: 'mixed', lastAt: 1 }],
+    workflows: [{ label: 'a workflow', project: 'mixed', startedAt: 2 }],
+    subtasks: []
+  });
+  check('holders and live activity are both in running',
+    snap.running.map(r => r.kind).sort(), ['holder', 'session', 'workflow']);
+  check('holders sort ahead of live activity', snap.running[0].kind, 'holder');
+  check('a holder keeps its start time, parsed from the ISO string it records',
+    snap.running[0].since, Date.parse('2026-09-05T10:00:00Z'));
+}
+
+{
+  /* Outcomes are tallied across every repo, from records that may name an
+     outcome this machine has never seen before. */
+  const { dir } = makeGitRepo('outcomes', s => ([
+    { id: 'a', head: s[0], outcome: 'done' },
+    { id: 'b', head: s[0], outcome: 'done' },
+    { id: 'c', head: s[1], outcome: 'partial' },
+    { id: 'd', head: s[1] }
+  ]));
+  const tasks = load(writeRegistry([dir]));
+  const snap = tasks.build();
+  check('byOutcome counts every run, an absent outcome becoming unknown',
+    snap.totals.byOutcome, { done: 2, partial: 1, unknown: 1 });
+  check('history reaches the payload', snap.history.length, 4);
+  check('and is ordered oldest first across repos',
+    snap.history.every((e, i) => i === 0 || snap.history[i - 1].at <= e.at), true);
+}
+
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
 process.exit(failures ? 1 : 0);

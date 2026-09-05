@@ -70,6 +70,29 @@ function tally(items, field) {
   return out;
 }
 
+function lockFile(repoPath) {
+  return path.join(repoPath, '.claude', 'tasks', 'serial.lock');
+}
+
+/* serial.lock is the REGISTRY of holder records, not a lock - the lock itself
+   is the directory serial.lock.d/, taken for milliseconds around each update.
+   See the mit-setup LOCKING.md. Its resting state is [], which is what all
+   five real repos hold right now, so an empty or absent file is normal. */
+function readHolders(repoPath) {
+  let text;
+  try {
+    text = fs.readFileSync(lockFile(repoPath), 'utf8');
+  } catch (err) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+}
+
 function readRepo(repo) {
   const base = {
     name: repo.name,
@@ -79,10 +102,15 @@ function readRepo(repo) {
     byMode: {},
     byLane: {},
     blocked: 0,
-    holders: [],
+    holders: readHolders(repo.path),
     lastRunAt: null,
     error: null
   };
+  try {
+    base.lastRunAt = fs.statSync(runsFile(repo.path)).mtimeMs;
+  } catch (err) {
+    base.lastRunAt = null;
+  }
   let plan;
   try {
     plan = JSON.parse(fs.readFileSync(whattaskFile(repo.path), 'utf8'));
@@ -218,7 +246,84 @@ function datedHistory(repoPath, runs) {
   };
 }
 
+function mergeCounts(into, from) {
+  for (const key of Object.keys(from)) into[key] = (into[key] || 0) + from[key];
+  return into;
+}
+
+function toMs(value) {
+  if (typeof value === 'number') return value;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/* `live` is the sessions/workflows/subtasks block server.js already computes
+   for /usage. It is passed in rather than recomputed: serial.lock is empty
+   whenever no /runqueue is mid-flight, which is nearly always, and a live view
+   backed by holders alone would be blank almost every time it is looked at. */
+function build(live) {
+  const repos = discover().map(readRepo);
+  const totals = {
+    open: 0, closed: 0, repos: repos.length, blocked: 0, byMode: {}, byOutcome: {}
+  };
+  const running = [];
+  let history = [];
+
+  for (const repo of repos) {
+    totals.open += repo.open;
+    totals.closed += repo.closed;
+    totals.blocked += repo.blocked;
+    mergeCounts(totals.byMode, repo.byMode);
+
+    for (const holder of repo.holders) {
+      running.push({
+        kind: 'holder',
+        label: holder.task || holder.cmd || holder.run || 'a held task',
+        repo: repo.name,
+        since: toMs(holder.at),
+        detail: Array.isArray(holder.paths) ? holder.paths.join(', ') : ''
+      });
+    }
+
+    const read = readRuns(repo.path);
+    for (const run of read.runs) {
+      const outcome = field(run, 'outcome');
+      totals.byOutcome[outcome] = (totals.byOutcome[outcome] || 0) + 1;
+    }
+    const dated = datedHistory(repo.path, read.runs);
+    repo.historyError = dated.error;
+    history = history.concat(dated.history);
+  }
+
+  if (live) {
+    for (const s of live.sessions || []) {
+      running.push({ kind: 'session', label: s.label || s.id || 'a session',
+                     repo: s.project || '', since: toMs(s.lastAt), detail: '' });
+    }
+    for (const w of live.workflows || []) {
+      running.push({ kind: 'workflow', label: w.label || w.id || 'a workflow',
+                     repo: w.project || '', since: toMs(w.startedAt), detail: '' });
+    }
+    for (const t of live.subtasks || []) {
+      running.push({ kind: 'subtask', label: t.label || t.id || 'a subtask',
+                     repo: t.project || '', since: toMs(t.startedAt), detail: '' });
+    }
+  }
+
+  history.sort((a, b) => a.at - b.at);
+
+  return {
+    generatedAt: Date.now(),
+    repos: repos,
+    totals: totals,
+    running: running,
+    history: history,
+    unavailable: repos.length ? null
+      : 'no repo on this machine has a .claude/tasks/whattask.json - run /whattask in one to create a queue'
+  };
+}
+
 module.exports = {
   REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
-  runsFile, readRuns, commitTimes, datedHistory
+  runsFile, readRuns, commitTimes, datedHistory, readHolders, build
 };

@@ -1237,11 +1237,50 @@ body {
 #task-rows li.st-blocked .row-name { color: var(--warn); }
 #task-rows li.st-blocked .row-figure { color: var(--warn); }
 
+/* Waiting on another task, which is not the same as blocked on a person: this
+   one clears itself when its dependency lands. Blue rather than amber for that
+   reason - nothing is wrong, it simply is not next. Measured: 20 of 210 open
+   tasks are in this state and read as plain queued before it existed. */
+#task-rows li.st-waiting .row-name { color: var(--fill); }
+#task-rows li.st-waiting .row-figure { color: var(--fill); }
+
 /* Done is receded rather than coloured: it is history sitting under the live
-   queue, and giving it a hue of its own would make it compete with the two
-   states that actually want attention. */
+   queue, and giving it a hue of its own would make it compete with the states
+   that actually want attention. */
 #task-rows li.st-done .row-name { color: var(--muted); }
 #task-rows li.st-done .row-figure { color: var(--track); }
+
+/* The "and this many more" line. Not a task, so it is not styled like one -
+   it is the list telling you where it stops. */
+#task-rows li.st-more {
+  color: var(--track);
+  font-style: italic;
+  justify-content: center;
+}
+#task-rows li.st-more .row-name { flex: 0 0 auto; }
+
+/* The name may ellipsis; the count never does, which is the whole reason it is
+   its own element rather than text appended to the name. */
+.tab .tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tab .tab-count {
+  flex: 0 0 auto;
+  margin-left: calc(var(--layout-unit) * 0.45);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The tab is a flex row now that it carries two things. */
+.tab {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+}
 
 .projects-note {
   display: none;

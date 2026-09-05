@@ -618,7 +618,7 @@ console.log('orphaned holder records:');
 
 console.log('one project\'s task list:');
 
-const LONG_TITLE = 'A title that runs on well past ninety characters so the cap can be seen doing its work rather than assumed, padding padding';
+const LONG_TITLE = 'A title that runs on well past a hundred and forty characters so the cap can be seen doing its work rather than assumed, with padding on the end to carry it past the limit and then some more still';
 const LONG_BLOCK = 'A blocking reason that also runs on well past a hundred and ten characters, because the real ones in this repo are paragraphs and the glass has one line for them';
 
 {
@@ -652,13 +652,16 @@ const LONG_BLOCK = 'A blocking reason that also runs on well past a hundred and 
   const a = byId['a'];
   check('the fields the view draws are carried',
     Object.keys(a).sort(),
-    ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'reason', 'state', 'title']);
+    ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'needsMain', 'reason',
+     'state', 'title', 'waitingOn']);
   check('the prose fields are NOT - they are 297KB of the 300KB and unshowable',
     [a.verify, a.why_model, a.evidence, a.touches], [undefined, undefined, undefined, undefined]);
   check('a task with no blocked_on carries null, not a string', a.blocked, null);
 
   const b = byId['b'];
-  check('an over-long title is capped at 90', b.title.length, 90);
+  /* The cap is the real maximum (140), not below it: 90 was the cap measuring
+     itself, and truncated about a third of real titles. */
+  check('an over-long title is capped at 140', b.title.length, 140);
   check('and an over-long blocking reason at 110', b.blocked.length, 110);
 
   const c = byId['c'];
@@ -696,7 +699,9 @@ console.log('what state each task is in:');
       { id: 'holding', title: 'The one with the lock', mode: 'subtask' },
       { id: 'waiting', title: 'The one on a human', mode: 'requires-user',
         blocked_on: 'a decision' },
-      { id: 'plain', title: 'The one just sitting there', mode: 'subtask' }
+      { id: 'plain', title: 'The one just sitting there', mode: 'subtask' },
+      { id: 'later', title: 'The one waiting on plain', mode: 'subtask',
+        depends_on: ['plain'] }
     ],
     closed: [
       { id: 'finished', title: 'The one that landed', closed_by: 'eaa9f97',
@@ -722,7 +727,7 @@ console.log('what state each task is in:');
 
   /* Colouring a done task means listing it: `closed` is a separate array that
      the overview only ever counted. */
-  check('closed tasks join the list', got.tasks.length, 5);
+  check('closed tasks join the list', got.tasks.length, 6);
   check('a done task keeps the reason it was closed for',
     by['finished'].reason, 'Shipped as a fifth view rather than an addition');
   check('and falls back to the commit that closed it when there is no reason',
@@ -731,9 +736,11 @@ console.log('what state each task is in:');
   /* Running, then what is ready to pick up, then what is stuck, then history.
      Blocked sits below queued because it is not actionable by the runner, so
      the actionable half of the list stays unbroken at the top. */
-  check('ordered by state: running, queued, blocked, done',
+  /* All five states in one fixture, so the assertion covers every position -
+     an order check that omits a state cannot catch that state being misplaced. */
+  check('ordered by state: running, queued, blocked, waiting, done',
     got.tasks.map(t => t.state),
-    ['running', 'queued', 'blocked', 'done', 'done']);
+    ['running', 'queued', 'blocked', 'waiting', 'done', 'done']);
 }
 
 {
@@ -748,6 +755,75 @@ console.log('what state each task is in:');
   const got = tasks.projectTasks('ghost-holder');
   check('a holder for a task the queue does not have adds no row', got.tasks.length, 1);
   check('and leaves the real one queued', got.tasks[0].state, 'queued');
+}
+
+console.log('a task waiting on another task:');
+
+{
+  /* Measured across the real queues: 25 of 210 carry a depends_on and 20 of
+     those name a task that is STILL OPEN. Those twenty read as queued and are
+     not pickable - the difference between a queue of 108 and one of 88. */
+  const dep = makeRepo('depends', {
+    tasks: [
+      { id: 'first', title: 'The one nothing waits for', mode: 'subtask' },
+      { id: 'second', title: 'The one waiting on first', mode: 'subtask',
+        depends_on: ['first'] },
+      { id: 'third', title: 'The one whose dependency is already closed',
+        mode: 'subtask', depends_on: ['long-since-done'] },
+      { id: 'fourth', title: 'Waiting AND blocked on a human', mode: 'requires-user',
+        depends_on: ['first'], blocked_on: 'a decision' }
+    ],
+    closed: [{ id: 'long-since-done', title: 'Done ages ago', closed_by: 'aaa1111' }]
+  });
+  const tasks = load(writeRegistry([dep]));
+  const by = {};
+  for (const t of tasks.projectTasks('depends').tasks) by[t.id] = t;
+
+  check('a task depending on an OPEN task is waiting', by['second'].state, 'waiting');
+  check('and says which task it is waiting on', by['second'].waitingOn, ['first']);
+  check('a task whose dependency is already closed is queued', by['third'].state, 'queued');
+  check('and carries no waitingOn', by['third'].waitingOn, null);
+  check('nothing waits on it, so the first one is queued', by['first'].state, 'queued');
+  /* A human blocker outranks a dependency: the dependency clears itself when
+     the other task lands, the human does not. */
+  check('blocked outranks waiting when a task is both', by['fourth'].state, 'blocked');
+}
+
+{
+  const nm = makeRepo('needs-main', {
+    tasks: [
+      { id: 'seizes', title: 'Seizes a singleton', mode: 'main', needs_main: true },
+      { id: 'free', title: 'Delegable', mode: 'subtask', needs_main: false }
+    ],
+    closed: []
+  });
+  const tasks = load(writeRegistry([nm]));
+  const by = {};
+  for (const t of tasks.projectTasks('needs-main').tasks) by[t.id] = t;
+  /* 52 of 210 seize a stateful singleton: it decides HOW a task can be run. */
+  check('a needs_main task says so', by['seizes'].needsMain, true);
+  check('and one that does not, does not', by['free'].needsMain, false);
+}
+
+console.log('how much history is shown:');
+
+{
+  const many = makeRepo('lots-closed', {
+    tasks: [{ id: 'open-one', title: 'Still open', mode: 'subtask' }],
+    closed: Array.from({ length: 42 }, (_, i) => ({
+      id: 'closed-' + i, title: 'Closed number ' + i, closed_by: 'sha' + i, reason: null
+    }))
+  });
+  const tasks = load(writeRegistry([many]));
+  const got = tasks.projectTasks('lots-closed');
+  const done = got.tasks.filter(t => t.state === 'done');
+  /* The device slot shows FOUR rows - measured - so 42 done rows under 120
+     open ones are unreachable there. The recent handful is what anyone reads. */
+  check('only the most recent handful of done rows travel', done.length, 10);
+  check('the total is still reported, so the view can say what it omits',
+    [got.doneTotal, got.doneShown], [42, 10]);
+  check('and they are the most recently closed, newest first',
+    [done[0].id, done[9].id], ['closed-41', 'closed-32']);
 }
 
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);

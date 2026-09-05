@@ -476,7 +476,7 @@
 
   /* A marker as well as a colour. The panel is read from across a room and at
      an angle, where a hue difference is the first thing to go. */
-  var STATE_MARK = { running: '▶ ', blocked: '⚠ ', done: '✓ ', queued: '' };
+  var STATE_MARK = { running: '▶ ', blocked: '⚠ ', waiting: '⋯ ', done: '✓ ', queued: '' };
 
   var selectedProject = null;   /* survives a refresh; falls back if it vanishes */
   var projectData = null;
@@ -545,12 +545,22 @@
     var names = projectNames();
     var current = currentProject();
 
+    var counts = {};
+    for (var c = 0; c < (data.repos || []).length; c++) {
+      counts[data.repos[c].name] = data.repos[c].open;
+    }
+
     els.tabs.textContent = '';
     for (var i = 0; i < names.length; i++) {
       var tab = document.createElement('button');
       tab.className = 'tab' + (names[i] === current ? ' is-active' : '');
       tab.setAttribute('data-project', names[i]);
-      tab.textContent = names[i];
+      /* The count on the tab, so which project has work is answerable without
+         pressing through all five. The name can ellipsis; the count must not,
+         so it is its own element rather than appended text. */
+      tab.appendChild(cell('span', names[i], 'tab-name'));
+      var n = counts[names[i]];
+      if (n != null) tab.appendChild(cell('span', String(n), 'tab-count'));
       els.tabs.appendChild(tab);
     }
 
@@ -571,17 +581,21 @@
     }
 
     var tasks = (projectData && projectData.tasks) || [];
-    var open = 0, blocked = 0, running = 0;
+    var open = 0, blocked = 0, running = 0, waiting = 0;
     for (var b = 0; b < tasks.length; b++) {
       if (tasks[b].state === 'done') continue;
       open++;
       if (tasks[b].state === 'blocked') blocked++;
       if (tasks[b].state === 'running') running++;
+      if (tasks[b].state === 'waiting') waiting++;
     }
     /* The count is of OPEN work: the done rows are history underneath it, and
-       folding them into one total would make the queue look larger than it is. */
+       folding them into one total would make the queue look larger than it is.
+       Waiting is called out because it is the count that changes what "open"
+       means - a fifth of it may not be pickable at all. */
     setHeading(els.taskRows, open, 'open' +
       (running ? ' · ' + running + ' running' : '') +
+      (waiting ? ' · ' + waiting + ' waiting' : '') +
       (blocked ? ' · ' + blocked + ' blocked' : ''), current);
 
     els.taskRows.textContent = '';
@@ -601,12 +615,35 @@
       /* Whatever decides what happens to this task NEXT displaces the model and
          effort rather than joining them, because the row has one line: the
          blocking reason for a blocked one, and why it closed for a done one. */
-      meta.textContent = task.blocked ? task.blocked
-        : (task.state === 'done' ? (task.reason || 'closed')
-        : [task.mode, task.model + '/' + task.effort].join(' · '));
+      if (task.blocked) {
+        meta.textContent = task.blocked;
+      } else if (task.state === 'done') {
+        meta.textContent = task.reason || 'closed';
+      } else if (task.state === 'waiting') {
+        /* Which task it is waiting on, not merely that it is: the whole value
+           of the state is knowing what has to land first. */
+        meta.textContent = 'waiting on ' + task.waitingOn.join(', ');
+      } else {
+        var parts = [task.mode, task.model + '/' + task.effort];
+        /* Decides HOW it can be run, not whether - so it rides with the other
+           run attributes rather than displacing them. */
+        if (task.needsMain) parts.push('main only');
+        meta.textContent = parts.join(' · ');
+      }
       li.appendChild(meta);
 
       els.taskRows.appendChild(li);
+    }
+
+    /* Say what is NOT on screen rather than let the list end and imply there
+       is no more of it. */
+    var total = projectData && projectData.doneTotal;
+    var shown = projectData && projectData.doneShown;
+    if (total && shown < total) {
+      var more = document.createElement('li');
+      more.className = 'st-more';
+      more.appendChild(cell('span', (total - shown) + ' older done tasks not shown', 'row-name'));
+      els.taskRows.appendChild(more);
     }
   }
 

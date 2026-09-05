@@ -348,13 +348,13 @@ function alarmFixture() {
 /* One project's task list, as ?project= answers it. Titles at the measured
    90-character cap and a blocking reason at 110, because those are the widths
    that have to fit. */
-function projectFixture(name, count, blockedEvery, running, done) {
+function projectFixture(name, count, blockedEvery, running, done, waitingCount, doneTotal) {
   const tasks = [];
   for (let r = 0; r < (running || 0); r++) {
     tasks.push({
       id: name + '-running-' + r, title: 'sdi-control-rerun-at-j8-' + r,
       mode: 'subtask', model: 'sonnet', effort: 'medium', lane: 'serial',
-      blocked: null, state: 'running', reason: null
+      blocked: null, state: 'running', reason: null, needsMain: false, waitingOn: null
     });
   }
   /* Built queued-first then blocked, matching the order the feed serves - the
@@ -375,7 +375,9 @@ function projectFixture(name, count, blockedEvery, running, done) {
         ? 'a remove-and-re-add in the iCUE desktop UI, which no agent can perform, and which resets'
         : null,
       state: blocked ? 'blocked' : 'queued',
-      reason: null
+      reason: null,
+      needsMain: i % 5 === 0,
+      waitingOn: null
     });
   }
   for (const t of queued) tasks.push(t);
@@ -385,19 +387,39 @@ function projectFixture(name, count, blockedEvery, running, done) {
     tasks.push({
       id: name + '-done-' + d, title: 'The one that landed, number ' + d,
       mode: 'closed', model: 'unknown', effort: 'unknown', lane: 'unknown',
-      blocked: null, state: 'done',
+      blocked: null, state: 'done', needsMain: false, waitingOn: null,
       reason: d % 2 ? 'closed by eaa9f97' : 'Shipped as a fifth view rather than an addition'
     });
   }
-  return { project: name, tasks: tasks, error: null };
+  /* Waiting rows sit between blocked and done, the way the feed orders them. */
+  const stuckOnDeps = [];
+  for (let w = 0; w < (waitingCount || 0); w++) {
+    stuckOnDeps.push({
+      id: name + '-waiting-' + w, title: 'The one waiting on another task ' + w,
+      mode: 'subtask', model: 'sonnet', effort: 'low', lane: 'serial',
+      blocked: null, state: 'waiting', reason: null, needsMain: false,
+      waitingOn: [name + '-task-0']
+    });
+  }
+  const ordered = tasks.filter(t => t.state !== 'done')
+    .concat(stuckOnDeps)
+    .concat(tasks.filter(t => t.state === 'done'));
+  return {
+    project: name, tasks: ordered,
+    doneTotal: (doneTotal == null ? (done || 0) : doneTotal),
+    doneShown: done || 0,
+    error: null
+  };
 }
 
+/* done is what the feed SHIPS (capped at 10); doneTotal is how many exist, so
+   the "older not shown" line has something to say. */
 const PROJECT_BODIES = {
-  SIDM2: projectFixture('SIDM2', 120, 4, 2, 42),
-  h2g: projectFixture('h2g', 83, 0, 0, 105),
-  'claude-setup': projectFixture('claude-setup', 3, 3, 0, 0),
-  icue: projectFixture('icue', 2, 1, 0, 63),
-  'tdz-c64-knowledge': projectFixture('tdz-c64-knowledge', 2, 0, 0, 97)
+  SIDM2: projectFixture('SIDM2', 120, 4, 2, 10, 20, 42),
+  h2g: projectFixture('h2g', 83, 0, 0, 10, 0, 105),
+  'claude-setup': projectFixture('claude-setup', 3, 3, 0, 0, 0, 0),
+  icue: projectFixture('icue', 2, 1, 0, 10, 0, 63),
+  'tdz-c64-knowledge': projectFixture('tdz-c64-knowledge', 2, 0, 0, 10, 0, 97)
 };
 
 /* Eight projects, to prove the tab strip narrows rather than overflowing. Five
@@ -769,28 +791,41 @@ window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
 
     /* --- projects view --- */
     out.tabNames = Array.prototype.map.call(
-      document.querySelectorAll('#tabs .tab'), function (e) { return e.textContent; });
+      document.querySelectorAll('#tabs .tab .tab-name'), function (e) { return e.textContent; });
     out.tabActive = Array.prototype.map.call(
-      document.querySelectorAll('#tabs .tab.is-active'), function (e) { return e.textContent; });
+      document.querySelectorAll('#tabs .tab.is-active .tab-name'), function (e) { return e.textContent; });
     out.taskRowCount = Array.prototype.filter.call(
       document.querySelectorAll('#task-rows li'), function (e) { return e.offsetParent !== null; }).length;
     out.taskRowsInDom = document.querySelectorAll('#task-rows li').length;
     out.rowNames = Array.prototype.map.call(
-      document.querySelectorAll('#task-rows li .row-name'), function (e) { return e.textContent; });
+      document.querySelectorAll('#task-rows li[data-state] .row-name'), function (e) { return e.textContent; });
     out.rowStates = Array.prototype.map.call(
-      document.querySelectorAll('#task-rows li'), function (e) { return e.getAttribute('data-state'); });
+      document.querySelectorAll('#task-rows li[data-state]'), function (e) { return e.getAttribute('data-state'); });
     out.stateColours = {};
-    ['running', 'blocked', 'queued', 'done'].forEach(function (st) {
+    ['running', 'blocked', 'waiting', 'queued', 'done'].forEach(function (st) {
       var e = document.querySelector('#task-rows li.st-' + st + ' .row-name');
       out.stateColours[st] = e ? window.getComputedStyle(e).color : null;
     });
     out.stateMarks = {};
-    ['running', 'blocked', 'done', 'queued'].forEach(function (st) {
+    ['running', 'blocked', 'waiting', 'done', 'queued'].forEach(function (st) {
       var e = document.querySelector('#task-rows li.st-' + st + ' .row-name');
       out.stateMarks[st] = e ? (e.textContent || '').slice(0, 2) : null;
     });
     /* Page dots are what an advancing region grows. Their absence is how this
        asserts the projects list does not page itself. */
+    out.tabCounts = Array.prototype.map.call(
+      document.querySelectorAll('#tabs .tab .tab-count'), function (e) { return e.textContent; });
+    out.moreLine = (function () {
+      var e = document.querySelector('#task-rows li.st-more');
+      return e ? e.textContent : null;
+    })();
+    out.waitingMeta = (function () {
+      var e = document.querySelector('#task-rows li.st-waiting .row-figure');
+      return e ? e.textContent : null;
+    })();
+    out.mainOnlyRows = Array.prototype.filter.call(
+      document.querySelectorAll('#task-rows li.st-queued .row-figure'),
+      function (e) { return /main only/.test(e.textContent); }).length;
     out.projectPageDots = document.querySelectorAll('.view-projects .pages').length;
     out.otherPageDots = document.querySelectorAll('.view-queue .pages, .view-live .pages').length;
     out.taskHeadingText = (function () {
@@ -1009,11 +1044,11 @@ const CASES = [
    holding whatever it had on arrival, and nothing ever turned green. */
 const PROJECT_BODIES_AFTER = {
   SIDM2: (function () {
-    const b = projectFixture('SIDM2', 120, 4, 2, 42);
+    const b = projectFixture('SIDM2', 120, 4, 2, 10, 20, 42);
     b.tasks.unshift({
       id: 'sf2-automation-stubs', title: 'sf2-automation-stubs',
       mode: 'subtask', model: 'sonnet', effort: 'medium', lane: 'serial',
-      blocked: null, state: 'running', reason: null
+      blocked: null, state: 'running', reason: null, needsMain: false, waitingOn: null
     });
     return b;
   })()
@@ -1169,13 +1204,19 @@ console.log('the projects view:');
 check('a tab per project', byName['projects'].tabNames, 
   ['SIDM2', 'h2g', 'claude-setup', 'icue', 'tdz-c64-knowledge']);
 check('exactly one is selected', byName['projects'].tabActive.length, 1);
+/* Which project has work, without pressing through all five. */
+check('each tab carries its open count',
+  byName['projects'].tabCounts, ['120', '83', '3', '2', '2']);
 check('and it is the first until something is pressed',
   byName['projects'].tabActive[0], 'SIDM2');
 /* The count is of OPEN work - 120 queued/blocked plus 2 running - with the 42
    done rows below it as history. Folding those in would make the queue look
    larger than it is. */
+/* Waiting is called out because it changes what "open" means: a fifth of it
+   may not be pickable at all. */
 check('whose tasks are what is listed, counted as open work',
-  byName['projects'].taskHeadingText, 'SIDM2 · 122 open · 2 running · 30 blocked');
+  byName['projects'].taskHeadingText,
+  'SIDM2 · 142 open · 2 running · 20 waiting · 30 blocked');
 check('rows render rather than merely existing',
   byName['projects'].taskRowCount, byName['projects'].taskRowsInDom);
 check('a queued row shows its mode, model and effort',
@@ -1203,7 +1244,22 @@ console.log('task state, told four ways:');
     st.rowStates.indexOf('blocked') < st.rowStates.indexOf('done'), true);
   check('each state is one unbroken run, not interleaved',
     st.rowStates.filter((v, i) => i === 0 || v !== st.rowStates[i - 1]),
-    ['running', 'queued', 'blocked', 'done']);
+    ['running', 'queued', 'blocked', 'waiting', 'done']);
+
+  /* A dependency on a still-open task is not the same as a human blocker: it
+     clears itself when the other task lands. 20 of 210 real open tasks are in
+     this state and read as plain queued before it existed. */
+  check('a waiting row is coloured unlike every other state',
+    new Set(['running', 'blocked', 'queued', 'done', 'waiting']
+      .map(function (k) { return st.stateColours[k]; })).size, 5);
+  check('and carries its own marker', st.stateMarks.waiting, '⋯ ');
+  check('saying WHICH task it waits on, not merely that it does',
+    /^waiting on SIDM2-task-0$/.test(st.waitingMeta || ''), true);
+
+  /* 52 of 210 seize a stateful singleton. It decides HOW a task runs, so it
+     rides with the other run attributes instead of displacing them. */
+  check('a main-only task says so alongside its model and effort',
+    st.mainOnlyRows > 0, true);
 
   /* Each state is a COLOUR and a MARKER. The panel is read from across a room
      and at an angle, where hue is the first thing to go - and colour alone is
@@ -1225,6 +1281,12 @@ console.log('task state, told four ways:');
 
   check('a done row says why it closed rather than a model and effort',
     /Shipped as a fifth view|closed by/.test(st.doneTaskMeta || ''), true);
+
+  /* The device slot shows FOUR rows, measured, so 42 done rows under 120 open
+     ones are unreachable there. Only the recent handful travels - and the list
+     says what it is leaving out rather than just ending. */
+  check('the list says how much history it is not showing',
+    st.moreLine, '32 older done tasks not shown');
 }
 
 /* The list is fetched separately from the overview, so a poll that refreshes

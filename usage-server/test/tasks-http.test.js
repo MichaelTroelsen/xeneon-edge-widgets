@@ -130,7 +130,8 @@ async function main() {
     check('the named project answers with its own task list', proj.tasks.length, 2);
     check('and carries only the fields a row draws',
       Object.keys(proj.tasks[0]).sort(),
-      ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'reason', 'state', 'title']);
+      ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'needsMain', 'reason',
+       'state', 'title', 'waitingOn']);
     check('with the open one first and the closed one under it',
       proj.tasks.map(t => t.state), ['queued', 'done']);
     check('the nested project is reachable the same way',

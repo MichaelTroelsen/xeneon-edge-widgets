@@ -367,10 +367,27 @@ function datedHistory(repoPath, runs) {
   };
 }
 
-/* Measured, not chosen by eye: 90 is the longest title in the real queues, and
-   a blocking reason is a paragraph there - the glass has one line for it. */
-const TITLE_MAX = 90;
+/* 90 was WRONG, and wrong in an instructive way: it was "measured" by capping
+   the titles at 90 and then reading back the longest, which is the cap
+   measuring itself. The real distribution across all 210 open tasks is median
+   79, p90 109, max 140 - so the old cap silently truncated about a third of
+   them before the row ever saw the text.
+   A row has 609px at the device slot, which fits roughly 80 characters, and
+   CSS ellipsis already trims what does not fit. So the cap exists only to keep
+   a pathological title out of the payload, and sits at the real maximum rather
+   than below it: trimming in the feed throws away text the desktop dashboard
+   has the width to show. A blocking reason IS a paragraph in these files, and
+   the row has one line for it, so that cap is real. */
+const TITLE_MAX = 140;
 const BLOCKED_MAX = 110;
+
+/* Done rows are history under the live queue. All 42 of SIDM2's would sit
+   below 120 open ones, and the device slot shows FOUR rows - measured - so
+   every one of them is unreachable there. The most recent handful is the part
+   anyone reads; the count of the rest travels separately so the view can say
+   how many it is not showing. Ordered by position in the closed array, which
+   is appended to. */
+const DONE_MAX = 10;
 
 function clip(value, max) {
   if (typeof value !== 'string' || !value) return null;
@@ -411,25 +428,48 @@ function projectTasks(name) {
     .map(h => h && h.task)
     .filter(t => typeof t === 'string' && t));
 
-  const open = raw.map(t => ({
-    id: (t && t.id) || '',
-    /* An id is a worse label than a title but a far better one than nothing,
-       and every record has one. */
-    title: clip((t && t.title) || (t && t.id) || '', TITLE_MAX) || '',
-    mode: field(t, 'mode'),
-    model: modelFamily(t && t.model),
-    effort: field(t, 'effort'),
-    lane: field(t, 'lane'),
-    blocked: clip(t && t.blocked_on, BLOCKED_MAX),
-    state: held.has(t && t.id) ? 'running' : ((t && t.blocked_on) ? 'blocked' : 'queued'),
-    reason: null
-  }));
+  /* A task that depends on another OPEN task is not pickable, however ready it
+     otherwise looks. Measured: 25 of 210 carry a depends_on and 20 of those
+     name a task that is still open - so a fifth of what reads as "queued" is
+     not actually available, and looked identical to what is. */
+  const openIds = new Set(raw.map(t => t && t.id).filter(Boolean));
+
+  function unmetDeps(t) {
+    const deps = (t && Array.isArray(t.depends_on)) ? t.depends_on : [];
+    return deps.filter(d => openIds.has(d));
+  }
+
+  const open = raw.map(t => {
+    const waiting = unmetDeps(t);
+    return {
+      id: (t && t.id) || '',
+      /* An id is a worse label than a title but a far better one than nothing,
+         and every record has one. */
+      title: clip((t && t.title) || (t && t.id) || '', TITLE_MAX) || '',
+      mode: field(t, 'mode'),
+      model: modelFamily(t && t.model),
+      effort: field(t, 'effort'),
+      lane: field(t, 'lane'),
+      blocked: clip(t && t.blocked_on, BLOCKED_MAX),
+      /* Running beats everything - it is a fact about now. Then a human
+         blocker, then a dependency: both stop the task, but only one of them
+         clears itself. */
+      state: held.has(t && t.id) ? 'running'
+        : ((t && t.blocked_on) ? 'blocked'
+        : (waiting.length ? 'waiting' : 'queued')),
+      /* 52 of 210 seize a stateful singleton and cannot be delegated to a
+         subagent, which decides HOW the task can be run, not whether. */
+      needsMain: !!(t && t.needs_main),
+      waitingOn: waiting.length ? waiting : null,
+      reason: null
+    };
+  });
 
   /* The closed array is a different shape - { id, title, closed_by, reason } -
      and was only ever counted before. It is listed now because a done task
      cannot be coloured differently from a queued one without being on screen.
      Its reason is short: 47 characters on average across the real corpus. */
-  const finished = closed.map(t => ({
+  const finished = closed.slice(-DONE_MAX).reverse().map(t => ({
     id: (t && t.id) || '',
     title: clip((t && t.title) || (t && t.id) || '', TITLE_MAX) || '',
     mode: 'closed',
@@ -438,6 +478,8 @@ function projectTasks(name) {
     lane: 'unknown',
     blocked: null,
     state: 'done',
+    needsMain: false,
+    waitingOn: null,
     /* The reason if there is one, and otherwise the commit that closed it -
        which every record has, and which is the next most useful thing. */
     reason: clip(t && t.reason, BLOCKED_MAX) ||
@@ -449,11 +491,20 @@ function projectTasks(name) {
      blocked work sits below queued work because it is not actionable by the
      runner - it is waiting on a person, and grouping it just above the done
      rows keeps the actionable half of the list unbroken at the top. */
-  const ORDER = { running: 0, queued: 1, blocked: 2, done: 3 };
+  const ORDER = { running: 0, queued: 1, blocked: 2, waiting: 3, done: 4 };
   const tasks = open.concat(finished);
   tasks.sort((a, b) => ORDER[a.state] - ORDER[b.state]);
 
-  return { project: name, tasks: tasks, error: null };
+  return {
+    project: name,
+    tasks: tasks,
+    /* How many were closed in total, against how many of them are listed - so
+       the view can say what it is not showing rather than imply there is no
+       more. */
+    doneTotal: closed.length,
+    doneShown: Math.min(closed.length, DONE_MAX),
+    error: null
+  };
 }
 
 function mergeCounts(into, from) {
@@ -645,6 +696,6 @@ module.exports = {
   REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
   runsFile, readRuns, commitTimes, datedHistory, readHolders, build,
   readFiles, readMutex, pidAlive, isOrphan, TASK_FILES, MUTEX_STALE_MS, THIS_HOST,
-  projectTasks, TITLE_MAX, BLOCKED_MAX,
+  projectTasks, TITLE_MAX, BLOCKED_MAX, DONE_MAX,
   aggregateHistory, modelFamily, dayKey
 };

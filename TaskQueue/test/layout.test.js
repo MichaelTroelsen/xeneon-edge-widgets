@@ -844,8 +844,9 @@ window.__FEED_CALLS__ = 0;
     out.fileBrokenRows = Array.prototype.filter.call(
       document.querySelectorAll('#filetable tbody tr.st-broken'),
       function (e) { return e.offsetParent !== null; }).map(function (e) {
-        return { text: e.textContent, colspan: (e.querySelector('td') || {}).getAttribute
-          ? e.querySelector('td').getAttribute('colspan') : null };
+        var td = e.querySelector('td');
+        return { text: e.textContent, colspan: td ? td.getAttribute('colspan') : null,
+          colour: td ? window.getComputedStyle(td).color : null };
       });
 
     /* An undefined CSS custom property makes the whole declaration invalid and
@@ -865,6 +866,36 @@ window.__FEED_CALLS__ = 0;
       staleMutex: resolved('#filetable td.mx-stale', 'color'),
       bodyText: resolved('.widget-root', 'color')
     };
+
+    /* var(--warn) as .filetable td.row-error itself resolves it, independent
+       of whether any row in this fixture actually happens to be broken - a
+       probe cell dropped inside the always-present .filetable container and
+       removed right after. An undefined custom property is silently invalid,
+       so this is read fresh on every render rather than assumed. */
+    /* --warn resolved WITHOUT going through the .filetable rule: an inline
+       style on a throwaway element. The probe below reads the RULE; this reads
+       the TOKEN. Comparing the two is what catches the rule collapsing to an
+       undefined custom property - reading the rule twice cannot, because both
+       readings collapse together and stay equal. */
+    out.warnTokenColour = (function () {
+      var probe = document.createElement('span');
+      probe.style.color = 'var(--warn)';
+      document.body.appendChild(probe);
+      var v = window.getComputedStyle(probe).color;
+      document.body.removeChild(probe);
+      return v;
+    }());
+
+    out.filetableRowErrorColour = (function () {
+      var host = document.getElementById('filetable');
+      if (!host) return null;
+      var probe = document.createElement('td');
+      probe.className = 'row-error';
+      host.appendChild(probe);
+      var v = window.getComputedStyle(probe).color;
+      host.removeChild(probe);
+      return v;
+    })();
 
     var errorHintEl = document.getElementById('error-hint');
     var errorStateEl = document.querySelector('.error-state');
@@ -2349,6 +2380,26 @@ const FILE_COLUMNS_TEST_COUNT = 7;
      pointing the reader at the wrong list. */
   check('and naming the kind of row that broke, not the one it was copied from',
     ((thrown.fileBrokenRows[0] || {}).text || '').indexOf('⚠ a file row could not be drawn') === 0, true);
+
+  /* The marker gets its amber from its own .filetable td.row-error rule now,
+     not by borrowing td.mx-held - so assert the colour it actually resolves
+     to, not just the class name. An undefined var() is silently invalid. */
+  check('drawn in the amber this widget already uses for "something is wrong"',
+    (thrown.fileBrokenRows[0] || {}).colour, thrown.filetableRowErrorColour);
+  /* NOT merely 'is it a colour' - an undefined var() leaves the element its
+     INHERITED colour, which is a real opaque colour and passes any such test.
+     The rule must resolve to the SAME thing --warn resolves to on its own. */
+  check('and that amber is --warn itself, not an undefined custom property collapsing to inherit',
+    thrown.filetableRowErrorColour, thrown.warnTokenColour);
+
+  /* The mutex probe selects '#filetable td.mx' and classifies by mx-held /
+     mx-stale; the marker cell carries neither the 'mx' class the probe
+     requires nor mx-held any more, so the probe must read exactly one cell
+     per row that actually rendered as a row - the broken row contributes
+     none, so this is one short of the clean render, not the same count with
+     an extra "held" reading smuggled in. */
+  check('the mutex probe reports exactly the surviving rows\' cells, unmoved by this change',
+    thrown.mutexCells, clean.mutexCells.slice(1));
 
   check('every other repo row still drew',
     (thrown.fileRowNames || []).length, (clean.fileRowNames || []).length);

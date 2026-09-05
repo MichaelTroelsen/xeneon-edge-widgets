@@ -990,6 +990,11 @@ body {
 .filetable td.mx-held { color: var(--warn); }
 .filetable td.mx-stale { color: var(--bad); font-weight: 700; }
 
+/* A broken-row marker in this table - not a mutex reading, but the same
+   amber "something is wrong" colour. Its own rule, so it is never mistaken
+   for mutex state by anything that reads td.mx-held. */
+.filetable td.row-error { color: var(--warn); }
+
 
 
 /* The notes are centred in the full height of their view. */

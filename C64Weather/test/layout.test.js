@@ -77,10 +77,34 @@ const GLYPH_W = num(petsciiSrc, 'GLYPH_W');
 const ADVANCE = num(petsciiSrc, 'ADVANCE');
 const BOOT_MS = num(widgetSrc, 'BOOT_MS');
 
+/* The header renders WIDGET_VERSION, not manifest.json's version - and this
+   repo's device-verification discipline is "confirm the running version from
+   the RENDERED PAGE, never the installed folder", because iCUE caches the
+   page it loaded at startup. So WIDGET_VERSION is the one number a human
+   trusts, and nothing else here ever compared it to the manifest. Read both
+   AT TEST TIME - hard-coding today's versions would just be a third place to
+   drift. */
+function extractWidgetVersion(src) {
+  const m = src.match(/var WIDGET_VERSION = '([^']*)'/);
+  return m ? m[1] : null;
+}
+const WIDGET_VERSION_VALUE = extractWidgetVersion(widgetSrc);
+const VERSION_SHAPE = /^\d+\.\d+\.\d+$/;
+
+const manifestSrc = fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8');
+const MANIFEST_VERSION = JSON.parse(manifestSrc).version;
+
 console.log('metrics:');
 check('the glyph metrics were read out of petscii.js',
   [CELL_H, GLYPH_W, ADVANCE], [8, 5, 6]);
 check('BOOT_MS was read out of widget.js', BOOT_MS, 2000);
+/* Extraction-succeeded is its own check, before any comparison - a regex that
+   silently matches nothing yields null, and null === null would otherwise
+   pass this vacuously the day that line gets reformatted. */
+check('widget.js\'s WIDGET_VERSION was extracted and looks like a version',
+  typeof WIDGET_VERSION_VALUE === 'string' && VERSION_SHAPE.test(WIDGET_VERSION_VALUE), true);
+check(`manifest.json's version agrees with widget.js's WIDGET_VERSION (manifest ${MANIFEST_VERSION}, script ${WIDGET_VERSION_VALUE})`,
+  MANIFEST_VERSION, WIDGET_VERSION_VALUE);
 if (failures) {
   console.log('\nthe source constants could not be read; every expectation below would be vacuous');
   console.log(`${failures} FAILED`);

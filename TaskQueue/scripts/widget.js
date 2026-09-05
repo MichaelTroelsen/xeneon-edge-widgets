@@ -486,16 +486,13 @@
      appending an <li> into a <tbody> is invalid markup and renders nothing
      (or breaks the table), so this is a <tr> with one cell spanning every
      column instead. .row-figure.row-error is scoped to ".list li" in the
-     stylesheet and does not reach into .filetable, so it would draw in the
-     default text colour here rather than amber; .filetable already has an
-     amber rule of its own (td.mx-held, var(--warn)) and this reuses that
-     rather than adding a new CSS rule, which is outside the files this task
-     may touch. */
+     stylesheet and does not reach into .filetable, so .filetable td.row-error
+     carries the same var(--warn) amber for this table. */
   function brokenFileRow(err) {
     var tr = document.createElement('tr');
     tr.className = 'st-broken';
     var td = cell('td', '⚠ a file row could not be drawn — ' +
-      ((err && err.message) ? err.message : String(err)), 'name mx-held');
+      ((err && err.message) ? err.message : String(err)), 'name row-error');
     td.setAttribute('colspan', String(FILE_COLUMNS.length + 2));
     tr.appendChild(td);
     return tr;

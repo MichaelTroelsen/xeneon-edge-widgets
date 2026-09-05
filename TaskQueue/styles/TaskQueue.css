@@ -1221,11 +1221,27 @@ body {
   margin-bottom: calc(var(--space-pad) + var(--clock-h) + var(--layout-unit) * 0.9);
 }
 
-/* A blocked task leads with a marker and is the only row type coloured: the
-   whole point of the view is telling what is waiting from what is merely
-   queued. */
-#task-rows li.is-blocked .row-name { color: var(--warn); }
-#task-rows li.is-blocked .row-figure { color: var(--warn); }
+/* Four states, four treatments. Each carries a MARKER as well as a colour
+   (see STATE_MARK in widget.js): this panel is read from across a room and at
+   an angle, where a hue difference is the first thing to go, and a reader who
+   cannot separate red from green gets nothing from colour alone.
+
+   Running is the only one that gets full weight - it is the single row that
+   describes what the machine is doing this second. */
+#task-rows li.st-running .row-name {
+  color: var(--ok);
+  font-weight: 600;
+}
+#task-rows li.st-running .row-figure { color: var(--ok); }
+
+#task-rows li.st-blocked .row-name { color: var(--warn); }
+#task-rows li.st-blocked .row-figure { color: var(--warn); }
+
+/* Done is receded rather than coloured: it is history sitting under the live
+   queue, and giving it a hue of its own would make it compete with the two
+   states that actually want attention. */
+#task-rows li.st-done .row-name { color: var(--muted); }
+#task-rows li.st-done .row-figure { color: var(--track); }
 
 .projects-note {
   display: none;

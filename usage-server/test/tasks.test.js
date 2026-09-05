@@ -641,22 +641,27 @@ const LONG_BLOCK = 'A blocking reason that also runs on well past a hundred and 
 
   const got = tasks.projectTasks('detailed');
   check('the named project answers', got.project, 'detailed');
-  check('with a row per open task', got.tasks.length, 3);
+  /* Three open plus the one closed: a done task has to be listed to be
+     coloured differently from a queued one. */
+  check('with a row per task, open and closed alike', got.tasks.length, 4);
   check('and no error', got.error, null);
 
-  const a = got.tasks[0];
+  /* Looked up by id, not by position: the list is ordered by state now. */
+  const byId = {};
+  for (const t of got.tasks) byId[t.id] = t;
+  const a = byId['a'];
   check('the fields the view draws are carried',
     Object.keys(a).sort(),
-    ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'title']);
+    ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'reason', 'state', 'title']);
   check('the prose fields are NOT - they are 297KB of the 300KB and unshowable',
     [a.verify, a.why_model, a.evidence, a.touches], [undefined, undefined, undefined, undefined]);
   check('a task with no blocked_on carries null, not a string', a.blocked, null);
 
-  const b = got.tasks[1];
+  const b = byId['b'];
   check('an over-long title is capped at 90', b.title.length, 90);
   check('and an over-long blocking reason at 110', b.blocked.length, 110);
 
-  const c = got.tasks[2];
+  const c = byId['c'];
   check('a task with nothing on it still renders as something',
     [c.title, c.mode, c.model, c.effort], ['c', 'unknown', 'unknown', 'unknown']);
 }
@@ -681,6 +686,67 @@ const LONG_BLOCK = 'A blocking reason that also runs on well past a hundred and 
   check('the overview carries no task list', base.repos[0].tasks, undefined);
   check('and stays small even beside a fat queue',
     JSON.stringify(base).length < 4096, true);
+}
+
+console.log('what state each task is in:');
+
+{
+  const st = makeRepo('stated', {
+    tasks: [
+      { id: 'holding', title: 'The one with the lock', mode: 'subtask' },
+      { id: 'waiting', title: 'The one on a human', mode: 'requires-user',
+        blocked_on: 'a decision' },
+      { id: 'plain', title: 'The one just sitting there', mode: 'subtask' }
+    ],
+    closed: [
+      { id: 'finished', title: 'The one that landed', closed_by: 'eaa9f97',
+        reason: 'Shipped as a fifth view rather than an addition' },
+      { id: 'finished-quietly', title: 'The one with no reason', closed_by: 'abc1234',
+        reason: null }
+    ]
+  });
+  /* A holder names its task by the same id the queue uses - verified against a
+     real lock, where every holder's task matched an open task's id. */
+  fs.writeFileSync(path.join(st, '.claude', 'tasks', 'serial.lock'), JSON.stringify([
+    { task: 'holding', head: 'ff52cb4', touches: ['rw:a.js'], pid: LIVE_PID, host: THIS_HOST }
+  ]));
+  const tasks = load(writeRegistry([st]));
+  const got = tasks.projectTasks('stated');
+  const by = {};
+  for (const t of got.tasks) by[t.id] = t;
+
+  check('a task holding a lock is running', by['holding'].state, 'running');
+  check('a task with a blocked_on is blocked', by['waiting'].state, 'blocked');
+  check('an open task with neither is queued', by['plain'].state, 'queued');
+  check('a task in the closed array is done', by['finished'].state, 'done');
+
+  /* Colouring a done task means listing it: `closed` is a separate array that
+     the overview only ever counted. */
+  check('closed tasks join the list', got.tasks.length, 5);
+  check('a done task keeps the reason it was closed for',
+    by['finished'].reason, 'Shipped as a fifth view rather than an addition');
+  check('and falls back to the commit that closed it when there is no reason',
+    by['finished-quietly'].reason, 'closed by abc1234');
+
+  /* Running first, then what is waiting, then what is queued, then history -
+     the order the reader cares about, not the order the file happens to be in. */
+  check('ordered by state: running, blocked, queued, done',
+    got.tasks.map(t => t.state),
+    ['running', 'blocked', 'queued', 'done', 'done']);
+}
+
+{
+  /* A holder naming a task that is not in the queue must not invent a row. */
+  const ghost = makeRepo('ghost-holder', {
+    tasks: [{ id: 'real', title: 'Real', mode: 'subtask' }], closed: []
+  });
+  fs.writeFileSync(path.join(ghost, '.claude', 'tasks', 'serial.lock'), JSON.stringify([
+    { task: 'not-in-the-queue', pid: LIVE_PID, host: THIS_HOST }
+  ]));
+  const tasks = load(writeRegistry([ghost]));
+  const got = tasks.projectTasks('ghost-holder');
+  check('a holder for a task the queue does not have adds no row', got.tasks.length, 1);
+  check('and leaves the real one queued', got.tasks[0].state, 'queued');
 }
 
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);

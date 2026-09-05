@@ -125,10 +125,14 @@ async function main() {
 
     console.log('one project over http:');
     const proj = JSON.parse((await get('/tasks?project=flat-repo')).body);
-    check('the named project answers with its own task list', proj.tasks.length, 1);
+    /* One open and one closed: a done task is listed so it can be coloured
+       differently from a queued one. */
+    check('the named project answers with its own task list', proj.tasks.length, 2);
     check('and carries only the fields a row draws',
       Object.keys(proj.tasks[0]).sort(),
-      ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'title']);
+      ['blocked', 'effort', 'id', 'lane', 'mode', 'model', 'reason', 'state', 'title']);
+    check('with the open one first and the closed one under it',
+      proj.tasks.map(t => t.state), ['queued', 'done']);
     check('the nested project is reachable the same way',
       JSON.parse((await get('/tasks?project=nested-repo')).body).tasks.length, 2);
     const unknown = JSON.parse((await get('/tasks?project=nope')).body);

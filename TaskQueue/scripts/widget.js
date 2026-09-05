@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  var WIDGET_VERSION = '1.2.1';
+  var WIDGET_VERSION = '1.3.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/tasks';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -474,6 +474,10 @@
 
   /* ---------- the projects view ---------- */
 
+  /* A marker as well as a colour. The panel is read from across a room and at
+     an angle, where a hue difference is the first thing to go. */
+  var STATE_MARK = { running: '▶ ', blocked: '⚠ ', done: '✓ ', queued: '' };
+
   var selectedProject = null;   /* survives a refresh; falls back if it vanishes */
   var projectData = null;
   var projectError = '';
@@ -567,31 +571,39 @@
     }
 
     var tasks = (projectData && projectData.tasks) || [];
-    var blocked = 0;
-    for (var b = 0; b < tasks.length; b++) if (tasks[b].blocked) blocked++;
-
-    setHeading(els.taskRows, tasks.length,
-      'open' + (blocked ? ' · ' + blocked + ' blocked' : ''), current);
+    var open = 0, blocked = 0, running = 0;
+    for (var b = 0; b < tasks.length; b++) {
+      if (tasks[b].state === 'done') continue;
+      open++;
+      if (tasks[b].state === 'blocked') blocked++;
+      if (tasks[b].state === 'running') running++;
+    }
+    /* The count is of OPEN work: the done rows are history underneath it, and
+       folding them into one total would make the queue look larger than it is. */
+    setHeading(els.taskRows, open, 'open' +
+      (running ? ' · ' + running + ' running' : '') +
+      (blocked ? ' · ' + blocked + ' blocked' : ''), current);
 
     els.taskRows.textContent = '';
     for (var t = 0; t < tasks.length; t++) {
       var task = tasks[t];
       var li = document.createElement('li');
-      if (task.blocked) li.classList.add('is-blocked');
+      li.className = 'st-' + (task.state || 'queued');
+      li.setAttribute('data-state', task.state || 'queued');
 
       var top = document.createElement('span');
       top.className = 'row-name';
-      top.textContent = (task.blocked ? '⚠ ' : '') + (task.title || task.id);
+      top.textContent = STATE_MARK[task.state] + (task.title || task.id);
       li.appendChild(top);
 
       var meta = document.createElement('span');
       meta.className = 'row-figure';
-      /* The blocking reason displaces the model and effort rather than joining
-         them: it is the thing that decides what happens to this task next, and
-         the row has one line. */
-      meta.textContent = task.blocked
-        ? task.blocked
-        : [task.mode, task.model + '/' + task.effort].join(' · ');
+      /* Whatever decides what happens to this task NEXT displaces the model and
+         effort rather than joining them, because the row has one line: the
+         blocking reason for a blocked one, and why it closed for a done one. */
+      meta.textContent = task.blocked ? task.blocked
+        : (task.state === 'done' ? (task.reason || 'closed')
+        : [task.mode, task.model + '/' + task.effort].join(' · '));
       li.appendChild(meta);
 
       els.taskRows.appendChild(li);
@@ -840,10 +852,25 @@
   /* Rebuilt whenever the data or the view changes, because both change which
      regions overflow and by how much. Driven off getComputedStyle rather than
      a list of ids so a future view is covered without being named here. */
+  /* The projects view does not page itself. Every other list here is short
+     enough that a page or two covers it, so nothing is stranded by advancing
+     them; the project task list is up to 162 rows and is meant to be read at
+     the reader's own pace rather than moved out from under them. It keeps its
+     overflow-y so a wheel or trackpad still reaches the rest - and note the
+     measurement in README.md: the Edge webview forwards taps but NOT drags, so
+     on the panel itself this list shows what fits and no more. */
+  var NO_PAGING = { projects: true };
+
   function refreshPaging() {
     paged = [];
     var av = document.querySelector('.view.is-active');
     if (!av) return;
+    if (NO_PAGING[view]) {
+      /* Clear any dots and fade a previous view left behind. */
+      var stale = av.querySelectorAll('.pages');
+      for (var p = 0; p < stale.length; p++) stale[p].parentNode.removeChild(stale[p]);
+      return;
+    }
     var all = av.querySelectorAll('*');
     for (var i = 0; i < all.length; i++) {
       var el = all[i];

@@ -348,8 +348,15 @@ function alarmFixture() {
 /* One project's task list, as ?project= answers it. Titles at the measured
    90-character cap and a blocking reason at 110, because those are the widths
    that have to fit. */
-function projectFixture(name, count, blockedEvery) {
+function projectFixture(name, count, blockedEvery, running, done) {
   const tasks = [];
+  for (let r = 0; r < (running || 0); r++) {
+    tasks.push({
+      id: name + '-running-' + r, title: 'sdi-control-rerun-at-j8-' + r,
+      mode: 'subtask', model: 'sonnet', effort: 'medium', lane: 'serial',
+      blocked: null, state: 'running', reason: null
+    });
+  }
   for (let i = 0; i < count; i++) {
     const blocked = blockedEvery && i % blockedEvery === 0;
     tasks.push({
@@ -363,18 +370,29 @@ function projectFixture(name, count, blockedEvery) {
       lane: i % 2 ? 'serial' : 'parallel',
       blocked: blocked
         ? 'a remove-and-re-add in the iCUE desktop UI, which no agent can perform, and which resets'
-        : null
+        : null,
+      state: blocked ? 'blocked' : 'queued',
+      reason: null
+    });
+  }
+  /* Done rows sit under the open ones, the way the feed orders them. */
+  for (let d = 0; d < (done || 0); d++) {
+    tasks.push({
+      id: name + '-done-' + d, title: 'The one that landed, number ' + d,
+      mode: 'closed', model: 'unknown', effort: 'unknown', lane: 'unknown',
+      blocked: null, state: 'done',
+      reason: d % 2 ? 'closed by eaa9f97' : 'Shipped as a fifth view rather than an addition'
     });
   }
   return { project: name, tasks: tasks, error: null };
 }
 
 const PROJECT_BODIES = {
-  SIDM2: projectFixture('SIDM2', 120, 4),
-  h2g: projectFixture('h2g', 83, 0),
-  'claude-setup': projectFixture('claude-setup', 3, 3),
-  icue: projectFixture('icue', 2, 1),
-  'tdz-c64-knowledge': projectFixture('tdz-c64-knowledge', 2, 0)
+  SIDM2: projectFixture('SIDM2', 120, 4, 2, 42),
+  h2g: projectFixture('h2g', 83, 0, 0, 105),
+  'claude-setup': projectFixture('claude-setup', 3, 3, 0, 0),
+  icue: projectFixture('icue', 2, 1, 0, 63),
+  'tdz-c64-knowledge': projectFixture('tdz-c64-knowledge', 2, 0, 0, 97)
 };
 
 /* Eight projects, to prove the tab strip narrows rather than overflowing. Five
@@ -746,7 +764,22 @@ window.__PROJECTS__ = __PROJECT_BODIES__;
     out.taskRowCount = Array.prototype.filter.call(
       document.querySelectorAll('#task-rows li'), function (e) { return e.offsetParent !== null; }).length;
     out.taskRowsInDom = document.querySelectorAll('#task-rows li').length;
-    out.blockedRowCount = document.querySelectorAll('#task-rows li.is-blocked').length;
+    out.rowStates = Array.prototype.map.call(
+      document.querySelectorAll('#task-rows li'), function (e) { return e.getAttribute('data-state'); });
+    out.stateColours = {};
+    ['running', 'blocked', 'queued', 'done'].forEach(function (st) {
+      var e = document.querySelector('#task-rows li.st-' + st + ' .row-name');
+      out.stateColours[st] = e ? window.getComputedStyle(e).color : null;
+    });
+    out.stateMarks = {};
+    ['running', 'blocked', 'done', 'queued'].forEach(function (st) {
+      var e = document.querySelector('#task-rows li.st-' + st + ' .row-name');
+      out.stateMarks[st] = e ? (e.textContent || '').slice(0, 2) : null;
+    });
+    /* Page dots are what an advancing region grows. Their absence is how this
+       asserts the projects list does not page itself. */
+    out.projectPageDots = document.querySelectorAll('.view-projects .pages').length;
+    out.otherPageDots = document.querySelectorAll('.view-queue .pages, .view-live .pages').length;
     out.taskHeadingText = (function () {
       var h = document.querySelector('#list-tasks h2');
       return h ? h.textContent.trim() : null;
@@ -755,11 +788,15 @@ window.__PROJECTS__ = __PROJECT_BODIES__;
     out.projectsNoteText = pnote ? pnote.textContent : null;
     out.projectsNoteDisplay = pnote ? window.getComputedStyle(pnote).display : null;
     out.queuedTaskMeta = (function () {
-      var e = document.querySelector('#task-rows li:not(.is-blocked) .row-figure');
+      var e = document.querySelector('#task-rows li.st-queued .row-figure');
       return e ? e.textContent : null;
     })();
     out.blockedTaskMeta = (function () {
-      var e = document.querySelector('#task-rows li.is-blocked .row-figure');
+      var e = document.querySelector('#task-rows li.st-blocked .row-figure');
+      return e ? e.textContent : null;
+    })();
+    out.doneTaskMeta = (function () {
+      var e = document.querySelector('#task-rows li.st-done .row-figure');
       return e ? e.textContent : null;
     })();
 
@@ -1094,8 +1131,11 @@ check('a tab per project', byName['projects'].tabNames,
 check('exactly one is selected', byName['projects'].tabActive.length, 1);
 check('and it is the first until something is pressed',
   byName['projects'].tabActive[0], 'SIDM2');
-check('whose tasks are what is listed',
-  byName['projects'].taskHeadingText, 'SIDM2 · 120 open · 30 blocked');
+/* The count is of OPEN work - 120 queued/blocked plus 2 running - with the 42
+   done rows below it as history. Folding those in would make the queue look
+   larger than it is. */
+check('whose tasks are what is listed, counted as open work',
+  byName['projects'].taskHeadingText, 'SIDM2 · 122 open · 2 running · 30 blocked');
 check('rows render rather than merely existing',
   byName['projects'].taskRowCount, byName['projects'].taskRowsInDom);
 check('a queued row shows its mode, model and effort',
@@ -1105,8 +1145,48 @@ check('a queued row shows its mode, model and effort',
    what decides what happens to the task next, and the row has one line. */
 check('a blocked row shows the reason instead',
   /remove-and-re-add/.test(byName['projects'].blockedTaskMeta || ''), true);
-check('and blocked rows are marked as such',
-  byName['projects'].blockedRowCount > 0, true);
+
+console.log('task state, told four ways:');
+{
+  const st = byName['projects'];
+  /* The feed orders running, then blocked, then queued, then done, and the
+     view must not reshuffle that - the top of the list is what is happening
+     now and the bottom is history. */
+  check('running rows come first', st.rowStates.slice(0, 2), ['running', 'running']);
+  check('done rows come last',
+    st.rowStates[st.rowStates.length - 1], 'done');
+  check('and nothing open is left below them',
+    st.rowStates.indexOf('queued') < st.rowStates.indexOf('done'), true);
+
+  /* Each state is a COLOUR and a MARKER. The panel is read from across a room
+     and at an angle, where hue is the first thing to go - and colour alone is
+     nothing to a reader who cannot separate red from green. */
+  const c = st.stateColours;
+  check('running, blocked and done each resolve a colour',
+    [!!c.running, !!c.blocked, !!c.done], [true, true, true]);
+  check('running is not the colour of a queued row', c.running !== c.queued, true);
+  check('blocked is not the colour of a queued row', c.blocked !== c.queued, true);
+  check('done is not the colour of a queued row', c.done !== c.queued, true);
+  check('and no two states share a colour',
+    new Set([c.running, c.blocked, c.queued, c.done]).size, 4);
+
+  check('running carries its own marker', st.stateMarks.running, '▶ ');
+  check('blocked carries its own marker', st.stateMarks.blocked, '⚠ ');
+  check('done carries its own marker', st.stateMarks.done, '✓ ');
+  check('a queued row carries none, so the markers mean something',
+    /^[▶⚠✓]/.test(st.stateMarks.queued || ''), false);
+
+  check('a done row says why it closed rather than a model and effort',
+    /Shipped as a fifth view|closed by/.test(st.doneTaskMeta || ''), true);
+}
+
+console.log('the projects list does not page itself:');
+/* Every other list advances because the webview forwards no drags and a row
+   below the fold would otherwise be unreachable. This one is long and meant to
+   be read at the reader's own pace, so it holds still. */
+check('it grows no page dots', byName['projects'].projectPageDots, 0);
+check('while the lists that do page still have theirs',
+  byName['queue'].otherPageDots > 0, true);
 
 /* The tap is aimed at the tab's centre in page coordinates, so this exercises
    the elementFromPoint path the device will take - not a synthetic click. */

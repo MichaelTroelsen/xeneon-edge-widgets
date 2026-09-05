@@ -407,10 +407,40 @@ the distance this display is read from. More projects narrow the tabs rather
 than pushing one off the edge — five fit at 840px today and that is not a
 property worth depending on.
 
-Underneath, that project's open tasks, paging themselves like every other list
-here. A queued row carries its mode, model and effort; a **blocked row shows
-the reason instead**, because that is what decides what happens to the task
-next and the row has one line for it.
+Underneath, that project's tasks — **open and closed alike**, ordered running,
+blocked, queued, then done, so the top of the list is what is happening now and
+the bottom is history. The heading counts open work only; folding the done rows
+into one total would make the queue look larger than it is.
+
+| State | Colour | Marker |
+|---|---|---|
+| running | green, at full weight — the one row saying what the machine is doing this second | `▶` |
+| blocked | amber | `⚠` |
+| queued | body text | none |
+| done | receded to muted, its figures dimmer still | `✓` |
+
+**Every state carries a marker as well as a colour.** This panel is read from
+across a room and at an angle, where a hue difference is the first thing to go,
+and colour on its own says nothing to a reader who cannot separate red from
+green.
+
+`running` is derived from `serial.lock`: a holder record names its task by the
+same id the queue uses, verified against a real lock. A holder naming a task
+the queue does not have adds no row — the lock is a claim about work, not a
+source of it.
+
+A queued row carries its mode, model and effort. Whatever decides what happens
+to the task **next** displaces those, because the row has one line for it: the
+blocking reason for a blocked one, and why it closed — or the commit that
+closed it — for a done one.
+
+**This list does not page itself**, unlike every other list here. The others
+are short enough that a page or two covers them, so advancing them strands
+nothing; this one runs to 162 rows and is meant to be read at the reader's own
+pace. It keeps its `overflow-y`, so a wheel or trackpad reaches the rest in the
+iCUE desktop dashboard. Note the measurement in the box above, though: **the
+Edge webview forwards taps but not drags**, so on the panel itself this list
+shows what fits and no more.
 
 **A tap on a tab selects; a tap anywhere else still cycles the views.** The hit
 is resolved with `elementFromPoint` rather than by trusting the event target —

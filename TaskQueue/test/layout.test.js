@@ -760,7 +760,21 @@ window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
     var clockEl = document.getElementById('clock');
     out.clockPresent = !!clockEl;
     out.clockOverlaps = [];
-    var overlay = clockEl || document.querySelector('.widget-root > [style*="position: absolute"]');
+    /* An inline style attribute is not how anything here gets positioned - the
+       stylesheet does that - so probing for one always misses. What actually
+       takes an element out of flow and over its siblings is a COMPUTED
+       position of absolute or fixed; that is what must be probed for. */
+    var overlay = clockEl;
+    if (!overlay) {
+      var overlayCandidates = document.querySelectorAll('.widget-root *');
+      for (var oi = 0; oi < overlayCandidates.length; oi++) {
+        var candidatePos = window.getComputedStyle(overlayCandidates[oi]).position;
+        if (candidatePos === 'absolute' || candidatePos === 'fixed') {
+          overlay = overlayCandidates[oi];
+          break;
+        }
+      }
+    }
     if (overlay && window.getComputedStyle(overlay).display !== 'none') {
       var c = overlay.getBoundingClientRect();
       if (c.width > 0 && c.height > 0) {

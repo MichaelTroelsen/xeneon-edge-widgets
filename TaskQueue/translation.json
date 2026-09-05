@@ -1,0 +1,18 @@
+{
+  "en": {
+    "translation": {
+      "Task Queue": "Task Queue",
+      "Feed URL": "Feed URL",
+      "Theme": "Theme",
+      "Dark": "Dark",
+      "Light": "Light",
+      "Clock": "Clock",
+      "Auto": "Auto",
+      "12-hour": "12-hour",
+      "24-hour": "24-hour",
+      "Refresh Interval": "Refresh Interval",
+      "sec": "sec",
+      "Requires the local usage feed to be running. It reads the whattask queues of every project registered on this machine; nothing leaves the machine.": "Requires the local usage feed to be running. It reads the whattask queues of every project registered on this machine; nothing leaves the machine."
+    }
+  }
+}

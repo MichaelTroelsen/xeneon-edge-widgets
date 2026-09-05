@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tr('Task Queue')</title>
+  <link rel="icon" type="image/svg+xml" href="resources/icon.svg" />
+
+  <meta name="x-icue-property" content="feedUrl" data-label="tr('Feed URL')" data-type="textfield" data-default="'http://127.0.0.1:41777/tasks'" />
+  <meta name="x-icue-property" content="colorTheme" data-label="tr('Theme')" data-type="combobox" data-default="'dark'" data-values="[{'key':'dark','value':tr('Dark')},{'key':'light','value':tr('Light')}]" />
+  <meta name="x-icue-property" content="timeFormat" data-label="tr('Clock')" data-type="combobox" data-default="'auto'" data-values="[{'key':'auto','value':tr('Auto')},{'key':'12','value':tr('12-hour')},{'key':'24','value':tr('24-hour')}]" />
+  <meta name="x-icue-property" content="refreshSeconds" data-label="tr('Refresh Interval')" data-type="slider" data-default="15" data-min="5" data-max="120" data-step="5" data-unit-label="tr('sec')" />
+
+  <script type="application/json" id="x-icue-groups">
+  [
+    {
+      "title": "tr('Task Queue')",
+      "properties": ["feedUrl", "colorTheme", "timeFormat", "refreshSeconds"],
+      "info": "tr('Requires the local usage feed to be running. It reads the whattask queues of every project registered on this machine; nothing leaves the machine.')"
+    }
+  ]
+  </script>
+
+  <link rel="stylesheet" type="text/css" href="styles/TaskQueue.css" />
+</head>
+<body>
+  <div class="widget-root">
+    <div class="content">
+      <header class="head">
+        <span class="title" id="title">Task queue</span>
+        <span class="repos" id="repos"></span>
+        <span class="updated" id="updated"></span>
+        <span class="dots" aria-hidden="true"><i class="dot" data-view="queue"></i><i class="dot" data-view="live"></i><i class="dot" data-view="history"></i></span>
+        <span class="version" id="version"></span>
+      </header>
+
+      <div class="view view-queue">
+        <section class="meters">
+          <div class="meter" id="m-done">
+            <div class="meter-top">
+              <span class="name">Finished</span>
+              <span class="value" id="done-value">--</span>
+            </div>
+            <div class="track"><div class="fill" id="done-fill"></div></div>
+            <div class="sub" id="done-sub"></div>
+          </div>
+        </section>
+
+        <section class="lists">
+          <div class="list" id="list-repos">
+            <h2>Repos</h2>
+            <ul id="repo-rows"></ul>
+          </div>
+        </section>
+
+        <!-- Replaces the meter entirely when no repo on this machine has a
+             queue. A meter sitting at zero would read as a queue that is
+             finished rather than as no queue at all. -->
+        <div class="queue-note" id="queue-note"></div>
+      </div>
+
+      <!-- Two columns on purpose. A serial.lock holder and an open Claude
+           session are different claims about the machine - one says a runner
+           owns some paths, the other says an agent is talking to the API - and
+           summing them into one count would assert something untrue. The
+           second column exists because serial.lock's resting state is [], so a
+           view backed by holders alone would be blank almost every time
+           anyone looked at it. -->
+      <div class="view view-live">
+        <section class="lists lists-live">
+          <div class="list">
+            <h2>Holding a lock</h2>
+            <ul id="holders"></ul>
+          </div>
+          <div class="list">
+            <h2>Claude activity</h2>
+            <ul id="activity"></ul>
+          </div>
+        </section>
+      </div>
+
+      <div class="view view-history">
+        <section class="history">
+          <div class="heat-wrap">
+            <h2 id="heat-head">Runs</h2>
+            <div class="heat" id="heat"></div>
+            <div class="heat-key">
+              <span>less</span>
+              <i class="sw l0"></i><i class="sw l1"></i><i class="sw l2"></i><i class="sw l3"></i><i class="sw l4"></i>
+              <span>more</span>
+            </div>
+          </div>
+          <div class="figs" id="figs"></div>
+          <!-- The outcome split, all of it. Five outcomes exist in the real
+               corpus; as five headline figures they overflow the slot, so they
+               share one strip instead of being trimmed to the two that fit. -->
+          <div class="outcomes" id="outcomes"></div>
+        </section>
+        <!-- Same rule as the queue note: history that could not be dated says
+             so, because an empty grid reads as months of silence. -->
+        <div class="history-note" id="history-note"></div>
+      </div>
+    </div>
+
+    <div class="loading-state">
+      <div class="msg">Connecting to the task feed…</div>
+    </div>
+
+    <div class="error-state">
+      <div class="msg">Task feed unreachable</div>
+      <div class="hint" id="error-hint"></div>
+    </div>
+
+    <!-- Outside .content on purpose, so it survives the loading and error
+         states: a widget that cannot reach the feed still shows the time. -->
+    <div class="clock" id="clock"></div>
+  </div>
+
+  <script type="text/javascript" src="scripts/widget.js"></script>
+  <script>
+    // Bare assignment is intentional: var/let/const would keep the binding local
+    // if iCUE evaluates this script in a sandboxed function context, and the
+    // runtime bridge would never see the handlers.
+    icueEvents = {
+      onDataUpdated: function () { if (window.TaskQueue) window.TaskQueue.onDataUpdated(); },
+      onICUEInitialized: function () { if (window.TaskQueue) window.TaskQueue.onICUEInitialized(); }
+    };
+  </script>
+</body>
+</html>

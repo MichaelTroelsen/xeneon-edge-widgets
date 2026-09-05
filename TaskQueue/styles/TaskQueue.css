@@ -1,0 +1,1038 @@
+/* Task Queue — Xeneon Edge.
+   All sizing derives from one baseline (--layout-unit); components consume
+   semantic tokens only. Theme is a set of colour tokens swapped by JS. */
+
+:root {
+  /* Baselines */
+  --layout-unit: 1vmin;
+  --device-vertical-s-unit: 4.16px;                 /* 416 / 100 */
+  --preview-vertical-s-unit: calc(100vw * 416 / 69600);
+  --short-wide-unit: 4.3px;                         /* 344 / 80  */
+
+  /* Spacing and shape */
+  --space-gap: calc(var(--layout-unit) * 2.6);
+  --space-pad: calc(var(--layout-unit) * 5);
+  --radius: calc(var(--layout-unit) * 2);
+  --bar-h: calc(var(--layout-unit) * 2.4);
+
+  /* Type. Every step is +0.5 layout units over the original scale, which is
+     about +2px at the 840x344 slot and proportionally more on larger ones. */
+  --font-title: calc(var(--layout-unit) * 4.9);
+  --font-name: calc(var(--layout-unit) * 4.5);
+  --font-value: calc(var(--layout-unit) * 4.9);
+  --font-sub: calc(var(--layout-unit) * 3.6);
+  /* The reset caption is the one line people actually read off the bar, so it
+     sits above --font-sub while staying below the meter name. */
+  --font-caption: calc(var(--layout-unit) * 4.2);
+  --font-section: calc(var(--layout-unit) * 3.9);
+  --font-row: calc(var(--layout-unit) * 3.7);
+  --font-badge: calc(var(--layout-unit) * 3.1);
+  --font-meta: calc(var(--layout-unit) * 3.3);
+  /* The corner clock, and one line of it - which is also the strip reserved
+     for it at the foot of the Tokens view, so the two are derived from each
+     other rather than tuned apart. Its own token, not --font-caption reused:
+     the clock is the one reading here that is looked at from across a room,
+     and it should be resizable without moving the meter captions with it. */
+  --font-clock: calc(var(--layout-unit) * 4.4);
+  --clock-h: calc(var(--font-clock) * 1.35);
+
+  /* Dark theme (default) */
+  --bg: #1b1b19;
+  --text: #f2f0ea;
+  --muted: #9b9a92;
+  --track: #35352f;
+  --fill: #5b8def;
+  --line: #302f2c;
+  --ok: #57c785;
+  --warn: #e0a458;
+  --bad: #e0685f;
+
+  /* Heatmap ramp. Five explicit steps rather than opacity over --fill: the
+     lowest filled level has to stay clear of the empty cell, and an alpha
+     ramp puts them within a couple of percent of each other. */
+  --heat-0: #2c2c27;
+  --heat-1: #26456f;
+  --heat-2: #355a9c;
+  --heat-3: #4876cc;
+  --heat-4: #6a99f5;
+
+  /* Categorical, not a ramp: these name different models, so they must be
+     told apart rather than ordered. Assigned by total tokens descending. */
+  --m0: #6a99f5;
+  --m1: #57c785;
+  --m2: #e0a458;
+  --m3: #b98ae0;
+  --m4: #e0685f;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --text: #191917;
+  --muted: #6e6d66;
+  --track: #c9dcf7;
+  --fill: #1a56db;
+  --line: #e6e4de;
+  --ok: #16a34a;
+  --warn: #b45309;
+  --bad: #b91c1c;
+
+  --heat-0: #eceae4;
+  --heat-1: #bcd2f4;
+  --heat-2: #85aae9;
+  --heat-3: #4a7ede;
+  --heat-4: #1a56db;
+
+  --m0: #1a56db;
+  --m1: #16a34a;
+  --m2: #b45309;
+  --m3: #7c3aed;
+  --m4: #b91c1c;
+}
+
+html { overflow: hidden; }
+
+body {
+  margin: 0;
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  font-family: OpenSans, "Segoe UI", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.widget-root {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--space-pad);
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-gap);
+  /* The clock in the corner anchors to this box. */
+  position: relative;
+}
+
+/* ------------------------------------------------------------------- clock */
+
+/* The clock is drawn OVER the views, so a region that fills its slot to the
+   bottom-right has to END above it rather than be covered - which is what the
+   tokens view did, drawing the time on top of the OUTPUT figure in its last
+   row. That view is the one that does: its columns page their own content, so
+   the strip costs a fraction of a page rather than a row nobody can read.
+
+   MARGIN, not padding: padding inside a scroller only adds scrollable space
+   below the content, leaving the visible box - and so the last row on every
+   page but the last - exactly where the clock is. The box itself has to be
+   shorter.
+
+   Reserved on the container rather than on the last column alone, so the two
+   columns stay the same height as each other, and not as bottom padding on
+   .widget-root, which was the blunter fix: the usage view is sized against
+   22.3px of slack (see .why), and a clock line out of every view spends most
+   of it and pushes the weekly meter out of its own box.
+
+   The activity lists are deliberately NOT reserved. Their rows ellipsis at the
+   column edge rather than carrying a figure there, so the worst the clock can
+   cover is the tail of one truncated label in the right-hand list - and taking
+   a clock line out of .lists puts all three lists into overflow, which costs
+   them a page-dot cluster in every heading and a wrapped heading with it. A
+   truncated label is the cheaper of the two. */
+/* Plus a gap: the reserved strip is exactly one clock line, so without it the
+   column's last row and the time are flush against each other and read as one
+   crowded block rather than content and chrome. */
+.cols { margin-bottom: calc(var(--clock-h) + var(--layout-unit) * 1.2); }
+
+/* Bottom right. Absolute rather than a row in the flex column so that it sits
+   in the corner rather than after whichever view is on screen; the strip it
+   needs is reserved by the rule above. Muted rather than in --text: it is
+   chrome beside the figures, not another figure - but read at a glance from
+   further away than any of them, which is why it is not sized like one. */
+.clock {
+  position: absolute;
+  right: var(--space-pad);
+  bottom: var(--space-pad);
+  height: var(--clock-h);
+  line-height: var(--clock-h);
+  font-size: var(--font-clock);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* The state wrapper must itself be the full-height column, otherwise .body has
+   no height to distribute and every flex-basis:0 child collapses to nothing. */
+.content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-gap);
+}
+
+/* ------------------------------------------------------------------ header */
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--layout-unit) * 2);
+  flex: 0 0 auto;
+}
+
+.head .title {
+  font-size: var(--font-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.head .plan {
+  font-size: var(--font-sub);
+  color: var(--muted);
+}
+
+/* When the feed was last rebuilt. It turns amber once the data stops being
+   refreshed, so a dead feed is visible rather than looking like live numbers
+   that simply are not moving. */
+.head .updated {
+  margin-left: auto;
+  font-size: var(--font-badge);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.head .updated.is-stale { color: var(--warn); }
+
+.head .live {
+  font-size: var(--font-badge);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ok);
+  border: 1px solid var(--ok);
+  border-radius: calc(var(--layout-unit) * 1);
+  padding: calc(var(--layout-unit) * 0.6) calc(var(--layout-unit) * 1.4);
+}
+
+.head .live.is-stale {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.head .live.is-local {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+/* Anthropic answered, but only for one of the two windows. Amber rather than
+   green because part of what is on screen is a different metric. */
+.head .live.is-partial {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.head .version {
+  font-size: var(--font-badge);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two views on one page: usage, and the activity lists. Tapping the widget
+   swaps them, so the dots have to say which one you are on. */
+.dots {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 1);
+}
+
+.dots .dot {
+  width: calc(var(--layout-unit) * 1.5);
+  height: calc(var(--layout-unit) * 1.5);
+  border-radius: 999px;
+  background: var(--track);
+  transition: background 0.2s ease;
+}
+
+.dots .dot.is-active { background: var(--fill); }
+
+/* The project that a session belongs to, ahead of its label. Muted so the
+   label still reads as the row's subject. */
+.list li .label .proj { color: var(--muted); }
+
+.view { display: none; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+
+/* Token breakdown: the two windows side by side, each a class table and a
+   per-model table. Scrolls rather than trims, like the activity lists - a row
+   hidden here would be unreachable. */
+.cols {
+  display: flex;
+  gap: calc(var(--layout-unit) * 4);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cols .col {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Sticky because this heading lives INSIDE its own scroller, unlike .list h2
+   which sits outside one. Without it the column's page indicator would scroll
+   out of sight on the very page it is there to explain. */
+.cols .col h2 {
+  font-size: var(--font-name);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 calc(var(--layout-unit) * 0.5);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+
+.cols .col-sub,
+.cols .col-note {
+  font-size: var(--font-meta);
+  color: var(--muted);
+  margin-bottom: calc(var(--layout-unit) * 1);
+}
+
+/* Fixed layout with declared widths: with auto layout the header row and the
+   data rows sized independently and the columns did not line up. */
+.cols table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--font-meta);
+}
+
+.cols .tok th { width: 44%; }
+.cols .tok td.n { width: 38%; }
+.cols .tok td.pct { width: 18%; }
+
+.cols .mdl th { width: 44%; }
+.cols .mdl td.n { width: 28%; }
+
+.cols table th,
+.cols table td {
+  padding: calc(var(--layout-unit) * 0.5) 0;
+  text-align: left;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cols table td.n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.cols table td.pct {
+  text-align: right;
+  color: var(--muted);
+}
+
+.cols .tok tr.sum th,
+.cols .tok tr.sum td {
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cols .mdl { margin-top: calc(var(--layout-unit) * 1); }
+.cols .mdl tr.mdl-head th,
+.cols .mdl tr.mdl-head td {
+  border-bottom: 1px solid var(--line);
+  font-size: calc(var(--font-meta) * 0.92);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.view.is-active { display: flex; }
+
+/* Three lists side by side. Even 840px has room for them; the meta column is
+   what gets dropped there, not a whole list. */
+.lists-detail {
+  flex: 1 1 auto;
+  flex-direction: row;
+}
+
+@media (max-width: 900px) {
+  .lists-detail .meta { display: none; }
+}
+
+/* -------------------------------------------------------------------- body */
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: calc(var(--layout-unit) * 6);
+}
+
+.meters {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-gap);
+  justify-content: flex-start;
+}
+
+.section-label {
+  font-size: var(--font-section);
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: calc(var(--layout-unit) * 1.5);
+}
+
+/* Two-line meter: name + value on top, bar below, reset caption under it.
+   Holds its shape from 320px to 2536px without a layout swap. */
+.meter { display: flex; flex-direction: column; gap: calc(var(--layout-unit) * 1.2); }
+
+.meter-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-gap);
+}
+
+.meter .name {
+  font-size: var(--font-name);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* This meter fell back to measured tokens while the other one is showing
+   Anthropic's figure. Without a mark the two read as the same kind of number. */
+.meter .name.is-measured::after {
+  content: " · measured";
+  color: var(--warn);
+  font-weight: 400;
+}
+
+.meter .value {
+  font-size: var(--font-value);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Secondary measured detail under the reset caption. */
+.meter .note {
+  font-size: var(--font-sub);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meter .sub {
+  font-size: var(--font-caption);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------- why a reading is not live */
+
+/* The badge says LIVE / LIVE· / LIVE¹ / LOCAL, so the STATE was always on
+   screen; the REASON was in a title attribute, which on a device with no
+   cursor is the same as not saying it. This strip says it in the page.
+
+   Sized in whole lines, never in leftover space: at 840x344 the usage view has
+   22.3px of slack between the two meters (MEASURED - .body is 260.3px and the
+   meters need 237.9px with both bars showing), so one line is what there is,
+   and a second would push the meters out of the widget. Larger slots get
+   three. Anything longer than that is paged one line at a time by the same
+   mechanism that pages the activity lists - the device forwards no drags, so
+   scrolling is not an option and truncation would lose the actual cause. */
+.why-wrap {
+  flex: 0 0 auto;
+  display: none;
+  position: relative;
+  margin-top: calc(var(--layout-unit) * 0.6);
+}
+
+.view-queue.has-why .why-wrap { display: block; }
+
+.why {
+  height: calc(var(--font-badge) * 1.25 * var(--why-lines, 3));
+  line-height: 1.25;
+  font-size: var(--font-badge);
+  color: var(--warn);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* "There is more of this below", the same promise .list.can-scroll makes -
+   but a bottom fade over a one-line box would wash out the line it is meant to
+   be helping, so it is a marker at the end of the line instead. */
+.why-wrap.can-scroll::after {
+  content: '…';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding-left: calc(var(--layout-unit) * 1.2);
+  background: var(--bg);
+  color: var(--warn);
+  font-size: var(--font-badge);
+  line-height: 1.25;
+  pointer-events: none;
+}
+
+.track {
+  height: var(--bar-h);
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  transition: width 0.4s ease;
+}
+
+/* Amber from 80%, red from 95%. is-critical is declared last so it wins when
+   both classes are set. */
+.meter.is-high .fill { background: var(--warn); }
+.meter.is-critical .fill,
+.meter.is-blocked .fill { background: var(--bad); }
+
+/* ------------------------------------------------------------------- lists */
+
+/* min-height:0 matters as much as min-width: a flex item defaults to
+   min-height:auto, which refuses to shrink below its content, so the lists
+   would overflow their box and be clipped by the panel instead of trimmed. */
+.lists {
+  flex: 2 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: calc(var(--layout-unit) * 6);
+}
+
+.list {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 1.4);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Drawn only while there is content BELOW THE CURRENT PAGE, so a short list -
+   and the last page of a long one - keeps its final row at full strength. It
+   used to mean "this box overflows somewhere", which on a device that forwards
+   no drags was a promise of content nobody could reach. */
+.list.can-scroll::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--layout-unit) * 6);
+  background: linear-gradient(to bottom, transparent, var(--bg));
+  pointer-events: none;
+}
+
+.list h2 {
+  margin: 0;
+  font-size: var(--font-section);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ------------------------------------------------------- page indicator */
+
+/* An overflowing region pages itself (the webview forwards no drags), and its
+   heading says how many pages there are and which one is showing. It rides in
+   the heading rather than on a line of its own because the Activity lists get
+   a 232px box and a row is ~32px of it: a separate line would have cost a row
+   of the very content it describes. Same dot idiom as the view indicator in
+   the header, so one visual language means "there is more, in sequence". */
+.list h2,
+.cols .col h2 {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 1);
+}
+
+/* The heading's text, as a real flex item. As a loose text node it was an
+   anonymous item that would not shrink, so the heading wrapped to a second
+   line and stole a row from the list under it. */
+.htext {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pages {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 0.8);
+  flex: 0 0 auto;
+}
+
+/* <i>, not .dot - .list li .dot is the row's state marker and must not be
+   restyled by this. */
+.pages i {
+  width: calc(var(--layout-unit) * 1.2);
+  height: calc(var(--layout-unit) * 1.2);
+  border-radius: 999px;
+  background: var(--track);
+}
+
+.pages i.is-active { background: var(--fill); }
+
+/* flex+min-height:0 bounds the list to its box. Without it the ul sizes to its
+   content and only the parent clips, so scrollHeight == clientHeight and the
+   row trimmer sees nothing to trim - leaving a row sliced by the panel edge. */
+.list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 1.2);
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Touch-scrollable. The scrollbar is hidden because a widget has no room for
+     one; the fade above is the affordance instead. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.list ul::-webkit-scrollbar { width: 0; height: 0; }
+
+.list li {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--layout-unit) * 1.6);
+  font-size: var(--font-row);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: calc(var(--layout-unit) * 1.2);
+}
+
+.list li .dot {
+  flex: 0 0 auto;
+  width: calc(var(--layout-unit) * 1.4);
+  height: calc(var(--layout-unit) * 1.4);
+  border-radius: 999px;
+  background: var(--muted);
+  align-self: center;
+}
+
+.state-done .dot, .state-completed .dot { background: var(--ok); }
+.state-running .dot, .state-in_progress .dot { background: var(--fill); }
+.state-blocked .dot, .state-failed .dot, .state-error .dot { background: var(--bad); }
+.state-queued .dot { background: var(--muted); }
+
+.list li .label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list li .meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--font-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.list .empty { color: var(--muted); font-size: var(--font-row); }
+
+/* ------------------------------------------------------------------ states */
+
+.loading-state,
+.error-state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: calc(var(--layout-unit) * 2);
+}
+
+.loading-state .msg, .error-state .msg { font-size: var(--font-name); }
+.error-state .hint { font-size: var(--font-sub); color: var(--muted); }
+.error-state .msg { color: var(--bad); }
+
+/* ------------------------------------------------------------------
+   Baseline overrides — swap the active unit, never individual fonts.
+   ------------------------------------------------------------------ */
+
+@media (min-width: 680px) and (max-width: 712px) and (min-height: 416px) {
+  :root { --layout-unit: var(--device-vertical-s-unit); }
+}
+
+@media (min-width: 180px) and (max-width: 360px) and (max-aspect-ratio: 0.9) {
+  :root { --layout-unit: var(--preview-vertical-s-unit); }
+}
+
+@media (min-aspect-ratio: 2.2) and (max-height: 400px) {
+  :root { --layout-unit: var(--short-wide-unit); }
+}
+
+/* ------------------------------------------------------------------
+   Composition — what is shown, not how large it is.
+   ------------------------------------------------------------------ */
+
+/* Portrait: meters on top, the two lists stacked underneath. The meters keep
+   their natural height so the surplus goes to the lists, not to dead space. */
+@media (max-aspect-ratio: 0.95) {
+  .body { flex-direction: column; gap: calc(var(--layout-unit) * 3); }
+  .meters { flex: 0 0 auto; }
+  .lists { flex-direction: column; flex: 1 1 auto; }
+}
+
+/* Short slots — S-H 840x344 and S-V 696x416. Nothing but the meters fits, so
+   the session percentage grows into the hero role. Keyed on height, not width:
+   a width rule here collides with the M-H rule below. */
+/* Scoped to the usage view on purpose: the detail view is nothing but lists,
+   so hiding them there would leave a blank screen. */
+@media (max-height: 460px) {
+  .view-queue .lists { display: none; }
+  .meters { justify-content: space-evenly; }
+  :root { --font-value: calc(var(--layout-unit) * 6.5); }
+  /* One line is the whole budget here - see the measurement on .why-wrap. */
+  :root { --why-lines: 1; }
+}
+
+/* M-H 840x696 — too narrow for meters and lists side by side, tall enough for
+   one list stacked underneath. Landscape-only: 696x840 is portrait and has the
+   height for both lists, so it must not match here. */
+@media (max-width: 900px) and (min-height: 600px) and (min-aspect-ratio: 0.95) {
+  .body { flex-direction: column; }
+  .meters { flex: 0 0 auto; }
+  .lists { flex-direction: column; }
+  #list-subtasks { display: none; }
+}
+
+/* Very short slots: drop the reset captions and the weekly bucket row. */
+@media (max-height: 360px) {
+  .section-label { display: none; }
+  .meter.bucket { display: none; }
+}
+
+/* Tall portrait: plenty of room, give the lists the surplus. */
+@media (max-aspect-ratio: 0.6) {
+  .meters { flex: 0 0 auto; }
+  .lists { flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- all-time stats ---------- */
+
+/* Heatmap band across the top, figures underneath. Side by side was tried
+   first and fails on the real data: the rollup spans forty-one weeks, so a
+   half-width grid squeezes the cells to about five pixels and the weekday
+   labels stop being letters. The band is the wide shape the data actually is. */
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 3);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.heat-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.heat-wrap h2 {
+  margin: 0 0 calc(var(--layout-unit) * 0.6);
+  font-size: var(--font-section);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* A fixed band rather than the leftover space: a wide span fits to width and
+   fills it, a short one fits to height and centres, and neither can collapse
+   the cells to nothing. */
+.heat {
+  flex: 0 0 auto;
+  height: calc(var(--layout-unit) * 26);
+  display: flex;
+}
+.heat svg { width: 100%; height: 100%; }
+.heat .cell { fill: var(--heat-0); }
+.heat .cell.l1 { fill: var(--heat-1); }
+.heat .cell.l2 { fill: var(--heat-2); }
+.heat .cell.l3 { fill: var(--heat-3); }
+.heat .cell.l4 { fill: var(--heat-4); }
+.heat .heat-day { fill: var(--muted); }
+
+.heat-key {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 0.9);
+  margin-top: calc(var(--layout-unit) * 1.4);
+  font-size: var(--font-meta);
+  color: var(--muted);
+}
+.heat-key .sw {
+  width: calc(var(--layout-unit) * 2.2);
+  height: calc(var(--layout-unit) * 2.2);
+  border-radius: calc(var(--layout-unit) * 0.5);
+  background: var(--heat-0);
+}
+.heat-key .sw.l1 { background: var(--heat-1); }
+.heat-key .sw.l2 { background: var(--heat-2); }
+.heat-key .sw.l3 { background: var(--heat-3); }
+.heat-key .sw.l4 { background: var(--heat-4); }
+
+/* Four across, two down. Eight in a single row leaves no width for a
+   six-figure message count; eight in a column would need a scroll, and a
+   figure you have to scroll to is one nobody reads. */
+.figs {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: 1fr;
+  gap: calc(var(--layout-unit) * 2.4) calc(var(--layout-unit) * 3);
+  min-width: 0;
+  min-height: 0;
+}
+.fig {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+.fig .k {
+  font-size: var(--font-meta);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.fig .v {
+  font-size: var(--font-name);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The note and the grid swap places: never both, so an unavailable stats
+   block cannot leave a blank heatmap on screen beside its own explanation. */
+.history-note {
+  display: none;
+  font-size: var(--font-caption);
+  color: var(--muted);
+  align-self: center;
+  margin: auto;
+  padding: 0 calc(var(--layout-unit) * 6);
+  text-align: center;
+}
+.view-history.is-unavailable .history { display: none; }
+.view-history.is-unavailable .history-note { display: block; }
+
+/* ---------- tokens by model ---------- */
+
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 2);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.models h2 {
+  margin: 0;
+  font-size: var(--font-section);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* preserveAspectRatio="none" on the SVG: the bars are a quantity against a
+   day, not a shape, so stretching them to the box is correct and keeps every
+   column the same width whatever the span. */
+.chart {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.chart svg { width: 100%; height: 100%; }
+.bar.m0 { fill: var(--m0); }
+.bar.m1 { fill: var(--m1); }
+.bar.m2 { fill: var(--m2); }
+.bar.m3 { fill: var(--m3); }
+.bar.m4 { fill: var(--m4); }
+
+.legend {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--layout-unit) * 1) calc(var(--layout-unit) * 4);
+  font-size: var(--font-meta);
+}
+.legend .lg {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--layout-unit) * 1);
+  min-width: 0;
+}
+.legend .sw {
+  width: calc(var(--layout-unit) * 2.2);
+  height: calc(var(--layout-unit) * 2.2);
+  border-radius: calc(var(--layout-unit) * 0.5);
+  flex: 0 0 auto;
+}
+.legend .sw.m0 { background: var(--m0); }
+.legend .sw.m1 { background: var(--m1); }
+.legend .sw.m2 { background: var(--m2); }
+.legend .sw.m3 { background: var(--m3); }
+.legend .sw.m4 { background: var(--m4); }
+.legend .n { color: var(--text); white-space: nowrap; }
+.legend .v { color: var(--muted); white-space: nowrap; }
+
+.models-note {
+  display: none;
+  font-size: var(--font-caption);
+  color: var(--muted);
+  align-self: center;
+  margin: auto;
+  padding: 0 calc(var(--layout-unit) * 6);
+  text-align: center;
+}
+.view-models.is-unavailable .models { display: none; }
+.view-models.is-unavailable .models-note { display: block; }
+
+/* ------------------------------------------------------------ task queue */
+
+/* Rules inherited from the Claude Code Usage stylesheet that this widget's
+   markup has no elements for - .cols and its tables, .why, .models and its
+   chart - are left in place rather than deleted. They match nothing here, so
+   they cost only bytes; removing them by line range is how a rule that IS
+   live gets taken out by accident. */
+
+/* A repo row, and a running row: a name that may ellipsis, and a figure that
+   must not. Distinct from .list li, which carries the usage widget's status
+   dot; these rows have no state of their own to show. */
+.list li .row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list li .row-figure {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: calc(var(--layout-unit) * 0.8);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A repo whose whattask.json could not be read says so in place of its
+   counts. Amber rather than red: the repo is not broken, this reading of it
+   is, and the other repos on the list are still true. */
+.list li .row-figure.row-error {
+  color: var(--warn);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
+
+/* A lock holder is drawn differently from a Claude session on purpose. The two
+   columns already separate them; this makes the distinction survive a glance
+   from across a room, which is the distance this display is read at. */
+.lists-live li[data-kind="holder"] .row-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* The notes that REPLACE a view's content when there is nothing honest to
+   draw. Centred and full-height, because they are the whole view in that
+   state rather than a caption under something. */
+.queue-note,
+.history-note {
+  display: none;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 calc(var(--layout-unit) * 2);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* The queue view is one meter over one list, so the meter takes only what it
+   needs and the list gets the rest. */
+.view-queue .meters { flex: 0 0 auto; }
+.view-queue .lists { flex: 1 1 auto; min-height: 0; }
+
+/* The outcome split. One strip rather than one headline figure each: five
+   outcomes as .fig blocks overflow the 840x344 slot by 46.6px (measured), and
+   trimming to the two that fit would hide 41 runs. */
+.outcomes {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--layout-unit) * 0.5) calc(var(--layout-unit) * 1.1);
+  align-items: baseline;
+  padding-top: calc(var(--layout-unit) * 0.4);
+}
+
+.outcomes .oc {
+  display: inline-flex;
+  align-items: baseline;
+  gap: calc(var(--layout-unit) * 0.35);
+  white-space: nowrap;
+}
+
+.outcomes .oc .n {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.outcomes .oc .k {
+  color: var(--muted);
+  font-size: 0.86em;
+}
+
+/* Only the two that mean something went wrong are coloured. Colouring all
+   five would make the palette the message rather than the counts. */
+.outcomes .oc-failed .n { color: var(--crit); }
+.outcomes .oc-blocked .n { color: var(--warn); }

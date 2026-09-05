@@ -79,6 +79,19 @@ fs.mkdirSync(noQueue, { recursive: true });
 }
 
 {
+  /* A codepoint compare sorts every capital ahead of every lowercase letter,
+     so 'SIDM2' would land before 'claude-setup' - not how a person
+     alphabetises. Registered in the "wrong" order on purpose (SIDM2 first),
+     so a comparator that merely preserved input order could not fake a
+     pass here. */
+  const sidm2 = makeRepo('SIDM2', { tasks: [], closed: [] });
+  const claudeSetup = makeRepo('claude-setup', { tasks: [], closed: [] });
+  const tasks = load(writeRegistry([sidm2, claudeSetup]));
+  check('discover() sorts case-insensitively: claude-setup before SIDM2',
+    tasks.discover().map(r => r.name), ['claude-setup', 'SIDM2']);
+}
+
+{
   const tasks = load(writeRegistry([path.join(WORK, 'gone')]));
   check('a registered path that no longer exists is skipped, not thrown on',
     tasks.discover(), []);

@@ -109,7 +109,20 @@ function discover() {
     seen.add(key);
     found.push({ name: path.basename(path.normalize(raw)), path: raw });
   }
-  found.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  /* Case-insensitive, and fixed HERE rather than in each renderer. A
+     codepoint compare sorts every capital ahead of every lowercase letter,
+     so 'SIDM2' landed before 'claude-setup' - not how a person alphabetises.
+     discover() is the shared contract build(), projectTasks() and
+     server.js's collectQueuedTasks all read through, and it is also, via
+     build()'s repos array, the one list TaskQueue/scripts/widget.js's tab
+     strip and Queue view both ultimately draw from - sorting the contract
+     once is the only way those two can't independently drift back apart.
+     A renderer-local sort would have fixed one view and left discover()
+     itself still case-sensitive for the next caller. */
+  found.sort((a, b) => {
+    const an = a.name.toLowerCase(), bn = b.name.toLowerCase();
+    return an < bn ? -1 : an > bn ? 1 : 0;
+  });
   return found;
 }
 

@@ -1128,3 +1128,43 @@ body {
 .filetable td.mx { color: var(--muted); }
 .filetable td.mx-held { color: var(--warn); }
 .filetable td.mx-stale { color: var(--bad); font-weight: 700; }
+
+/* Reserve the clock strip. Every view here ends in a region whose rows carry a
+   FIGURE at the right edge - repo counts, holder metadata, file sizes, outcome
+   chips - which is the same situation the usage widget reserves .cols for, and
+   the opposite of its activity lists, whose rows ellipsis at the column edge so
+   the worst the clock can cover is the tail of a truncated label.
+
+   MEASURED ON THE DEVICE, not in the harness: the queue view drew "10:09" over
+   the last repo's "2 open · 97 closed · 2 blocked". The layout suite could not
+   see it, because an overlap is not an overflow - both boxes are legitimately
+   inside .widget-root, and nothing about their edges is wrong.
+
+   MARGIN, not padding, for the reason the .cols comment gives: padding inside a
+   scroller only adds scrollable space below the content and leaves the visible
+   box - and so the last row of every page but the last - exactly where the
+   clock is. The box itself has to be shorter. */
+.view-queue .lists,
+.lists-live,
+.filetable,
+.view-history .history {
+  /* The strip the clock actually occupies is its own height PLUS the padding
+     it is offset from the bottom by - it sits at `bottom: var(--space-pad)`.
+     Reserving only --clock-h leaves a sliver exactly one --space-pad tall, and
+     a row's descenders land in it. */
+  margin-bottom: calc(var(--space-pad) + var(--clock-h) + var(--layout-unit) * 0.9);
+}
+
+/* The notes are centred in the full height of their view, so their last line
+   lands wherever the text runs to - including under the clock. Padding is
+   right here, unlike on the scrollers above: nothing scrolls, so shortening
+   the box and insetting the content are the same thing. */
+.queue-note,
+.history-note {
+  padding-bottom: calc(var(--space-pad) + var(--clock-h));
+}
+
+/* The note text, as its own box. See setNote() in widget.js: the note's
+   container fills the view in order to centre the text in it, so measuring or
+   padding the container is measuring the wrong box. */
+.note-text { display: block; max-width: 100%; }

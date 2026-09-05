@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  var WIDGET_VERSION = '1.1.1';
+  var WIDGET_VERSION = '1.1.2';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/tasks';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -182,6 +182,19 @@
       (total ? total + ' ' + word : 'none ' + word);
   }
 
+  /* The note's own box fills the view so its text can be centred in it, which
+     means the BOX overlaps the clock even when the text does not. The text goes
+     in a child, so what is padded away from the clock and what is measured
+     against it are the same thing. */
+  function setNote(el, text) {
+    el.textContent = '';
+    var span = document.createElement('span');
+    span.className = 'note-text';
+    span.textContent = text;
+    el.appendChild(span);
+    el.style.display = 'flex';
+  }
+
   /* ---------- the queue view ---------- */
 
   function renderQueue() {
@@ -189,8 +202,7 @@
     if (data.unavailable) {
       /* Say why there is nothing rather than drawing a meter at zero, which
          would read as a queue that is empty rather than as no queue at all. */
-      els.queueNote.textContent = data.unavailable;
-      els.queueNote.style.display = 'flex';
+      setNote(els.queueNote, data.unavailable);
       els.meters.style.display = 'none';
       els.listRepos.style.display = 'none';
       return;
@@ -326,9 +338,8 @@
       /* An empty grid would read as months of silence rather than as history
          that could not be dated, which is the one failure this view must not
          have. */
-      els.historyNote.textContent = reasons.length ? reasons.join(' · ')
-        : 'no run has been recorded in any queue yet';
-      els.historyNote.style.display = 'flex';
+      setNote(els.historyNote, reasons.length ? reasons.join(' · ')
+        : 'no run has been recorded in any queue yet');
       els.history.style.display = 'none';
       return;
     }

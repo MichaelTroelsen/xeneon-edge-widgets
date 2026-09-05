@@ -639,6 +639,44 @@ window.__FIXTURE__ = __PAYLOAD__;
     var activeDot = document.querySelector('.dots .dot.is-active');
     out.activeDotView = activeDot ? activeDot.getAttribute('data-view') : null;
 
+    /* THE CLOCK COVERS NOTHING. An overlap is not an overflow: the clock is
+       absolutely positioned over the views, so when it lands on a row both
+       boxes are still legitimately inside .widget-root and every edge is
+       correct. The queue view shipped drawing the time across the last repo's
+       figures and 62 geometry checks saw nothing wrong. Collect any visible
+       leaf that carries text and intersects the clock's box. */
+    var clockEl = document.getElementById('clock');
+    out.clockOverlaps = [];
+    if (clockEl && window.getComputedStyle(clockEl).display !== 'none') {
+      var c = clockEl.getBoundingClientRect();
+      if (c.width > 0 && c.height > 0) {
+        var all = document.querySelectorAll('.content *');
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i];
+          if (el === clockEl || el.children.length) continue;
+          if (!(el.textContent || '').trim()) continue;
+          if (el.offsetParent === null) continue;
+          var r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) continue;
+          /* A row scrolled out of view inside a paging list still reports its
+             unclipped layout rect, which can sit anywhere - including over the
+             clock. It is not PAINTED there, so it is not an overlap. Measure
+             only what its scrolling ancestor actually shows. */
+          var sc = scrollingAncestor(el);
+          if (sc) {
+            var sr = sc.getBoundingClientRect();
+            if (r.bottom <= sr.top + 0.5 || r.top >= sr.bottom - 0.5) continue;
+          }
+          var over = r.left < c.right && r.right > c.left &&
+                     r.top < c.bottom && r.bottom > c.top;
+          if (over) {
+            out.clockOverlaps.push(pathOf(el, document.querySelector('.widget-root')) +
+              ' ("' + (el.textContent || '').trim().slice(0, 32) + '")');
+          }
+        }
+      }
+    }
+
     out.pageErrors = (window.__ERRORS__ || []).slice(0, 5);
     return out;
   }
@@ -850,6 +888,10 @@ check('no render reported an unreadable box',
   ok.flatMap(r => r.notes.map(n => `${r.name}: ${n}`)), []);
 check('no page threw while booting or rendering',
   ok.flatMap(r => (r.pageErrors || []).map(e => `${r.name}: ${e}`)), []);
+/* Not covered by the overflow check: the clock sits OVER the views, so
+   overlapping a row breaks no box. It reached the device that way. */
+check('the clock covers no content, in any view',
+  ok.flatMap(r => (r.clockOverlaps || []).map(o => `${r.name}: ${o}`)), []);
 
 /* ------------------------------------------------------------------- overflow */
 

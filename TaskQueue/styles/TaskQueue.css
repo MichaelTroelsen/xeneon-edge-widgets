@@ -28,13 +28,6 @@
   --font-row: calc(var(--layout-unit) * 3.7);
   --font-badge: calc(var(--layout-unit) * 3.1);
   --font-meta: calc(var(--layout-unit) * 3.3);
-  /* The corner clock, and one line of it - which is also the strip reserved
-     for it at the foot of the Tokens view, so the two are derived from each
-     other rather than tuned apart. Its own token, not --font-caption reused:
-     the clock is the one reading here that is looked at from across a room,
-     and it should be resizable without moving the meter captions with it. */
-  --font-clock: calc(var(--layout-unit) * 4.4);
-  --clock-h: calc(var(--font-clock) * 1.35);
 
   /* Dark theme (default) */
   --bg: #1b1b19;
@@ -111,57 +104,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-gap);
-  /* The clock in the corner anchors to this box. */
   position: relative;
 }
 
-/* ------------------------------------------------------------------- clock */
-
-/* The clock is drawn OVER the views, so a region that fills its slot to the
-   bottom-right has to END above it rather than be covered - which is what the
-   tokens view did, drawing the time on top of the OUTPUT figure in its last
-   row. That view is the one that does: its columns page their own content, so
-   the strip costs a fraction of a page rather than a row nobody can read.
-
-   MARGIN, not padding: padding inside a scroller only adds scrollable space
-   below the content, leaving the visible box - and so the last row on every
-   page but the last - exactly where the clock is. The box itself has to be
-   shorter.
-
-   Reserved on the container rather than on the last column alone, so the two
-   columns stay the same height as each other, and not as bottom padding on
-   .widget-root, which was the blunter fix: the usage view is sized against
-   22.3px of slack (see .why), and a clock line out of every view spends most
-   of it and pushes the weekly meter out of its own box.
-
-   The activity lists are deliberately NOT reserved. Their rows ellipsis at the
-   column edge rather than carrying a figure there, so the worst the clock can
-   cover is the tail of one truncated label in the right-hand list - and taking
-   a clock line out of .lists puts all three lists into overflow, which costs
-   them a page-dot cluster in every heading and a wrapped heading with it. A
-   truncated label is the cheaper of the two. */
-/* Plus a gap: the reserved strip is exactly one clock line, so without it the
-   column's last row and the time are flush against each other and read as one
-   crowded block rather than content and chrome. */
-.cols { margin-bottom: calc(var(--clock-h) + var(--layout-unit) * 1.2); }
-
-/* Bottom right. Absolute rather than a row in the flex column so that it sits
-   in the corner rather than after whichever view is on screen; the strip it
-   needs is reserved by the rule above. Muted rather than in --text: it is
-   chrome beside the figures, not another figure - but read at a glance from
-   further away than any of them, which is why it is not sized like one. */
-.clock {
-  position: absolute;
-  right: var(--space-pad);
-  bottom: var(--space-pad);
-  height: var(--clock-h);
-  line-height: var(--clock-h);
-  font-size: var(--font-clock);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  pointer-events: none;
-}
+/* The clock is gone. It sat in the bottom-right corner over the views, and
+   every region that ended in rows carrying a figure had to reserve a strip for
+   it - about 50px at the device slot, or two rows of a 27px list. Removing it
+   gives that back to the data, which is what the panel is for. */
 
 /* The state wrapper must itself be the full-height column, otherwise .body has
    no height to distribute and every flex-basis:0 child collapses to nothing. */
@@ -1129,39 +1078,11 @@ body {
 .filetable td.mx-held { color: var(--warn); }
 .filetable td.mx-stale { color: var(--bad); font-weight: 700; }
 
-/* Reserve the clock strip. Every view here ends in a region whose rows carry a
-   FIGURE at the right edge - repo counts, holder metadata, file sizes, outcome
-   chips - which is the same situation the usage widget reserves .cols for, and
-   the opposite of its activity lists, whose rows ellipsis at the column edge so
-   the worst the clock can cover is the tail of a truncated label.
 
-   MEASURED ON THE DEVICE, not in the harness: the queue view drew "10:09" over
-   the last repo's "2 open · 97 closed · 2 blocked". The layout suite could not
-   see it, because an overlap is not an overflow - both boxes are legitimately
-   inside .widget-root, and nothing about their edges is wrong.
 
-   MARGIN, not padding, for the reason the .cols comment gives: padding inside a
-   scroller only adds scrollable space below the content and leaves the visible
-   box - and so the last row of every page but the last - exactly where the
-   clock is. The box itself has to be shorter. */
-.view-queue .lists,
-.lists-live,
-.filetable,
-.view-history .history {
-  /* The strip the clock actually occupies is its own height PLUS the padding
-     it is offset from the bottom by - it sits at `bottom: var(--space-pad)`.
-     Reserving only --clock-h leaves a sliver exactly one --space-pad tall, and
-     a row's descenders land in it. */
-  margin-bottom: calc(var(--space-pad) + var(--clock-h) + var(--layout-unit) * 0.9);
-}
-
-/* The notes are centred in the full height of their view, so their last line
-   lands wherever the text runs to - including under the clock. Padding is
-   right here, unlike on the scrollers above: nothing scrolls, so shortening
-   the box and insetting the content are the same thing. */
+/* The notes are centred in the full height of their view. */
 .queue-note,
 .history-note {
-  padding-bottom: calc(var(--space-pad) + var(--clock-h));
 }
 
 /* The note text, as its own box. See setNote() in widget.js: the note's
@@ -1216,9 +1137,6 @@ body {
 #list-tasks {
   flex: 1 1 auto;
   min-height: 0;
-  /* Same clock reservation as every other view that ends in a list of rows
-     carrying a figure at the right edge. */
-  margin-bottom: calc(var(--space-pad) + var(--clock-h) + var(--layout-unit) * 0.9);
 }
 
 /* Four states, four treatments. Each carries a MARKER as well as a colour
@@ -1288,8 +1206,7 @@ body {
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 0 calc(var(--layout-unit) * 2)
-           calc(var(--space-pad) + var(--clock-h));
+  padding: 0 calc(var(--layout-unit) * 2);
   color: var(--muted);
   line-height: 1.45;
 }

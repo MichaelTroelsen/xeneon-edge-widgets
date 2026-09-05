@@ -758,14 +758,16 @@ window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
        figures and 62 geometry checks saw nothing wrong. Collect any visible
        leaf that carries text and intersects the clock's box. */
     var clockEl = document.getElementById('clock');
+    out.clockPresent = !!clockEl;
     out.clockOverlaps = [];
-    if (clockEl && window.getComputedStyle(clockEl).display !== 'none') {
-      var c = clockEl.getBoundingClientRect();
+    var overlay = clockEl || document.querySelector('.widget-root > [style*="position: absolute"]');
+    if (overlay && window.getComputedStyle(overlay).display !== 'none') {
+      var c = overlay.getBoundingClientRect();
       if (c.width > 0 && c.height > 0) {
         var all = document.querySelectorAll('.content *');
         for (var i = 0; i < all.length; i++) {
           var el = all[i];
-          if (el === clockEl || el.children.length) continue;
+          if (el === overlay || el.children.length) continue;
           if (!(el.textContent || '').trim()) continue;
           if (el.offsetParent === null) continue;
           var r = el.getBoundingClientRect();
@@ -1124,8 +1126,14 @@ check('no page threw while booting or rendering',
   ok.flatMap(r => (r.pageErrors || []).map(e => `${r.name}: ${e}`)), []);
 /* Not covered by the overflow check: the clock sits OVER the views, so
    overlapping a row breaks no box. It reached the device that way. */
-check('the clock covers no content, in any view',
+/* The clock is gone. The overlap probe stays, because it is not about the
+   clock - it is about anything positioned OVER the views, which breaks no box
+   and so is invisible to the overflow check. It reports nothing while there is
+   nothing overlaid, and will report the next thing that is. */
+check('nothing is drawn over the content, in any view',
   ok.flatMap(r => (r.clockOverlaps || []).map(o => `${r.name}: ${o}`)), []);
+check('and the clock really is gone rather than merely hidden',
+  ok.every(r => r.clockPresent === false), true);
 
 /* ------------------------------------------------------------------- overflow */
 

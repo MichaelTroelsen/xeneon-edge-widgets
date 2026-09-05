@@ -854,6 +854,46 @@ console.log('which queued task is most startable:');
 }
 
 {
+  /* Cheapest first WITHIN a contention tier, on the same reading of "least
+     friction to start". Unknown sorts last: 65 of the 147 queued tasks record
+     no effort, and a cost that was never measured cannot claim a cheap slot on
+     the strength of not having been measured. */
+  const e = makeRepo('by-effort', {
+    tasks: ['unknown', 'xhigh', 'high', 'medium', 'low'].map(function (eff, i) {
+      const t = { id: 'e-' + eff, title: 'Effort ' + eff, mode: 'subtask',
+                  needs_main: false, lane: 'parallel' };
+      if (eff !== 'unknown') t.effort = eff;
+      return t;
+    }),
+    closed: []
+  });
+  const tasks = load(writeRegistry([e]));
+  check('cheapest first, with unrecorded effort last',
+    tasks.projectTasks('by-effort').tasks.map(t => t.effort),
+    ['low', 'medium', 'high', 'xhigh', 'unknown']);
+}
+
+{
+  /* Contention outranks cost: a cheap task that needs the main session still
+     sits below an expensive one that can be delegated. Ordering by effort
+     first would put a low-effort singleton-seizing task at the top of a list
+     whose whole point is what can be started now. */
+  const both = makeRepo('cost-vs-contention', {
+    tasks: [
+      { id: 'cheap-but-main', title: 'Low effort, main only', mode: 'main',
+        needs_main: true, lane: 'serial', effort: 'low' },
+      { id: 'dear-but-free', title: 'Extra-high effort, delegable', mode: 'subtask',
+        needs_main: false, lane: 'parallel', effort: 'xhigh' }
+    ],
+    closed: []
+  });
+  const tasks = load(writeRegistry([both]));
+  check('contention outranks cost',
+    tasks.projectTasks('cost-vs-contention').tasks.map(t => t.id),
+    ['dear-but-free', 'cheap-but-main']);
+}
+
+{
   /* Stable within a tier: two tasks that are equally startable keep the order
      the file put them in, rather than being shuffled by the sort. */
   const tie = makeRepo('ties', {
@@ -908,6 +948,24 @@ console.log('which queued task is most startable:');
   check('blocked tasks keep their file order, unsorted by startability',
     tasks.projectTasks('blocked-pair').tasks.map(t => t.id),
     ['awkward-first', 'easy-second']);
+}
+
+{
+  /* Same guard, same reason, for the cost key: sorting blocked work by how
+     cheap it would have been is meaningless for work that cannot start. */
+  const effortPair = makeRepo('blocked-efforts', {
+    tasks: [
+      { id: 'dear-first', title: 'Blocked, extra-high effort', mode: 'requires-user',
+        needs_main: false, lane: 'parallel', effort: 'xhigh', blocked_on: 'a human' },
+      { id: 'cheap-second', title: 'Blocked, low effort', mode: 'requires-user',
+        needs_main: false, lane: 'parallel', effort: 'low', blocked_on: 'a human' }
+    ],
+    closed: []
+  });
+  const tasks = load(writeRegistry([effortPair]));
+  check('blocked tasks keep their file order, unsorted by cost too',
+    tasks.projectTasks('blocked-efforts').tasks.map(t => t.id),
+    ['dear-first', 'cheap-second']);
 }
 
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);

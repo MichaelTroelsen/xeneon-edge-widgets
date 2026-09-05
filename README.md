@@ -284,8 +284,14 @@ debugging.
 |---|---|---|
 | `feedUrl` | text | `http://127.0.0.1:41777/tasks` |
 | `colorTheme` | tabs | `dark` / `light` |
-| `timeFormat` | combobox | `auto` / `12` / `24` |
 | `refreshSeconds` | slider 5–120 | 15 |
+
+**This widget has no clock**, unlike the other two. It sat in the bottom-right
+corner drawn over the views, so every region ending in rows that carry a figure
+had to reserve a strip for it — about 50px at the device slot. Giving that back
+takes the project list from **four visible rows to six**, measured, which
+matters more here than the time does: the panel sits beside two other widgets
+that both show it.
 
 **Tap the widget** to cycle five views: the queue, what is running, the run
 history, the state of the task files, and one project's task list.
@@ -446,15 +452,22 @@ lands, where a human blocker does not. A task that is both reports as
 shows four rows and four arbitrary rows out of 147 is a worse answer than the
 four you could start now. Two keys, both from the contention model rather than
 from taste: **delegable before main-only**, since picking up a main-only task
-costs the main session; and **parallel before serial**, since a serial task
-waits on the lane while a parallel one can start beside whatever is running.
+costs the main session; **parallel before serial**, since a serial task waits
+on the lane while a parallel one can start beside whatever is running; and then
+**cheapest first**, on the same reading of least friction.
+
+**Unrecorded effort sorts last**, and not because it is the largest bucket (65
+of the 147 queued tasks record none): a cost that was never measured cannot
+claim a cheap slot on the strength of not having been measured. Worth knowing
+what this key does *not* change — every one of the 24 delegable-and-parallel
+tasks is `medium`, so it reorders nothing the device slot shows. It orders the
+remainder, which is what the desktop dashboard scrolls through.
 Measured over the 147 genuinely queued tasks: 24 are delegable *and* parallel,
 83 delegable and serial, 40 main-only and serial — so the 24 that can start
 immediately come first instead of being scattered through the list. The sort is
 stable, so file order survives as the tiebreak, and it applies **only within
-the queued block**: reordering blocked work by how startable it would have been
-is meaningless for work that cannot be started at all. Effort is deliberately
-not a key — "short jobs first" is a preference, not something the data settles.
+the queued block**: reordering blocked work by how startable or how cheap it
+would have been is meaningless for work that cannot be started at all.
 
 **`main only`** rides alongside the model and effort on a queued row. 52 of 210
 tasks seize a stateful singleton and cannot be delegated to a subagent; it

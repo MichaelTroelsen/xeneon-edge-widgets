@@ -501,10 +501,9 @@ function projectTasks(name) {
          picking one up costs the main session.
        - parallel before serial. A serial task waits on the lane; a parallel
          one can start beside whatever is already running.
+       - and then cheapest first, on the same reading of "least friction".
      Measured over the 147 genuinely-queued tasks: 24 are delegable AND
-     parallel, 83 delegable and serial, 40 main-only and serial. Effort is
-     deliberately NOT a key - "short jobs first" is a preference, not something
-     the data settles.
+     parallel, 83 delegable and serial, 40 main-only and serial.
      Zero for every other state, so this cannot reorder them; and the sort is
      stable, so file order survives as the tiebreak. */
   function startability(t) {
@@ -512,9 +511,28 @@ function projectTasks(name) {
     return (t.needsMain ? 2 : 0) + (t.lane === 'serial' ? 1 : 0);
   }
 
+  /* UNKNOWN SORTS LAST, and not because it is the largest bucket (65 of the
+     147 queued tasks record no effort at all). The key is friction, and a task
+     whose cost was never measured cannot claim a cheap slot on the strength of
+     not having been measured - treating absent as "probably small" is exactly
+     the inference the rest of this file refuses to make.
+     Worth knowing what this does and does not change: every one of the 24
+     delegable+parallel tasks is `medium`, so this reorders nothing the device
+     slot shows. It orders the remainder, which is what the desktop dashboard
+     scrolls through. */
+  const EFFORT_RANK = { low: 0, medium: 1, high: 2, xhigh: 3 };
+
+  function cost(t) {
+    if (t.state !== 'queued') return 0;
+    var rank = EFFORT_RANK[t.effort];
+    return rank == null ? 4 : rank;
+  }
+
   const tasks = open.concat(finished);
   tasks.sort((a, b) =>
-    (ORDER[a.state] - ORDER[b.state]) || (startability(a) - startability(b)));
+    (ORDER[a.state] - ORDER[b.state]) ||
+    (startability(a) - startability(b)) ||
+    (cost(a) - cost(b)));
 
   return {
     project: name,

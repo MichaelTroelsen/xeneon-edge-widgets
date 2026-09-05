@@ -8,14 +8,13 @@
 
   <meta name="x-icue-property" content="feedUrl" data-label="tr('Feed URL')" data-type="textfield" data-default="'http://127.0.0.1:41777/tasks'" />
   <meta name="x-icue-property" content="colorTheme" data-label="tr('Theme')" data-type="combobox" data-default="'dark'" data-values="[{'key':'dark','value':tr('Dark')},{'key':'light','value':tr('Light')}]" />
-  <meta name="x-icue-property" content="timeFormat" data-label="tr('Clock')" data-type="combobox" data-default="'auto'" data-values="[{'key':'auto','value':tr('Auto')},{'key':'12','value':tr('12-hour')},{'key':'24','value':tr('24-hour')}]" />
   <meta name="x-icue-property" content="refreshSeconds" data-label="tr('Refresh Interval')" data-type="slider" data-default="15" data-min="5" data-max="120" data-step="5" data-unit-label="tr('sec')" />
 
   <script type="application/json" id="x-icue-groups">
   [
     {
       "title": "tr('Task Queue')",
-      "properties": ["feedUrl", "colorTheme", "timeFormat", "refreshSeconds"],
+      "properties": ["feedUrl", "colorTheme", "refreshSeconds"],
       "info": "tr('Requires the local usage feed to be running. It reads the whattask queues of every project registered on this machine; nothing leaves the machine.')"
     }
   ]
@@ -134,9 +133,6 @@
       <div class="hint" id="error-hint"></div>
     </div>
 
-    <!-- Outside .content on purpose, so it survives the loading and error
-         states: a widget that cannot reach the feed still shows the time. -->
-    <div class="clock" id="clock"></div>
   </div>
 
   <script type="text/javascript" src="scripts/widget.js"></script>

@@ -450,7 +450,11 @@ the `pointerup` can be delivered on a different element from the `pointerdown`,
 and a tab's text node is not the button.
 
 **The task list is fetched separately**, at `/tasks?project=<name>`, and only
-while this view is on screen. The five real queues hold 210 tasks across 297KB,
+while this view is on screen — **including on every refresh while it stays on
+screen**. That second half is not a detail: because the list is its own
+request, a poll that refreshed the overview originally left it untouched, so it
+froze at whatever it held when the view was opened and a task that started
+running afterwards never turned green. The five real queues hold 210 tasks across 297KB,
 of which about 295KB is prose — `verify`, `why_model`, `why_lane`, `evidence` —
 that no 840×344 slot can show at any size. Trimmed to what a row draws they are
 still 49KB against the overview's 2.4KB, and the widget only ever looks at one

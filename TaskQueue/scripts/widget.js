@@ -958,6 +958,13 @@
         data = json;
         lastError = '';
         render();
+        /* The project task list is its own request, so a poll that refreshes
+           the overview leaves it untouched. Without this the list freezes at
+           whatever it held when the view was opened: a task that starts
+           running afterwards never turns green, and one that closes never
+           moves down. fetchProject() no-ops if a request for the same project
+           is already in flight. */
+        if (view === 'projects') fetchProject();
       })
       .catch(function (err) {
         clearTimeout(timeout);

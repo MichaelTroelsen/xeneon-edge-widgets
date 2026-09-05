@@ -425,6 +425,7 @@ function noHistoryFixture() {
 const HARNESS = `<script>
 window.__FIXTURE__ = __PAYLOAD__;
 window.__PROJECTS__ = __PROJECT_BODIES__;
+window.__PROJECTS_AFTER__ = __PROJECT_BODIES_AFTER__;
 (function () {
   var style = document.createElement('style');
   /* Calibration 3: transitions do not advance under --virtual-time-budget, and
@@ -453,7 +454,12 @@ window.__PROJECTS__ = __PROJECT_BODIES__;
     var m = /[?&]project=([^&]*)/.exec(String(url || ''));
     if (m) {
       var name = decodeURIComponent(m[1]);
-      var body = (window.__PROJECTS__ || {})[name] ||
+      window.__PROJECT_FETCHES__ = (window.__PROJECT_FETCHES__ || 0) + 1;
+      /* A second body for the second request, so "did it refetch" is
+         answerable from what is on screen rather than from a call count. */
+      var later = window.__PROJECTS_AFTER__ || {};
+      var body = (window.__PROJECT_FETCHES__ > 1 && later[name]) ||
+        (window.__PROJECTS__ || {})[name] ||
         { project: name, tasks: [], error: 'no project called "' + name + '"' };
       return Promise.resolve({
         ok: true, status: 200,
@@ -769,6 +775,8 @@ window.__PROJECTS__ = __PROJECT_BODIES__;
     out.taskRowCount = Array.prototype.filter.call(
       document.querySelectorAll('#task-rows li'), function (e) { return e.offsetParent !== null; }).length;
     out.taskRowsInDom = document.querySelectorAll('#task-rows li').length;
+    out.rowNames = Array.prototype.map.call(
+      document.querySelectorAll('#task-rows li .row-name'), function (e) { return e.textContent; });
     out.rowStates = Array.prototype.map.call(
       document.querySelectorAll('#task-rows li'), function (e) { return e.getAttribute('data-state'); });
     out.stateColours = {};
@@ -829,6 +837,11 @@ window.__PROJECTS__ = __PROJECT_BODIES__;
         tapAt(tb.left + tb.width / 2, tb.top + tb.height / 2);
       }
     }
+    /* A real refresh, through the entry point iCUE itself calls - which is
+       what re-fetches the feed - rather than by poking the widget's internals.
+       The 15s poll is far too long for a harness, and asserting that the
+       source contains a call would prove nothing about whether it runs. */
+    if (__REFRESH__) window.TaskQueue.onDataUpdated();
     setTimeout(function () {
       var payload;
       try { payload = JSON.stringify(measure()); }
@@ -848,11 +861,14 @@ check('the widget script tag was found, so the harness has somewhere to go',
 const PRE_TAP_MS = 200;   /* time for the stubbed fetch's microtask chain and first render */
 const POST_TAP_MS = 150;  /* time for the tap(s) to be handled and the DOM to settle */
 
-function writePage(name, taps, fixture, mutate, projects, tabIndex) {
+function writePage(name, taps, fixture, mutate, projects, tabIndex, projectsAfter, refresh) {
   const payloadJson = JSON.stringify(fixture).replace(/<\/script/gi, '<\\/script');
   const projectsJson = JSON.stringify(projects || {}).replace(/<\/script/gi, '<\\/script');
+  const afterJson = JSON.stringify(projectsAfter || {}).replace(/<\/script/gi, '<\\/script');
   let html = indexSrc.replace(SCRIPT_TAG, HARNESS
     .replace('__TAB_INDEX__', String(tabIndex == null ? -1 : tabIndex))
+    .replace('__REFRESH__', refresh ? 'true' : 'false')
+    .replace('__PROJECT_BODIES_AFTER__', afterJson)
     .replace('__PROJECT_BODIES__', projectsJson)
     .replace('__PAYLOAD__', payloadJson)
     .replace(/__TAPS__/g, String(taps))
@@ -987,11 +1003,29 @@ const CASES = [
 
 /* The projects view needs the second endpoint stubbed and, for the tab test, a
    tap aimed at a tab's centre after the view taps. */
+/* The same project, but with a task that has STARTED RUNNING since the view
+   was opened. This is the state the widget froze out of: the list is fetched
+   separately from the overview, so a poll that refreshed the overview left it
+   holding whatever it had on arrival, and nothing ever turned green. */
+const PROJECT_BODIES_AFTER = {
+  SIDM2: (function () {
+    const b = projectFixture('SIDM2', 120, 4, 2, 42);
+    b.tasks.unshift({
+      id: 'sf2-automation-stubs', title: 'sf2-automation-stubs',
+      mode: 'subtask', model: 'sonnet', effort: 'medium', lane: 'serial',
+      blocked: null, state: 'running', reason: null
+    });
+    return b;
+  })()
+};
+
 const PROJECT_CASES = [
   { name: 'projects', taps: 4, want: 'projects', fixture: baseFixture(), tab: null },
   { name: 'projects-tab-2', taps: 4, want: 'projects', fixture: baseFixture(), tab: 1 },
   { name: 'projects-many', taps: 4, want: 'projects', fixture: manyProjectsFixture(), tab: null },
-  { name: 'projects-none', taps: 4, want: 'projects', fixture: unavailableFixture(), tab: null }
+  { name: 'projects-none', taps: 4, want: 'projects', fixture: unavailableFixture(), tab: null },
+  { name: 'projects-refreshed', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: null, after: PROJECT_BODIES_AFTER, refresh: true }
 ];
 
 const results = [];
@@ -1003,7 +1037,8 @@ for (const c of CASES) {
   if (r.error) fail(`${c.name}: ${r.error}`);
 }
 for (const c of PROJECT_CASES) {
-  const r = render(writePage(c.name, c.taps, c.fixture, null, PROJECT_BODIES, c.tab));
+  const r = render(writePage(c.name, c.taps, c.fixture, null, PROJECT_BODIES, c.tab,
+                             c.after, c.refresh));
   r.name = c.name;
   r.wantView = c.want;
   results.push(r);
@@ -1191,6 +1226,23 @@ console.log('task state, told four ways:');
   check('a done row says why it closed rather than a model and effort',
     /Shipped as a fifth view|closed by/.test(st.doneTaskMeta || ''), true);
 }
+
+/* The list is fetched separately from the overview, so a poll that refreshes
+   the overview has to refresh it too. It did not: the list froze at whatever
+   it held when the view was opened, and a task that started running afterwards
+   never turned green. Driven through onDataUpdated(), the entry point iCUE
+   itself calls. */
+console.log('a refresh reaches the task list, not just the overview:');
+/* Named, not merely counted: the fixture already had two running rows, so
+   "row 0 is running" passes whether or not anything refreshed. */
+check('the task that started running since the view opened is on screen',
+  byName['projects-refreshed'].rowNames[0], '▶ sf2-automation-stubs');
+check('and it was NOT there before the refresh',
+  byName['projects'].rowNames.indexOf('▶ sf2-automation-stubs'), -1);
+check('three running rows now, where the first fetch had two',
+  byName['projects-refreshed'].rowStates.filter(v => v === 'running').length, 3);
+check('while a view that was never refreshed still shows the first answer',
+  byName['projects'].rowStates.filter(v => v === 'running').length, 2);
 
 console.log('the projects list does not page itself:');
 /* Every other list advances because the webview forwards no drags and a row

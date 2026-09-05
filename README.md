@@ -394,6 +394,16 @@ This was not hypothetical. The first time the view ran against real data it
 found `SIDM2` holding `sdi-control-rerun-at-j8` under a pid that was not
 running, with eight paths refused behind it.
 
+The orphan test rests entirely on that pid liveness check, and Windows reuses
+pids aggressively enough that this is a real blind spot, not a theoretical
+one: if a dead runner's pid gets handed to some unrelated process before the
+next check, `pidAlive` reports it running, `isOrphan` returns false, and the
+alarm stays quiet while the Files view looks clean and the paths behind that
+record stay refused. This is accepted rather than fixed — `LOCKING.md` chose
+it deliberately, because the alternatives are reaping on age or on a weaker
+liveness test, and a false reap that kills a record whose task is still
+running is worse than a missed one that just leaves the alarm silent.
+
 **A stale mutex.** `serial.lock.d/` is the actual lock — a directory, because
 `mkdir` fails atomically if it exists. It is held for *milliseconds* around a
 single registry update, so a feed polling every ten seconds will essentially

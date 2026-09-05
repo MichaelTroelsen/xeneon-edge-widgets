@@ -1,14 +1,15 @@
 # iCUE widgets for the CORSAIR Xeneon Edge
 
-Two HTML widgets for the Xeneon Edge dashboard display, plus the local feed one
-of them needs. Both target `dashboard_lcd` and adapt across every Edge slot
+Three HTML widgets for the Xeneon Edge dashboard display, plus the local feed
+two of them need. All target `dashboard_lcd` and adapt across every Edge slot
 size in both orientations.
 
 ## Deploying
 
 ```powershell
-pwsh tools/deploy.ps1                      # both widgets, patch bump
+pwsh tools/deploy.ps1                      # all three widgets, patch bump
 pwsh tools/deploy.ps1 -Widget C64Weather -Bump minor
+pwsh tools/deploy.ps1 -Widget TaskQueue    # or ClaudeUsage
 pwsh tools/deploy.ps1 -DryRun              # print every step, change nothing
 ```
 
@@ -264,6 +265,113 @@ paging by a flat box-height step would cut one in half at every boundary.
 > column at 840×344 and the other 33 were unreachable by any means. **Do not
 > design anything for this device that depends on a scrollable region being
 > reachable by hand.**
+
+## Task Queue
+
+How much `/whattask` work is left across every repo on this machine, what is
+holding a lock right now, and what has been finished. Same feed process as the
+usage widget, on its own endpoint:
+
+```bash
+node usage-server/server.js   # http://127.0.0.1:41777/tasks
+```
+
+`/usage` is untouched by it — that contract is what the usage widget reads and
+is deliberately frozen — and `/tasks?raw=1` adds the underlying run records for
+debugging.
+
+| Setting | Type | Default |
+|---|---|---|
+| `feedUrl` | text | `http://127.0.0.1:41777/tasks` |
+| `colorTheme` | tabs | `dark` / `light` |
+| `timeFormat` | combobox | `auto` / `12` / `24` |
+| `refreshSeconds` | slider 5–120 | 15 |
+
+**Tap the widget** to cycle three views: the queue, what is running, and the run
+history.
+
+### Which repos it finds
+
+Discovery reads the `projects` map in `~/.claude.json`, which carries real,
+unmangled project paths. The per-project directory names under
+`~/.claude/projects/` are **not** usable for this: the mangling replaces every
+path separator with `-`, which is lossy against directory names that themselves
+contain one, so `C--Users-mit-claude-c64server-tdz-c64-knowledge` cannot be
+demangled back to a path unambiguously.
+
+This replaced a one-level `readdirSync` of `~/claude` that `collectQueuedTasks()`
+in the usage feed had been using. Measured: it found 3 of the 5 repos that have
+queues and 88 of 210 open tasks, because two of them sit a level deeper under
+`c64server/`. Both now read the same registry, so the two feeds cannot disagree
+about which repos exist.
+
+### Queue
+
+Total open against closed with a completion meter, then a row per repo sorted by
+open count. `requires-user` is called out on its own in the header — it is the
+one figure on the view that asks something of whoever is reading the glass.
+
+A repo whose `whattask.json` cannot be read is **listed with its reason**, not
+dropped and not shown as zero, which would read as an empty queue rather than an
+unreadable one.
+
+### Running now
+
+Two columns, counted separately and worded differently — `Holding a lock · 2
+held` against `Claude activity · 3 active`. A `serial.lock` holder record and an
+open Claude session are different claims about the machine, and a single summed
+figure would assert something untrue.
+
+The second column is why the view is worth having. `serial.lock` is the
+*registry* of holder records, not the lock itself (that is the directory
+`serial.lock.d/`, held for milliseconds around each update — see the mit-setup
+`LOCKING.md`), and its resting state is `[]`. It is empty in all five repos
+except while a `/runqueue` is mid-flight, so a view backed by holders alone
+would be blank almost every time anyone looked at it. The sessions, workflows
+and subtasks the usage feed already computes fill it the rest of the time.
+
+### Runs
+
+**No run record carries a timestamp.** Measured across four repos and 605 lines:
+the key union is `id, head, model, effort, mode, lane, outcome, evidence,
+verify_output, notes, opened, decision, runner` — and no date field anywhere.
+`head` is a commit SHA, so each run is dated from the commit it names, and the
+heading says **"Runs, by commit time"** rather than presenting it as when the run
+happened. All 605 real records date cleanly, spanning 2026-08-08 to 2026-09-05.
+
+One batched `git cat-file --batch` per repo, not one process per record: 62
+lines in this repo name only 23 distinct commits. Heads are recorded
+abbreviated while git echoes the full objectname, so requested names are matched
+by prefix. A record whose SHA git no longer has is dropped **with a stated
+count**, never dated wrongly.
+
+The heatmap is laid out **by calendar date, not by array position** — the same
+rule the usage widget's All time view carries, for the same reason: runs are
+sparse in time (20 active days across a 29-day span here), and packing them side
+by side would draw a solid block with every date in the wrong column.
+
+**Two things the real corpus settled that one repo had not.** Outcomes are
+**five** — `done` 453, `partial` 111, `blocked` 22, `failed` 10, `inconclusive`
+9 — so the tally enumerates what it finds rather than a fixed pair. They are
+drawn as one strip rather than five headline figures because nine `.fig` blocks
+overflow the 840×344 slot by 46.6px; trimming to the two that fit would have
+hidden 41 runs, so the layout changed instead of the data. And `model` is free
+text, not an enumeration: 16 distinct values, 12 of them one-off sentences, one
+reading `opus (recorded) / ran on Fable 5, which sits above Opus — substitution
+stated before work began, not a downgrade`. Each is reduced to the family it
+names, which collapses to sonnet 314, opus 283, fable 8.
+
+### What the feed sends
+
+The run history is **aggregated in the feed**, not shipped whole: the widget only
+ever buckets it into daily counts and three tallies, so doing that once takes the
+payload from 79KB to 2.4KB and stops the Edge's webview re-deriving the same
+buckets every refresh.
+
+Every unavailability is stated rather than rendered as absence — no repo with a
+queue, a repo that cannot be read, history that cannot be dated. An empty grid
+reads as months of silence rather than as a missing file, which is the one
+failure these views must not have.
 
 ## Verifying a layout
 

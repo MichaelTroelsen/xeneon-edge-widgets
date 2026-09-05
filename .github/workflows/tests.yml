@@ -47,6 +47,13 @@ jobs:
         run: node usage-server/test/stats.test.js
       - name: http request handling
         run: node usage-server/test/http.test.js
+      # The task feed. tasks.test.js shells out to git - it builds real
+      # throwaway repos under mkdtemp, because the batched commit-time lookup
+      # is the part that can be wrong and a stub of git would not exercise it.
+      - name: task feed
+        run: node usage-server/test/tasks.test.js
+      - name: task feed over http
+        run: node usage-server/test/tasks-http.test.js
       - name: c64 font and art
         run: node C64Weather/test/font.test.js
       - name: c64 theme cycling
@@ -66,3 +73,10 @@ jobs:
       # is allowed to extend past it; the scroller's own box is still checked.
       - name: usage widget layout
         run: node ClaudeUsage/test/layout.test.js
+      # Same approach again, for the task widget: renders its three views plus
+      # the four "there is nothing honest to draw" fixtures headless at
+      # 840x344. It also asserts that no page THREW while booting - a lost
+      # variable once left every view in its loading state, which without that
+      # check reads as twenty separate layout failures instead of one fault.
+      - name: task widget layout
+        run: node TaskQueue/test/layout.test.js

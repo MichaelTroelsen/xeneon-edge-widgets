@@ -37,7 +37,7 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('C64Weather', 'ClaudeUsage', 'all')]
+  [ValidateSet('C64Weather', 'ClaudeUsage', 'TaskQueue', 'all')]
   [string] $Widget = 'all',
 
   # Explicit version, e.g. 1.6.0. Applied to every selected widget and wins
@@ -80,6 +80,7 @@ function Fail { param([string] $Text) Write-Host "`nFAILED: $Text" -ForegroundCo
 $All = @(
   [pscustomobject]@{ Name = 'C64Weather';  Id = 'com.thordanielz.c64weather';  Package = 'c64-weather.icuewidget' }
   [pscustomobject]@{ Name = 'ClaudeUsage'; Id = 'com.thordanielz.claudeusage'; Package = 'claude-code-usage.icuewidget' }
+  [pscustomobject]@{ Name = 'TaskQueue';   Id = 'com.thordanielz.taskqueue';   Package = 'task-queue.icuewidget' }
 )
 $Selected = if ($Widget -eq 'all') { $All } else { $All | Where-Object Name -eq $Widget }
 
@@ -199,12 +200,14 @@ if ($SkipTests) {
   $suites = @()
   foreach ($w in $Selected) {
     $suites += Get-ChildItem (Join-Path $w.Dir 'test') -Filter '*.test.js' -ErrorAction SilentlyContinue
-    # The usage widget renders what the feed serves, so the feed's suites are
-    # part of its gate, not a separate concern.
-    if ($w.Name -eq 'ClaudeUsage') {
+    # Both of these render what the feed serves, so the feed's suites are part
+    # of their gate, not a separate concern. Deduplicated below: selecting both
+    # would otherwise queue the usage-server suites twice and run them twice.
+    if ($w.Name -eq 'ClaudeUsage' -or $w.Name -eq 'TaskQueue') {
       $suites += Get-ChildItem (Join-Path $RepoRoot 'usage-server\test') -Filter '*.test.js' -ErrorAction SilentlyContinue
     }
   }
+  $suites = $suites | Sort-Object FullName -Unique
   foreach ($s in $suites) {
     $rel = $s.FullName.Substring($RepoRoot.Length + 1)
     Write-Host ("   {0,-46} " -f $rel) -NoNewline

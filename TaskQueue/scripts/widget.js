@@ -231,34 +231,62 @@
     return Math.floor(days / 7) + 'w ago';
   }
 
+  /* Same shape as buildTaskRow/brokenRow below: build the whole li before
+     anything is appended, so a throw partway through leaves nothing half-built
+     in the DOM. */
+  function buildRepoRow(r) {
+    var li = document.createElement('li');
+
+    var name = document.createElement('span');
+    name.className = 'row-name';
+    name.textContent = r.name;
+    li.appendChild(name);
+
+    var figure = document.createElement('span');
+    figure.className = 'row-figure';
+    /* A repo that could not be read says so in place of its counts, rather
+       than showing a zero that would read as an empty queue. */
+    if (r.error) {
+      figure.classList.add('row-error');
+      figure.textContent = r.error;
+    } else {
+      figure.textContent = num(r.open) + ' open · ' + num(r.closed) + ' closed' +
+        (r.blocked ? ' · ' + r.blocked + ' blocked' : '') + ' · ';
+      var age = document.createElement('span');
+      age.className = 'row-age';
+      age.textContent = formatLastRun(r.lastRunAt);
+      figure.appendChild(age);
+    }
+    li.appendChild(figure);
+    return li;
+  }
+
+  /* Same marker shape as brokenRow: the classes the stylesheet already
+     styles amber for a row inside a .list (#list-repos carries that class),
+     so no CSS change is needed here either. */
+  function brokenRepoRow(err) {
+    var li = document.createElement('li');
+    li.className = 'st-broken';
+    li.appendChild(cell('span', '⚠ a repo row could not be drawn', 'row-name'));
+    li.appendChild(cell('span', (err && err.message) ? err.message : String(err),
+      'row-figure row-error'));
+    return li;
+  }
+
   function renderRepoRows(ul, rows) {
     ul.textContent = '';
     for (var i = 0; i < rows.length; i++) {
-      var r = rows[i];
-      var li = document.createElement('li');
-
-      var name = document.createElement('span');
-      name.className = 'row-name';
-      name.textContent = r.name;
-      li.appendChild(name);
-
-      var figure = document.createElement('span');
-      figure.className = 'row-figure';
-      /* A repo that could not be read says so in place of its counts, rather
-         than showing a zero that would read as an empty queue. */
-      if (r.error) {
-        figure.classList.add('row-error');
-        figure.textContent = r.error;
-      } else {
-        figure.textContent = num(r.open) + ' open · ' + num(r.closed) + ' closed' +
-          (r.blocked ? ' · ' + r.blocked + ' blocked' : '') + ' · ';
-        var age = document.createElement('span');
-        age.className = 'row-age';
-        age.textContent = formatLastRun(r.lastRunAt);
-        figure.appendChild(age);
+      /* See the comment on the task-row loop in renderProjects: a throw here
+         must not silently shorten the list or unwind into fetchQueue's own
+         .catch(), which would blame the feed for a rendering bug. */
+      try {
+        ul.appendChild(buildRepoRow(rows[i]));
+      } catch (rowErr) {
+        ul.appendChild(brokenRepoRow(rowErr));
+        setTimeout(function (e) {
+          return function () { throw e; };
+        }(rowErr), 0);
       }
-      li.appendChild(figure);
-      ul.appendChild(li);
     }
     setHeading(ul, rows.length, 'with queues');
   }
@@ -288,30 +316,57 @@
     renderRunning(els.activity, activity, false, 'active');
   }
 
+  /* Same shape as buildTaskRow/buildRepoRow: the whole li is built before
+     anything is appended. */
+  function buildRunningRow(r, showPaths) {
+    var li = document.createElement('li');
+    li.setAttribute('data-kind', r.kind);
+
+    var name = document.createElement('span');
+    name.className = 'row-name';
+    name.textContent = r.label;
+    li.appendChild(name);
+
+    var meta = document.createElement('span');
+    meta.className = 'row-figure';
+    var parts = [];
+    if (r.kind !== 'holder') parts.push(r.kind);
+    if (r.repo) parts.push(r.repo);
+    var age = elapsed(r.since);
+    if (age) parts.push(age);
+    if (showPaths && r.detail) parts.push(r.detail);
+    meta.textContent = parts.join(' · ');
+    li.appendChild(meta);
+
+    return li;
+  }
+
+  /* Same marker shape as brokenRow/brokenRepoRow: #holders and #activity
+     each sit inside their own .list div, so .row-figure.row-error is already
+     styled here too - no CSS change needed. */
+  function brokenRunningRow(err) {
+    var li = document.createElement('li');
+    li.className = 'st-broken';
+    li.appendChild(cell('span', '⚠ a row could not be drawn', 'row-name'));
+    li.appendChild(cell('span', (err && err.message) ? err.message : String(err),
+      'row-figure row-error'));
+    return li;
+  }
+
   function renderRunning(ul, rows, showPaths, word) {
     ul.textContent = '';
     for (var i = 0; i < rows.length; i++) {
-      var r = rows[i];
-      var li = document.createElement('li');
-      li.setAttribute('data-kind', r.kind);
-
-      var name = document.createElement('span');
-      name.className = 'row-name';
-      name.textContent = r.label;
-      li.appendChild(name);
-
-      var meta = document.createElement('span');
-      meta.className = 'row-figure';
-      var parts = [];
-      if (r.kind !== 'holder') parts.push(r.kind);
-      if (r.repo) parts.push(r.repo);
-      var age = elapsed(r.since);
-      if (age) parts.push(age);
-      if (showPaths && r.detail) parts.push(r.detail);
-      meta.textContent = parts.join(' · ');
-      li.appendChild(meta);
-
-      ul.appendChild(li);
+      /* See the comment on the task-row loop in renderProjects: a throw here
+         must not silently shorten the list or unwind into fetchQueue's own
+         .catch(), which would blame the feed for a rendering bug. */
+      try {
+        ul.appendChild(buildRunningRow(rows[i], showPaths));
+      } catch (rowErr) {
+        ul.appendChild(brokenRunningRow(rowErr));
+        setTimeout(function (e) {
+          return function () { throw e; };
+        }(rowErr), 0);
+      }
     }
     setHeading(ul, rows.length, word);
   }
@@ -410,6 +465,42 @@
     return (k >= 1000 ? Math.round(k / 1024) + 'm' : Math.round(k) + 'k');
   }
 
+  function buildFileRow(r) {
+    var tr = document.createElement('tr');
+    tr.appendChild(cell('td', r.name, 'name'));
+    for (var j = 0; j < FILE_COLUMNS.length; j++) {
+      var f = (r.files || {})[FILE_COLUMNS[j].key] || {};
+      var td = cell('td', kb(f.present ? f.bytes : null), 'n');
+      if (!f.present) td.classList.add('absent');
+      tr.appendChild(td);
+    }
+    var mx = r.mutex || {};
+    var mtd = cell('td', mx.held ? '●' : '○', 'n mx');
+    if (mx.stale) mtd.classList.add('mx-stale');
+    else if (mx.held) mtd.classList.add('mx-held');
+    tr.appendChild(mtd);
+    return tr;
+  }
+
+  /* The marker for a row that failed to build - but a TABLE row, not an li:
+     appending an <li> into a <tbody> is invalid markup and renders nothing
+     (or breaks the table), so this is a <tr> with one cell spanning every
+     column instead. .row-figure.row-error is scoped to ".list li" in the
+     stylesheet and does not reach into .filetable, so it would draw in the
+     default text colour here rather than amber; .filetable already has an
+     amber rule of its own (td.mx-held, var(--warn)) and this reuses that
+     rather than adding a new CSS rule, which is outside the files this task
+     may touch. */
+  function brokenFileRow(err) {
+    var tr = document.createElement('tr');
+    tr.className = 'st-broken';
+    var td = cell('td', '⚠ a file row could not be drawn — ' +
+      ((err && err.message) ? err.message : String(err)), 'name mx-held');
+    td.setAttribute('colspan', String(FILE_COLUMNS.length + 2));
+    tr.appendChild(td);
+    return tr;
+  }
+
   function renderFiles() {
     var repos = data.repos || [];
     var alarms = data.alarms || [];
@@ -451,21 +542,19 @@
 
     var tbody = document.createElement('tbody');
     for (var i = 0; i < repos.length; i++) {
-      var r = repos[i];
-      var tr = document.createElement('tr');
-      tr.appendChild(cell('td', r.name, 'name'));
-      for (var j = 0; j < FILE_COLUMNS.length; j++) {
-        var f = (r.files || {})[FILE_COLUMNS[j].key] || {};
-        var td = cell('td', kb(f.present ? f.bytes : null), 'n');
-        if (!f.present) td.classList.add('absent');
-        tr.appendChild(td);
+      /* See the comment on the task-row loop in renderProjects: a throw here
+         must not silently shorten the table or unwind into fetchFeed's own
+         .catch(), which would blame the feed for a rendering bug. buildFileRow
+         builds the whole <tr> before anything is appended, same shape as
+         buildTaskRow/buildRepoRow/buildRunningRow. */
+      try {
+        tbody.appendChild(buildFileRow(repos[i]));
+      } catch (rowErr) {
+        tbody.appendChild(brokenFileRow(rowErr));
+        setTimeout(function (e) {
+          return function () { throw e; };
+        }(rowErr), 0);
       }
-      var mx = r.mutex || {};
-      var mtd = cell('td', mx.held ? '●' : '○', 'n mx');
-      if (mx.stale) mtd.classList.add('mx-stale');
-      else if (mx.held) mtd.classList.add('mx-held');
-      tr.appendChild(mtd);
-      tbody.appendChild(tr);
     }
     table.appendChild(tbody);
 
@@ -660,51 +749,29 @@
 
     els.taskRows.textContent = '';
     for (var t = 0; t < tasks.length; t++) {
-      var task = tasks[t];
-      var li = document.createElement('li');
-      li.className = 'st-' + (task.state || 'queued');
-      li.setAttribute('data-state', task.state || 'queued');
-
-      var top = document.createElement('span');
-      top.className = 'row-name';
-      /* A state this widget has never seen must not draw as a plain queued row
-         (STATE_MARK's own fallback for 'queued' is '') - that would silently
-         claim a task is ready to run when it might be anything. Falling back to
-         '' or to STATE_MARK[task.state] undefined (which prints the literal
-         word "undefined" on the panel) are both worse than being visibly
-         unrecognised, so an unmapped state gets its own mark. */
-      top.textContent = (STATE_MARK[task.state] || '? ') + (task.title || task.id);
-      li.appendChild(top);
-
-      var meta = document.createElement('span');
-      meta.className = 'row-figure';
-      /* Whatever decides what happens to this task NEXT displaces the model and
-         effort rather than joining them, because the row has one line: the
-         blocking reason for a blocked one, and why it closed for a done one. */
-      if (task.blocked) {
-        meta.textContent = task.blocked;
-      } else if (task.state === 'done') {
-        meta.textContent = task.reason || 'closed';
-      } else if (task.state === 'waiting') {
-        /* Which task it is waiting on, not merely that it is: the whole value
-           of the state is knowing what has to land first. The feed today only
-           ever sets state 'waiting' alongside a non-empty waitingOn array, but
-           that pairing is not enforced here - a null waitingOn would throw on
-           .join and blank the whole widget, so it is guarded rather than
-           trusted. */
-        meta.textContent = (task.waitingOn && task.waitingOn.length)
-          ? 'waiting on ' + task.waitingOn.join(', ')
-          : 'waiting';
-      } else {
-        var parts = [task.mode, task.model + '/' + task.effort];
-        /* Decides HOW it can be run, not whether - so it rides with the other
-           run attributes rather than displacing them. */
-        if (task.needsMain) parts.push('main only');
-        meta.textContent = parts.join(' · ');
+      /* A ROW THAT THROWS MUST NOT LEAVE A GAP. buildTaskRow() appends nothing
+         until it has finished, so before this guard a throw partway through one
+         row simply produced no row - and the throw then unwound out of
+         renderProjects, out of render(), into fetchProject()'s own .catch(),
+         which read it as "the feed failed" and hid the whole list behind a note
+         quoting an internal TypeError as if the server had said it. Both halves
+         were lies the panel could not support: a list one row short with the
+         heading still counting it, then a feed error that never happened.
+         Caught here instead, per row: the rest of the list still draws, the row
+         that failed says so where it would have been, and the failure is
+         re-thrown asynchronously so it reaches window.onerror - the channel a
+         test harness (and the console) watches - instead of being absorbed by a
+         fetch handler that has no idea it is looking at a render bug. */
+      try {
+        els.taskRows.appendChild(buildTaskRow(tasks[t]));
+      } catch (rowErr) {
+        els.taskRows.appendChild(brokenRow(rowErr));
+        /* Out of this call stack, so it cannot be caught by whatever is
+           awaiting the render, and lands as a real page error. */
+        setTimeout(function (e) {
+          return function () { throw e; };
+        }(rowErr), 0);
       }
-      li.appendChild(meta);
-
-      els.taskRows.appendChild(li);
     }
 
     /* Say what is NOT on screen rather than let the list end and imply there
@@ -717,6 +784,68 @@
       more.appendChild(cell('span', (total - shown) + ' older done tasks not shown', 'row-name'));
       els.taskRows.appendChild(more);
     }
+  }
+
+  /* The row that stands where a task row could not be built. It uses only
+     classes the stylesheet already carries: .row-figure.row-error is the amber
+     "this reading is broken, not the thing it describes" treatment the Queue
+     view's unreadable-repo rows already use. A silently missing row is the one
+     failure this widget must never produce - the reader sees a shorter list and
+     has nothing to tell them it is wrong. */
+  function brokenRow(err) {
+    var li = document.createElement('li');
+    li.className = 'st-broken';
+    li.appendChild(cell('span', '⚠ a task row could not be drawn', 'row-name'));
+    li.appendChild(cell('span', (err && err.message) ? err.message : String(err),
+      'row-figure row-error'));
+    return li;
+  }
+
+  function buildTaskRow(task) {
+    var li = document.createElement('li');
+    li.className = 'st-' + (task.state || 'queued');
+    li.setAttribute('data-state', task.state || 'queued');
+
+    var top = document.createElement('span');
+    top.className = 'row-name';
+    /* A state this widget has never seen must not draw as a plain queued row
+       (STATE_MARK's own fallback for 'queued' is '') - that would silently
+       claim a task is ready to run when it might be anything. Falling back to
+       '' or to STATE_MARK[task.state] undefined (which prints the literal
+       word "undefined" on the panel) are both worse than being visibly
+       unrecognised, so an unmapped state gets its own mark. */
+    top.textContent = (STATE_MARK[task.state] || '? ') + (task.title || task.id);
+    li.appendChild(top);
+
+    var meta = document.createElement('span');
+    meta.className = 'row-figure';
+    /* Whatever decides what happens to this task NEXT displaces the model and
+       effort rather than joining them, because the row has one line: the
+       blocking reason for a blocked one, and why it closed for a done one. */
+    if (task.blocked) {
+      meta.textContent = task.blocked;
+    } else if (task.state === 'done') {
+      meta.textContent = task.reason || 'closed';
+    } else if (task.state === 'waiting') {
+      /* Which task it is waiting on, not merely that it is: the whole value
+         of the state is knowing what has to land first. The feed today only
+         ever sets state 'waiting' alongside a non-empty waitingOn array, but
+         that pairing is not enforced here - a null waitingOn would throw on
+         .join and blank the whole widget, so it is guarded rather than
+         trusted. */
+      meta.textContent = (task.waitingOn && task.waitingOn.length)
+        ? 'waiting on ' + task.waitingOn.join(', ')
+        : 'waiting';
+    } else {
+      var parts = [task.mode, task.model + '/' + task.effort];
+      /* Decides HOW it can be run, not whether - so it rides with the other
+         run attributes rather than displacing them. */
+      if (task.needsMain) parts.push('main only');
+      meta.textContent = parts.join(' · ');
+    }
+    li.appendChild(meta);
+
+    return li;
   }
 
   /* ---------- the dispatcher ---------- */

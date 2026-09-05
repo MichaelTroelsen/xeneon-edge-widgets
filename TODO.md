@@ -121,7 +121,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       TabButtonsEditorSetting.qml:33 calls `rowCount()` on a QVariantList, which
       throws for every possible payload — Corsair's bundled widgets included.
 
-## Claude Code Usage — 1.14.1
+## Claude Code Usage — 1.15.0
 
 ### Done
 
@@ -396,10 +396,125 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       cache reads free, per-request cost, non-linear curve, reporting lag. Two
       readings cannot separate those.
 
-## Task Queue — 1.3.8
+## Task Queue — 1.4.0
 
 ### Done
 
+- [x] **The "Finished" meter turns amber at 80% and red at 95%** (high, fixed
+      2026-09-05). Removed the `HIGH_WATER`/`CRITICAL_WATER` thresholds and the
+      `.meter.is-high`/`.is-critical` fill rules rather than inverting them — a
+      completion bar has no danger state. 107 → 108 layout checks.
+      `taskqueue-finished-meter-thresholds-inverted` in `runs.jsonl`.
+- [x] **The header subtitle goes stale across views** (high, fixed 2026-09-05).
+      The dispatcher now clears `#repos` before each view renders, and a view
+      fills it in only when it has its own true statement — so a sixth view
+      that never touches it gets an empty line for free instead of the
+      previous view's stale text. 123 → 127 checks.
+      `taskqueue-header-subtitle-stale-across-views` in `runs.jsonl`.
+- [x] **Every tab press flashes a false heading** (high, fixed 2026-09-05).
+      `selectProject()` now fetches before it renders, matching
+      `applyView()`'s existing order, and a pending heading ("checking…")
+      covers the request window instead of "none open" — a claim about the
+      queue, not a loading state. 117 → 123 checks.
+      `taskqueue-tab-switch-flashes-none-open` in `runs.jsonl`.
+- [x] **Refresh default is 10 in code, 15 everywhere else** (low, fixed
+      2026-09-05). The manifest never stated a value at all — the mismatch was
+      one file (`widget.js`'s fallback) against two (`index.html`, README),
+      not a three-way split. Fallback changed 10 → 15 to match. 147 → 150
+      checks. `taskqueue-refresh-default-mismatch` in `runs.jsonl`.
+- [x] **Tabs and the repo list are in different orders, and neither is
+      alphabetical to a human** (medium, fixed 2026-09-05). The Queue's
+      busiest-first order was deliberate and kept; the tab strip's raw feed
+      order was the actual defect. One shared `orderedRepos()` (case-insensitive,
+      busiest-first with alphabetical tiebreak) now backs both, inside
+      `discover()` so every future caller inherits it. tasks.test.js 160 → 161,
+      layout.test.js 139 → 142. `taskqueue-consistent-repo-order` in
+      `runs.jsonl`.
+- [x] **The Live view will snap to page 0 every five seconds — FALSIFICATION,
+      no code change** (2026-09-05). The finding was false. Instrumenting
+      inside the pager showed `noffsets` is 2 per column, not 4: the earlier
+      probe counted page dots with a selector spanning BOTH columns of the
+      view, so a correct 1→0 wrap read as a 4-page reset. `refreshPaging` does
+      not clobber `pageIndex` and `renderLive`'s rebuild does not strand the
+      element — both independently checked and ruled out. `widget.js` and
+      `layout.test.js` are unmodified for this item. Reasoning kept because it
+      cost two attempts: a page-dot count taken across a whole view is not a
+      page count once a view has more than one paging column.
+      `taskqueue-live-tick-resets-scroll` in `runs.jsonl`.
+- [x] **`fetchProject` swallows some errors and can double-fetch** (medium,
+      fixed 2026-09-05). All three defects were real: no `res.ok` check (now
+      surfaces the feed's own error), a shapeless 200 leaving stale rows
+      standing under a new tab (now cleared and named), and a late answer for
+      an abandoned tab clearing `projectPending` while the current tab's
+      request was still in flight (now scoped per-request via `settle(who)`).
+      108 → 117 checks. `taskqueue-fetchproject-error-handling` in
+      `runs.jsonl`.
+- [x] **Two unguarded lookups that would kill a render** (low, fixed
+      2026-09-05). `STATE_MARK[task.state]` now falls back to a visible `? `
+      mark instead of `undefined`, and a null `waitingOn` renders the bare
+      word "waiting" instead of throwing on `.join()`. Confirmed from
+      `usage-server/tasks.js` that neither case is reachable from the live
+      feed today — genuine insurance, not a live bug. 150 → 157 checks.
+      `taskqueue-guard-state-mark-and-waitingon` in `runs.jsonl`. (Opened
+      `taskqueue-row-render-errors-are-invisible` as a follow-on: a thrown
+      exception inside a row's construction is currently invisible to the
+      suite's page-error check.)
+- [x] **Nothing verifies any slot but 840×344, while README.md claims every
+      slot size in both orientations** (test debt, medium, fixed 2026-09-05).
+      The suite now renders all five views at four slots (840×344, 696×416,
+      840×696, 696×840) — 108 renders per run. All four measured clean (0
+      overflow, 0 clock-overlap), but the README claim was narrowed anyway to
+      name only the four verified slots rather than "every" slot, since
+      nothing enumerates a closed set. Three dead `.body`/`#list-subtasks`
+      rules (inherited from ClaudeUsage, matching no element here) were
+      deleted. 157 → 187 checks.
+      `taskqueue-verify-other-slots-or-drop-claim` in `runs.jsonl`.
+- [x] **Show how stale each queue is** (improvement, fixed 2026-09-05). Each
+      Queue row now carries a relative age after its counts, from the feed's
+      `lastRunAt`; a repo that has never run says so instead of getting a
+      fabricated age. Confirmed against the live feed on 41777 (read-only).
+      133 → 139 checks. `taskqueue-show-queue-staleness` in `runs.jsonl`.
+- [x] **Cache commit times in the feed** (improvement, fixed 2026-09-05). A
+      module-level `Map` keyed on repo path + SHA now backs `commitTimes()`;
+      an unresolved SHA is deliberately NOT cached, so it is retried every
+      rebuild rather than staying permanently dated. 143 → 150 checks.
+      Verified only in the suite — the live feed on 41777 is still running
+      the pre-cache build and was not restarted (read-only per this run's
+      constraints). `taskqueue-cache-commit-times` in `runs.jsonl`.
+- [x] **`whattask.json` is parsed three times per rebuild** (improvement,
+      fixed 2026-09-05). `readRepo`, `projectTasks` and `collectQueuedTasks`
+      now share a per-call cache `Map` threaded through `readPlan`/`readRuns`;
+      nothing module-level holds it, so a plan edited between builds is
+      picked up on the very next one at the cost of one re-read. Also
+      corrected the task's own premise: `projectTasks()` is a different,
+      mutually-exclusive route, so the real duplication was 2× whattask in
+      `collectQueuedTasks` and 2× runs in `build()`, not the three-way overlap
+      implied. `taskqueue-read-whattask-once` in `runs.jsonl`.
+- [x] **Mark the feed stale when a poll fails** (improvement, fixed
+      2026-09-05). The `Updated` stamp gets `.is-stale` after three missed
+      refresh cycles (`readRefreshSeconds() * 3000`), mirroring the sibling
+      usage widget's indicator. 127 → 133 checks.
+      `taskqueue-stale-indicator-on-poll-failure` in `runs.jsonl`.
+- [x] **The unpaged projects list has no "more below" hint** (improvement,
+      fixed 2026-09-05). `refreshPaging()` now always reaches the
+      overflow-scanning loop; a `skipPaging` branch calls `markFade()` without
+      joining the auto-advance array, so `NO_PAGING` views get the fade hint
+      without gaining page dots. 142 → 147 checks.
+      `taskqueue-fade-hint-on-unpaged-list` in `runs.jsonl`.
+- [x] **Dead weight** (improvement, fixed 2026-09-05). Eleven deletions, each
+      verified individually: `MAX_ROWS`, `formatCountdown`, `DAYS` +
+      `formatWeekday`, `shortDate`, an orphaned AM/PM comment, the `.why` CSS
+      cluster and `--why-lines`, plus dead harness scraping code. Also found
+      and removed three clusters the item never named: an inherited
+      `.head .live`/`is-stale`/`is-local`/`is-partial` badge with no element
+      in this markup, an unreachable `.view-history.is-unavailable` override,
+      and an unused `--radius` custom property. `startClock` renamed to
+      `startLiveTicker` to match what it does. widget.js 1322→1285,
+      TaskQueue.css 1223→1145, layout.test.js 2128→2078; 187 checks before and
+      after (no assertion added or lost — the right signature for a deletion
+      pass; greenness proves nothing else depends on the removed code, not
+      that it was ever exercised — proof is the zero-hit grep for every
+      deleted symbol). `taskqueue-remove-dead-code` in `runs.jsonl`.
 - [x] **Five views on one page** (2026-09-05): queue, running now, run history,
       task files, and one project's task list behind a tab strip. Fed by
       `/tasks` and `/tasks?project=<name>` on the usage server. Every view says
@@ -423,103 +538,6 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       the orphan alarm, and that this is deliberate per `LOCKING.md` (a false
       reap is worse than a missed one).
 
-### Open
-
-Falsification pass on 2026-09-05 at `a4baaf0`, whole widget read end to end
-and every claim below re-verified against the file. Ranked: the widget is
-currently saying something untrue in the first three; the rest are gaps.
-
-- [ ] **The "Finished" meter turns amber at 80% and red at 95%** (high).
-      `TaskQueue/scripts/widget.js:23` `HIGH_WATER`/`CRITICAL_WATER` and the
-      `setBar` call at `:196` were ported from the usage widget, where a high
-      percentage means running out. Here 95% finished is the BEST state and
-      the bar would go red — unseen only because the queue sits at 59%.
-      Remove the thresholds or invert them; `.meter.is-high`/`.is-critical` in
-      `TaskQueue/styles/TaskQueue.css:461-465` are the colours.
-      → `taskqueue-finished-meter-thresholds-inverted`
-- [ ] **The header subtitle goes stale across views** (high). Only Queue
-      (`widget.js:202`) and Files (`widget.js:407`) write `els.repos`; Live,
-      History and Projects leave whatever the previous view put there, so
-      History can read `5 repos · 1 alarm` or `44 waiting on you` depending on
-      the route taken to it. Each view should own that line, or the dispatcher
-      should clear it. → `taskqueue-header-subtitle-stale-across-views`
-- [ ] **Every tab press flashes a false heading** (high). `selectProject()` at
-      `widget.js:471` nulls `projectData` and re-renders before the fetch
-      lands, so `renderProjects()` (`:516`) prints `h2g · none open` for the
-      request's duration and then corrects. Same on first entry. "None open"
-      is a claim about the queue, not a loading state — needs a distinct
-      pending rendering. → `taskqueue-tab-switch-flashes-none-open`
-- [ ] **Refresh default is 10 in code, 15 everywhere else** (low).
-      `widget.js:63` falls back to 10; `index.html` declares
-      `data-default="15"` and README says 15. Whichever is meant, make them
-      agree. → `taskqueue-refresh-default-mismatch`
-- [ ] **Tabs and the repo list are in different orders, and neither is
-      alphabetical to a human** (medium). `usage-server/tasks.js:57` sorts
-      case-sensitively, so tabs read `SIDM2, claude-setup, h2g, icue,
-      tdz-c64-knowledge`; the Queue list (`widget.js:205`) sorts by open
-      count; `currentProject()` (`:464`) defaults to whatever sorts first in
-      ASCII. Pick one order (case-insensitive, or by open count) and use it
-      for both, and default the selection to something meaningful.
-      → `taskqueue-consistent-repo-order`
-- [ ] **The Live view will snap to page 0 every five seconds** (medium,
-      reasoned from DOM semantics, NOT measured on the device). `startClock()`
-      at `widget.js:1019` — a misnomer now — calls `renderLive()` directly
-      every 5s to tick elapsed times. It empties and rebuilds both lists;
-      clearing a scroller collapses `scrollTop` and rebuilding does not
-      restore it, so a paged list jumps to the top on each tick and the pager
-      moves it back. Only visible when a live list overflows. Fix: update the
-      elapsed text in place, or go through `render()` so `refreshPaging()`
-      restores the page. → `taskqueue-live-tick-resets-scroll`
-- [ ] **`fetchProject` swallows some errors and can double-fetch** (medium).
-      `widget.js:483`: no `res.ok` check (the overview fetch at `:951` has the
-      body-carried-error branch; this one does not); a response with no
-      `project` field fails the guard at `:503` and is silently dropped,
-      leaving stale rows with no indication. And `projectPending = null` at
-      `:500` runs before the project check, so a late answer for an abandoned
-      tab clears the flag while the current tab's request is still in flight,
-      letting the next poll start a duplicate.
-      → `taskqueue-fetchproject-error-handling`
-- [ ] **Two unguarded lookups that would kill a render** (low, defensive —
-      cannot fire from the current feed). `STATE_MARK[task.state]` at
-      `widget.js:582` yields `"undefined"` prepended to the title for any
-      state not in the map; `task.waitingOn.join()` at `:597` throws if
-      `waitingOn` is null. → `taskqueue-guard-state-mark-and-waitingon`
-- [ ] **Nothing verifies any slot but 840×344, while README.md:4 claims every
-      slot size in both orientations** (test debt, medium). The inherited
-      media queries in `TaskQueue.css:662-689` reference `.body` and
-      `#list-subtasks`, which this widget does not have — behaviour at any
-      other slot is unknown, not merely untested. Either render the other
-      slots in the suite (696×416, 840×696, 1400×344 …) or drop the claim
-      for this widget. → `taskqueue-verify-other-slots-or-drop-claim`
-- [ ] **Show how stale each queue is** (improvement). `lastRunAt` is computed
-      at `tasks.js:231` and never drawn. h2g's last run was 22 Aug — two weeks
-      without a run is a different kind of queue from one that ran this
-      morning, and it is the one signal that separates "abandoned" from
-      "active" on the Queue view. → `taskqueue-show-queue-staleness`
-- [ ] **Cache commit times in the feed** (improvement). `commitTimes()` at
-      `tasks.js:290` shells out to `git cat-file` per repo on every 10s
-      rebuild (`:695`), over up to 326 SHAs. A SHA's commit time never
-      changes: one map filled on first sight, and the rebuild does no git work
-      until a new head appears. → `taskqueue-cache-commit-times`
-- [ ] **`whattask.json` is parsed three times per rebuild** (improvement).
-      `readRepo` (`tasks.js:237`), `projectTasks` (`:416`) and
-      `collectQueuedTasks` in `usage-server/server.js:1101` each read the
-      200KB file independently. → `taskqueue-read-whattask-once`
-- [ ] **Mark the feed stale when a poll fails** (improvement). On error with
-      data present (`widget.js:981`) the widget silently re-renders the old
-      reading; the usage widget turns its `Updated` stamp amber. This one
-      gives no sign. → `taskqueue-stale-indicator-on-poll-failure`
-- [ ] **The unpaged projects list has no "more below" hint** (improvement).
-      `NO_PAGING` at `widget.js:871` also skips `markFade()`, so on the
-      desktop dashboard — the only place the list scrolls — nothing says there
-      are ~150 rows under the six. → `taskqueue-fade-hint-on-unpaged-list`
-- [ ] **Dead weight** (improvement). `widget.js`: `MAX_ROWS` (`:19`),
-      `formatCountdown` (`:73`), `DAYS` (`:84`), `formatWeekday` (`:86`),
-      `shortDate` (`:669`), `els.tasksHead` (`:1065`) — defined, never used;
-      two orphaned comment fragments about the clock's locale at `:66-70`;
-      `startClock` no longer names what it does. `TaskQueue.css`: roughly
-      300 inherited lines (`.cols`, `.why`, `.models`, `.tok`, `.mdl`,
-      `.lists-detail`) matching nothing. → `taskqueue-remove-dead-code`
 ## All three widgets
 
 - [x] **tab-buttons throws in iCUE's settings panel** (fixed in `c1f7644` by

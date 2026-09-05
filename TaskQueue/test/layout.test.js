@@ -729,6 +729,16 @@ window.__FEED_CALLS__ = 0;
       document.querySelectorAll('#repo-rows li .row-age'), function (e) { return e.textContent; });
     out.repoRowFigureTexts = Array.prototype.map.call(
       document.querySelectorAll('#repo-rows li .row-figure'), function (e) { return e.textContent; });
+    /* The marker a repo row leaves behind when its own construction threw -
+       same shape as #task-rows li.st-broken below. Visible rows only, for
+       the same reason repoRowCount counts visible ones. */
+    out.repoBrokenRows = Array.prototype.filter.call(
+      document.querySelectorAll('#repo-rows li.st-broken'),
+      function (e) { return e.offsetParent !== null; }).map(function (e) {
+        var n = e.querySelector('.row-name');
+        var f = e.querySelector('.row-figure');
+        return { name: n ? n.textContent : null, why: f ? f.textContent : null };
+      });
     var doneFill = document.getElementById('done-fill');
     var doneTrack = doneFill ? doneFill.parentElement : null;
     out.doneFillPercent = (doneFill && doneTrack && doneTrack.getBoundingClientRect().width)
@@ -754,6 +764,16 @@ window.__FEED_CALLS__ = 0;
       document.querySelectorAll('#activity li'), function (e) { return e.getAttribute('data-kind'); });
     out.liveHeadings = Array.prototype.map.call(
       document.querySelectorAll('.view-live h2'), function (e) { return e.textContent.trim(); });
+    /* The marker a holder/activity row leaves behind when its own
+       construction threw - both lists share renderRunning, so one selector
+       covers both. */
+    out.runningBrokenRows = Array.prototype.filter.call(
+      document.querySelectorAll('#holders li.st-broken, #activity li.st-broken'),
+      function (e) { return e.offsetParent !== null; }).map(function (e) {
+        var n = e.querySelector('.row-name');
+        var f = e.querySelector('.row-figure');
+        return { name: n ? n.textContent : null, why: f ? f.textContent : null };
+      });
 
     /* --- history view --- */
     var heat = document.getElementById('heat');
@@ -794,6 +814,15 @@ window.__FEED_CALLS__ = 0;
       document.querySelectorAll('#filetable td.mx'), function (e) {
         return e.textContent + ':' + (e.classList.contains('mx-stale') ? 'stale'
           : e.classList.contains('mx-held') ? 'held' : 'free'); });
+    /* The marker a file-table row leaves behind when its own construction
+       threw - a <tr> with one spanning cell, not an <li>: this table has no
+       .list li ancestor for .row-error to reach. */
+    out.fileBrokenRows = Array.prototype.filter.call(
+      document.querySelectorAll('#filetable tbody tr.st-broken'),
+      function (e) { return e.offsetParent !== null; }).map(function (e) {
+        return { text: e.textContent, colspan: (e.querySelector('td') || {}).getAttribute
+          ? e.querySelector('td').getAttribute('colspan') : null };
+      });
 
     /* An undefined CSS custom property makes the whole declaration invalid and
        the element silently keeps its inherited value - no error, no visual cue,
@@ -919,6 +948,20 @@ window.__FEED_CALLS__ = 0;
       var e = document.querySelector('#task-rows li.st-waiting .row-figure');
       return e ? e.textContent : null;
     })();
+    /* The marker a row leaves behind when its own construction threw. Visible
+       rows only, for the same reason repoRowCount counts visible ones: a
+       marker in the DOM that nothing paints is not a signal to a reader. */
+    out.brokenRows = Array.prototype.filter.call(
+      document.querySelectorAll('#task-rows li.st-broken'),
+      function (e) { return e.offsetParent !== null; }).map(function (e) {
+        var n = e.querySelector('.row-name');
+        var f = e.querySelector('.row-figure');
+        return {
+          name: n ? n.textContent : null,
+          why: f ? f.textContent : null,
+          colour: f ? window.getComputedStyle(f).color : null
+        };
+      });
     out.mainOnlyRows = Array.prototype.filter.call(
       document.querySelectorAll('#task-rows li.st-queued .row-figure'),
       function (e) { return /main only/.test(e.textContent); }).length;
@@ -1095,7 +1138,7 @@ function writeErrorBodyPage(name, status, errorText, srcMutate) {
    be expressed as a stylesheet. Reads its copy out of the temp tree and writes
    only into the temp tree; the hash check at the end of this file proves the
    repo's own widget.js was never touched. */
-function writePageWithMutatedScript(name, taps, fixture, srcMutate, htmlMutate) {
+function writePageWithMutatedScript(name, taps, fixture, srcMutate, htmlMutate, projects, tabIndex) {
   const src = fs.readFileSync(path.join(PAGES, 'scripts', 'widget.js'), 'utf8');
   const mutated = srcMutate(src);
   if (mutated === src) {
@@ -1108,7 +1151,7 @@ function writePageWithMutatedScript(name, taps, fixture, srcMutate, htmlMutate) 
   return writePage(name, taps, fixture, html => {
     const withScript = html.replace(SCRIPT_TAG, () => inlined);
     return htmlMutate ? htmlMutate(withScript) : withScript;
-  });
+  }, projects, tabIndex);
 }
 
 let winW = WIDTH, winH = HEIGHT;
@@ -2052,6 +2095,243 @@ console.log('a state and a waitingOn the feed cannot send today, guarded anyway:
      word, not a thrown .join(). */
   check('and its meta falls back to the bare word rather than throwing on .join',
     r.waitingMeta, 'waiting');
+}
+
+console.log('a row that throws while it is being built:');
+/* OBSERVED, not theorised, and found by accident while mutation-testing the
+   waitingOn guard directly above: a TypeError from .join(null) aborted one
+   row's construction and the row simply VANISHED - with pageErrors EMPTY. The
+   general "no page threw while booting or rendering" probe never saw it. The
+   only reason the breakage was caught at all is that other checks in this file
+   happened to name that row by its text.
+
+   Where it went, read rather than assumed: buildTaskRow() appends nothing to
+   #task-rows until it has finished, so a throw partway through leaves no row
+   to append - not a swallow, a structural consequence. The throw then unwound
+   out of renderProjects, out of render(), and into fetchProject()'s own
+   .catch(), which is where it was absorbed: it set projectError to the
+   TypeError's message, re-rendered, and renderProjects' early "the feed said
+   why" branch hid the whole list behind a note quoting an internal TypeError
+   as though the server had sent it. Nothing ever reached window.onerror, so
+   the harness's capture had nothing to capture.
+
+   So the row-level guard has to do two things, and both are asserted here
+   WITHOUT any assertion naming the thrown row: put the failure on the page-
+   error channel, and leave a visible marker where the row would have been. */
+const THROWN_ROW_ID = 'row-that-throws-while-being-built';
+/* Deliberately a title nothing else in this file asserts - proven below by
+   counting its occurrences in this file's own source, not promised. */
+const THROWN_ROW_TITLE = 'a title asserted nowhere else in this suite';
+const THROWN_ROW_MESSAGE = 'deliberate row failure';
+const THROWN_BODIES = Object.assign({}, PROJECT_BODIES, {
+  SIDM2: (function () {
+    const b = projectFixture('SIDM2', 120, 4, 2, 10, 20, 42);
+    b.tasks.unshift({
+      id: THROWN_ROW_ID, title: THROWN_ROW_TITLE,
+      mode: 'subtask', model: 'sonnet', effort: 'low', lane: 'serial',
+      blocked: null, state: 'queued', reason: null, needsMain: false, waitingOn: null
+    });
+    return b;
+  })()
+});
+/* The anchor sits inside buildTaskRow, after the <li> exists and before
+   anything is appended - the same shape as the .join(null) that started this.
+   writePageWithMutatedScript fails loudly if the anchor ever moves, so this
+   can never quietly measure a clean build and pass for the wrong reason. */
+const ROW_ANCHOR = '    top.textContent = (STATE_MARK';
+{
+  const thrown = render(writePageWithMutatedScript('projects-row-throws', 4, baseFixture(),
+    src => src.replace(ROW_ANCHOR, () =>
+      '    if (task.id === ' + JSON.stringify(THROWN_ROW_ID) + ') throw new TypeError(' +
+      JSON.stringify(THROWN_ROW_MESSAGE) + ');\n' + ROW_ANCHOR),
+    null, THROWN_BODIES, null));
+  /* THE OPPOSITE DIRECTION: the same fixture and the same bodies, unmutated.
+     If the checks below could fire on a healthy render they would fire here,
+     and the marker would be an alarm on every run rather than a signal. */
+  const clean = render(writePage('projects-row-clean', 4, baseFixture(), null,
+    THROWN_BODIES, null, null, false, {}));
+
+  check('both renders came back', [!!thrown.error, !!clean.error], [false, false]);
+
+  /* THE CHECK THIS CASE EXISTS FOR. It names no row: it reads the same
+     window.onerror channel the general probe reads. Before the guard this was
+     [] and the failure was invisible to everything except an assertion that
+     happened to mention the row. */
+  check('a row that throws reaches the page-error channel the general probe watches',
+    (thrown.pageErrors || []).filter(e => e.includes(THROWN_ROW_MESSAGE)).length, 1);
+  /* Not passing for the old reason. The blind spot WAS that only assertions
+     naming the row's text caught the breakage; this file mentions that title
+     exactly once - the fixture that creates it. */
+  check('and no assertion in this file names the thrown row by its text',
+    fs.readFileSync(__filename, 'utf8').split(THROWN_ROW_TITLE).length - 1, 1);
+  check('the row really did fail to draw as a normal row',
+    (thrown.rowNames || []).filter(n => n.includes(THROWN_ROW_TITLE)).length, 0);
+
+  /* And the panel, not just the suite: a reader must not be shown a list one
+     row short with nothing to say so. */
+  check('a visible broken-row marker stands where the row would have been',
+    (thrown.brokenRows || []).length, 1);
+  check('saying what it is, in words rather than a bare symbol',
+    (thrown.brokenRows[0] || {}).name, '⚠ a task row could not be drawn');
+  check('and carrying the real reason rather than a generic one',
+    (thrown.brokenRows[0] || {}).why, THROWN_ROW_MESSAGE);
+  /* The same amber a blocked row uses (var(--warn)), compared against a row in
+     this very render rather than a hard-coded rgb() that would drift. */
+  check('drawn in the amber this widget already uses for "something is wrong"',
+    (thrown.brokenRows[0] || {}).colour, thrown.stateColours.blocked);
+
+  /* The rest of the view survives: one row is lost, not the list. */
+  check('every other row still drew',
+    (thrown.rowStates || []).length, (clean.rowStates || []).length - 1);
+  check('the heading still counts the same open work',
+    thrown.taskHeadingText, clean.taskHeadingText);
+  /* The old behaviour blamed the FEED for a bug in the widget - the list was
+     hidden and the note carried the TypeError's own message. */
+  check('and the feed is not blamed for a fault in the widget',
+    { noteShown: thrown.projectsNoteDisplay !== 'none', noteText: thrown.projectsNoteText },
+    { noteShown: false, noteText: '' });
+
+  check('a clean render of the same fixture raises no page error and draws no marker',
+    { pageErrors: clean.pageErrors, markers: (clean.brokenRows || []).length },
+    { pageErrors: [], markers: 0 });
+}
+
+console.log('a repo row that throws while it is being built:');
+/* Same defect, same fix, different row shape: renderRepoRows built the whole
+   <li> before appending it (see buildRepoRow), so a throw partway through a
+   repo row used to vanish the same way a task row did, and unwound into
+   fetchQueue's own .catch(). Asserted the same way, with its own title so no
+   assertion in this file can be accused of naming the other case's row. */
+const REPO_ROW_NAME = 'a repo row title asserted nowhere else in this suite';
+const REPO_ROW_MESSAGE = 'deliberate repo row failure';
+const REPO_ANCHOR = '    name.textContent = r.name;';
+{
+  const fixture = baseFixture();
+  fixture.repos.unshift(repo(REPO_ROW_NAME, 1, 1, 0, { subtask: 1 }));
+
+  const thrown = render(writePageWithMutatedScript('repo-row-throws', 0, fixture,
+    src => src.replace(REPO_ANCHOR, () =>
+      '    if (r.name === ' + JSON.stringify(REPO_ROW_NAME) + ') throw new TypeError(' +
+      JSON.stringify(REPO_ROW_MESSAGE) + ');\n' + REPO_ANCHOR)));
+  /* THE OPPOSITE DIRECTION: same fixture, unmutated. If these checks could
+     fire on a healthy render they would fire here too. */
+  const clean = render(writePage('repo-row-clean', 0, fixture));
+
+  check('both renders came back', [!!thrown.error, !!clean.error], [false, false]);
+
+  check('a thrown repo row reaches the page-error channel the general probe watches',
+    (thrown.pageErrors || []).filter(e => e.includes(REPO_ROW_MESSAGE)).length, 1);
+  check('and no assertion in this file names the thrown repo row by its text',
+    fs.readFileSync(__filename, 'utf8').split(REPO_ROW_NAME).length - 1, 1);
+  check('the row really did fail to draw as a normal row',
+    (thrown.repoRowNames || []).filter(n => n.includes(REPO_ROW_NAME)).length, 0);
+
+  check('a visible broken-row marker stands where the row would have been',
+    (thrown.repoBrokenRows || []).length, 1);
+  check('saying what it is, in words rather than a bare symbol',
+    (thrown.repoBrokenRows[0] || {}).name, '⚠ a repo row could not be drawn');
+  check('and carrying the real reason rather than a generic one',
+    (thrown.repoBrokenRows[0] || {}).why, REPO_ROW_MESSAGE);
+
+  check('every other repo row still drew',
+    (thrown.repoRowNames || []).length, (clean.repoRowNames || []).length);
+  check('and the queue view is not blamed for a fault in the widget',
+    thrown.queueNoteDisplay, 'none');
+
+  check('a clean render of the same fixture raises no page error and draws no marker',
+    { pageErrors: clean.pageErrors, markers: (clean.repoBrokenRows || []).length },
+    { pageErrors: [], markers: 0 });
+}
+
+console.log('a live row that throws while it is being built:');
+/* renderRunning drives both #holders and #activity from one function - one
+   thrown case exercises the shared loop, same shape as the two above. */
+const RUNNING_ROW_LABEL = 'a running row title asserted nowhere else in this suite';
+const RUNNING_ROW_MESSAGE = 'deliberate running row failure';
+const RUNNING_ANCHOR = '    name.textContent = r.label;';
+{
+  const fixture = runningFixture();
+  fixture.running.push({ kind: 'session', label: RUNNING_ROW_LABEL,
+    repo: 'SIDM2', since: Date.now() - 1000, detail: '' });
+
+  const thrown = render(writePageWithMutatedScript('running-row-throws', 1, fixture,
+    src => src.replace(RUNNING_ANCHOR, () =>
+      '    if (r.label === ' + JSON.stringify(RUNNING_ROW_LABEL) + ') throw new TypeError(' +
+      JSON.stringify(RUNNING_ROW_MESSAGE) + ');\n' + RUNNING_ANCHOR)));
+  const clean = render(writePage('running-row-clean', 1, fixture));
+
+  check('both renders came back', [!!thrown.error, !!clean.error], [false, false]);
+
+  check('a thrown live row reaches the page-error channel the general probe watches',
+    (thrown.pageErrors || []).filter(e => e.includes(RUNNING_ROW_MESSAGE)).length, 1);
+  check('and no assertion in this file names the thrown live row by its text',
+    fs.readFileSync(__filename, 'utf8').split(RUNNING_ROW_LABEL).length - 1, 1);
+
+  check('a visible broken-row marker stands where the row would have been',
+    (thrown.runningBrokenRows || []).length, 1);
+  check('saying what it is, in words rather than a bare symbol',
+    (thrown.runningBrokenRows[0] || {}).name, '⚠ a row could not be drawn');
+  check('and carrying the real reason rather than a generic one',
+    (thrown.runningBrokenRows[0] || {}).why, RUNNING_ROW_MESSAGE);
+
+  check('every other holder/activity row still drew',
+    thrown.holderKinds.length + thrown.activityKinds.length,
+    clean.holderKinds.length + clean.activityKinds.length);
+
+  check('a clean render of the same fixture raises no page error and draws no marker',
+    { pageErrors: clean.pageErrors, markers: (clean.runningBrokenRows || []).length },
+    { pageErrors: [], markers: 0 });
+}
+
+console.log('a file-table row that throws while it is being built:');
+/* The one TABLE row of the three: appending an <li> into a <tbody> would be
+   invalid markup, so brokenFileRow leaves a <tr> with one cell spanning every
+   column instead. Same two checks - page error, visible marker - proving the
+   fix holds for a row shape that is not an <li>. */
+const FILE_ROW_NAME = 'a file row title asserted nowhere else in this suite';
+const FILE_ROW_MESSAGE = 'deliberate file row failure';
+const FILE_ANCHOR = "    tr.appendChild(cell('td', r.name, 'name'));";
+/* name + FILE_COLUMNS(5) + mutex = 7, the same width the 'files' case's
+   fileHeads check (line ~1543) already fixes for the table's header row. */
+const FILE_COLUMNS_TEST_COUNT = 7;
+{
+  const fixture = filesFixture();
+  fixture.repos[0].name = FILE_ROW_NAME;   /* files/mutex already assigned by name above */
+
+  const thrown = render(writePageWithMutatedScript('file-row-throws', 3, fixture,
+    src => src.replace(FILE_ANCHOR, () =>
+      '    if (r.name === ' + JSON.stringify(FILE_ROW_NAME) + ') throw new TypeError(' +
+      JSON.stringify(FILE_ROW_MESSAGE) + ');\n' + FILE_ANCHOR)));
+  const clean = render(writePage('file-row-clean', 3, fixture));
+
+  check('both renders came back', [!!thrown.error, !!clean.error], [false, false]);
+
+  check('a thrown file-table row reaches the page-error channel the general probe watches',
+    (thrown.pageErrors || []).filter(e => e.includes(FILE_ROW_MESSAGE)).length, 1);
+  check('and no assertion in this file names the thrown file row by its text',
+    fs.readFileSync(__filename, 'utf8').split(FILE_ROW_NAME).length - 1, 1);
+  check('the row really did fail to draw as a normal row',
+    (thrown.fileRowNames || []).filter(n => n.includes(FILE_ROW_NAME)).length, 0);
+
+  check('a visible broken-row marker stands where the row would have been',
+    (thrown.fileBrokenRows || []).length, 1);
+  check('spanning every column, not just the one it broke in',
+    (thrown.fileBrokenRows[0] || {}).colspan, String(FILE_COLUMNS_TEST_COUNT));
+  check('saying what it is, with the real reason rather than a generic one',
+    ((thrown.fileBrokenRows[0] || {}).text || '').includes(FILE_ROW_MESSAGE), true);
+  /* And that it names the RIGHT KIND of row. The other three markers pin their
+     own wording; this one did not, which is exactly how it shipped saying 'a
+     repo row could not be drawn' from inside the FILE table - a marker
+     pointing the reader at the wrong list. */
+  check('and naming the kind of row that broke, not the one it was copied from',
+    ((thrown.fileBrokenRows[0] || {}).text || '').indexOf('⚠ a file row could not be drawn') === 0, true);
+
+  check('every other repo row still drew',
+    (thrown.fileRowNames || []).length, (clean.fileRowNames || []).length);
+
+  check('a clean render of the same fixture raises no page error and draws no marker',
+    { pageErrors: clean.pageErrors, markers: (clean.fileBrokenRows || []).length },
+    { pageErrors: [], markers: 0 });
 }
 
 /* -------------------------------------------------------------------- ellipsis */

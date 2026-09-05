@@ -357,9 +357,12 @@ function projectFixture(name, count, blockedEvery, running, done) {
       blocked: null, state: 'running', reason: null
     });
   }
+  /* Built queued-first then blocked, matching the order the feed serves - the
+     fixture must not assert an ordering the feed does not produce. */
+  const queued = [], stuck = [];
   for (let i = 0; i < count; i++) {
     const blocked = blockedEvery && i % blockedEvery === 0;
-    tasks.push({
+    (blocked ? stuck : queued).push({
       id: name + '-task-' + i,
       title: blocked
         ? 'A blocked one whose title runs the full ninety characters the feed caps them at, pad'
@@ -375,6 +378,8 @@ function projectFixture(name, count, blockedEvery, running, done) {
       reason: null
     });
   }
+  for (const t of queued) tasks.push(t);
+  for (const t of stuck) tasks.push(t);
   /* Done rows sit under the open ones, the way the feed orders them. */
   for (let d = 0; d < (done || 0); d++) {
     tasks.push({
@@ -1153,10 +1158,17 @@ console.log('task state, told four ways:');
      view must not reshuffle that - the top of the list is what is happening
      now and the bottom is history. */
   check('running rows come first', st.rowStates.slice(0, 2), ['running', 'running']);
-  check('done rows come last',
-    st.rowStates[st.rowStates.length - 1], 'done');
-  check('and nothing open is left below them',
-    st.rowStates.indexOf('queued') < st.rowStates.indexOf('done'), true);
+  check('done rows come last', st.rowStates[st.rowStates.length - 1], 'done');
+  /* Running, queued, blocked, done. Blocked sits below queued because it is
+     not actionable by the runner, which keeps the actionable half of the list
+     unbroken at the top. */
+  check('queued comes before blocked',
+    st.rowStates.indexOf('queued') < st.rowStates.indexOf('blocked'), true);
+  check('and blocked before done',
+    st.rowStates.indexOf('blocked') < st.rowStates.indexOf('done'), true);
+  check('each state is one unbroken run, not interleaved',
+    st.rowStates.filter((v, i) => i === 0 || v !== st.rowStates[i - 1]),
+    ['running', 'queued', 'blocked', 'done']);
 
   /* Each state is a COLOUR and a MARKER. The panel is read from across a room
      and at an angle, where hue is the first thing to go - and colour alone is

@@ -444,9 +444,12 @@ function projectTasks(name) {
       (t && t.closed_by ? 'closed by ' + t.closed_by : null)
   }));
 
-  /* Running, then what is waiting on someone, then what is queued, then
-     history. The order the reader cares about, not the order the file is in. */
-  const ORDER = { running: 0, blocked: 1, queued: 2, done: 3 };
+  /* Running, then what is ready to be picked up, then what is stuck, then
+     history. The order the reader cares about, not the order the file is in:
+     blocked work sits below queued work because it is not actionable by the
+     runner - it is waiting on a person, and grouping it just above the done
+     rows keeps the actionable half of the list unbroken at the top. */
+  const ORDER = { running: 0, queued: 1, blocked: 2, done: 3 };
   const tasks = open.concat(finished);
   tasks.sort((a, b) => ORDER[a.state] - ORDER[b.state]);
 

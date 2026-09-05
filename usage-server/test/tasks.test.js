@@ -728,11 +728,12 @@ console.log('what state each task is in:');
   check('and falls back to the commit that closed it when there is no reason',
     by['finished-quietly'].reason, 'closed by abc1234');
 
-  /* Running first, then what is waiting, then what is queued, then history -
-     the order the reader cares about, not the order the file happens to be in. */
-  check('ordered by state: running, blocked, queued, done',
+  /* Running, then what is ready to pick up, then what is stuck, then history.
+     Blocked sits below queued because it is not actionable by the runner, so
+     the actionable half of the list stays unbroken at the top. */
+  check('ordered by state: running, queued, blocked, done',
     got.tasks.map(t => t.state),
-    ['running', 'blocked', 'queued', 'done', 'done']);
+    ['running', 'queued', 'blocked', 'done', 'done']);
 }
 
 {

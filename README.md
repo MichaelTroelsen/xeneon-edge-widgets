@@ -408,15 +408,17 @@ than pushing one off the edge — five fit at 840px today and that is not a
 property worth depending on.
 
 Underneath, that project's tasks — **open and closed alike**, ordered running,
-blocked, queued, then done, so the top of the list is what is happening now and
-the bottom is history. The heading counts open work only; folding the done rows
+queued, blocked, then done, so the top of the list is what is happening now and
+the bottom is history. Blocked sits below queued because it is not actionable
+by the runner — it is waiting on a person — which keeps the actionable half of
+the list unbroken at the top. The heading counts open work only; folding the done rows
 into one total would make the queue look larger than it is.
 
 | State | Colour | Marker |
 |---|---|---|
 | running | green, at full weight — the one row saying what the machine is doing this second | `▶` |
-| blocked | amber | `⚠` |
 | queued | body text | none |
+| blocked | amber | `⚠` |
 | done | receded to muted, its figures dimmer still | `✓` |
 
 **Every state carries a marker as well as a colour.** This panel is read from

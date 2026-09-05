@@ -19,6 +19,7 @@ const http = require('http');
 const usagehtml = require('./usagehtml');
 const official = require('./official');
 const statusline = require('./statusline');
+const tasks = require('./tasks');
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
@@ -1083,46 +1084,37 @@ function collectLiveRuns() {
 }
 
 /* Queued work from the whattask.json task plans, so the subtask list still says
-   something useful when no workflow is currently running. */
+   something useful when no workflow is currently running.
+
+   This WAS a one-level readdirSync of ~/claude, which found 3 of the 5 repos
+   that actually have queues - it walked straight past the two nested under
+   c64server/, and with them 122 of 210 open tasks. tasks.discover() reads the
+   real project registry in ~/.claude.json instead, so this list and the /tasks
+   feed can never disagree about which repos exist. */
 function collectQueuedTasks() {
-  const roots = [path.join(HOME, 'claude')];
   const found = [];
-  for (const root of roots) {
-    let entries;
+  for (const repo of tasks.discover()) {
+    const read = tasks.readRepo(repo);
+    if (read.error) continue;
+    let plan;
     try {
-      entries = fs.readdirSync(root, { withFileTypes: true });
+      plan = JSON.parse(fs.readFileSync(tasks.whattaskFile(repo.path), 'utf8'));
     } catch (err) {
       continue;
     }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const file = path.join(root, entry.name, '.claude', 'tasks', 'whattask.json');
-      let stat;
-      try {
-        stat = fs.statSync(file);
-      } catch (err) {
-        continue;
-      }
-      let plan;
-      try {
-        plan = JSON.parse(fs.readFileSync(file, 'utf8'));
-      } catch (err) {
-        continue;
-      }
-      for (const task of plan.tasks || []) {
-        found.push({
-          label: task.title || task.id,
-          model: (task.model || '').replace(/^claude-/, ''),
-          state: task.blocked_on ? 'blocked' : 'queued',
-          phase: task.lane || '',
-          tokens: 0,
-          toolCalls: 0,
-          workflow: 'whattask',
-          project: entry.name,
-          startedAt: stat.mtimeMs,
-          source: 'whattask'
-        });
-      }
+    for (const task of (plan.tasks || [])) {
+      found.push({
+        label: task.title || task.id,
+        model: (task.model || '').replace(/^claude-/, ''),
+        state: task.blocked_on ? 'blocked' : 'queued',
+        phase: task.lane || '',
+        tokens: 0,
+        toolCalls: 0,
+        workflow: 'whattask',
+        project: repo.name,
+        startedAt: read.lastRunAt || Date.now(),
+        source: 'whattask'
+      });
     }
   }
   return found;
@@ -1299,6 +1291,26 @@ const server = http.createServer((req, res) => {
       if (!snapshot) rebuild();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(usagehtml.render(snapshot, loadConfig()));
+      return;
+    }
+
+    /* The whattask feed. Its own endpoint rather than a block inside /usage:
+       the /usage contract is what the Claude Code Usage widget reads and is
+       deliberately left exactly as that widget expects it.
+       Placed above the /usage handler below, which matches on a prefix, so
+       this route can never be shadowed by it. */
+    if (req.url === '/tasks' || req.url.startsWith('/tasks?')) {
+      /* The live block is handed over rather than recomputed, so the task
+         widget's running view shows the same activity /usage does. Without it
+         that view would be blank whenever no /runqueue holds a lock, which is
+         nearly always. */
+      const live = snapshot
+        ? { sessions: snapshot.sessions, workflows: snapshot.workflows,
+            subtasks: snapshot.subtasks }
+        : null;
+      const raw = /(?:\?|&)raw=1(?:&|$)/.test(req.url);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(tasks.build(live, { raw: raw })));
       return;
     }
 

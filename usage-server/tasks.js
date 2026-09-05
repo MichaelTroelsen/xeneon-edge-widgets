@@ -492,8 +492,29 @@ function projectTasks(name) {
      runner - it is waiting on a person, and grouping it just above the done
      rows keeps the actionable half of the list unbroken at the top. */
   const ORDER = { running: 0, queued: 1, blocked: 2, waiting: 3, done: 4 };
+
+  /* Within the queued block only, most-startable first. The device slot shows
+     FOUR rows, so the order of this block IS the interface - four arbitrary
+     rows out of 147 is a worse answer than the four you could start now.
+     Two keys, both grounded in the contention model rather than in taste:
+       - delegable before main-only. 52 of 210 seize a stateful singleton, so
+         picking one up costs the main session.
+       - parallel before serial. A serial task waits on the lane; a parallel
+         one can start beside whatever is already running.
+     Measured over the 147 genuinely-queued tasks: 24 are delegable AND
+     parallel, 83 delegable and serial, 40 main-only and serial. Effort is
+     deliberately NOT a key - "short jobs first" is a preference, not something
+     the data settles.
+     Zero for every other state, so this cannot reorder them; and the sort is
+     stable, so file order survives as the tiebreak. */
+  function startability(t) {
+    if (t.state !== 'queued') return 0;
+    return (t.needsMain ? 2 : 0) + (t.lane === 'serial' ? 1 : 0);
+  }
+
   const tasks = open.concat(finished);
-  tasks.sort((a, b) => ORDER[a.state] - ORDER[b.state]);
+  tasks.sort((a, b) =>
+    (ORDER[a.state] - ORDER[b.state]) || (startability(a) - startability(b)));
 
   return {
     project: name,

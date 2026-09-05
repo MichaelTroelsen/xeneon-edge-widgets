@@ -442,6 +442,20 @@ amber because nothing is wrong: a dependency clears itself when the other task
 lands, where a human blocker does not. A task that is both reports as
 `blocked`, for the same reason.
 
+**The queued block is ordered most-startable first**, because the device slot
+shows four rows and four arbitrary rows out of 147 is a worse answer than the
+four you could start now. Two keys, both from the contention model rather than
+from taste: **delegable before main-only**, since picking up a main-only task
+costs the main session; and **parallel before serial**, since a serial task
+waits on the lane while a parallel one can start beside whatever is running.
+Measured over the 147 genuinely queued tasks: 24 are delegable *and* parallel,
+83 delegable and serial, 40 main-only and serial — so the 24 that can start
+immediately come first instead of being scattered through the list. The sort is
+stable, so file order survives as the tiebreak, and it applies **only within
+the queued block**: reordering blocked work by how startable it would have been
+is meaningless for work that cannot be started at all. Effort is deliberately
+not a key — "short jobs first" is a preference, not something the data settles.
+
 **`main only`** rides alongside the model and effort on a queued row. 52 of 210
 tasks seize a stateful singleton and cannot be delegated to a subagent; it
 decides *how* a task can be run, not whether, so it joins the run attributes

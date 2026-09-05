@@ -826,5 +826,89 @@ console.log('how much history is shown:');
     [done[0].id, done[9].id], ['closed-41', 'closed-32']);
 }
 
+console.log('which queued task is most startable:');
+
+{
+  /* The device slot shows FOUR rows, so the order of the queued block IS the
+     interface. Two keys, both from the contention model: delegable before
+     main-only (52 of 210 seize a stateful singleton), and parallel before
+     serial (a serial task waits on the lane). Measured over the 147 genuinely
+     queued tasks: 24 delegable+parallel, 83 delegable+serial, 40 main+serial. */
+  const q = makeRepo('startable', {
+    tasks: [
+      { id: 'main-serial', title: 'Main only, serial', mode: 'main',
+        needs_main: true, lane: 'serial' },
+      { id: 'del-serial', title: 'Delegable, serial', mode: 'subtask',
+        needs_main: false, lane: 'serial' },
+      { id: 'main-par', title: 'Main only, parallel', mode: 'main',
+        needs_main: true, lane: 'parallel' },
+      { id: 'del-par', title: 'Delegable, parallel', mode: 'subtask',
+        needs_main: false, lane: 'parallel' }
+    ],
+    closed: []
+  });
+  const tasks = load(writeRegistry([q]));
+  check('most startable first: delegable+parallel, delegable+serial, main+parallel, main+serial',
+    tasks.projectTasks('startable').tasks.map(t => t.id),
+    ['del-par', 'del-serial', 'main-par', 'main-serial']);
+}
+
+{
+  /* Stable within a tier: two tasks that are equally startable keep the order
+     the file put them in, rather than being shuffled by the sort. */
+  const tie = makeRepo('ties', {
+    tasks: [
+      { id: 'first', title: 'First in the file', mode: 'subtask',
+        needs_main: false, lane: 'parallel' },
+      { id: 'second', title: 'Second in the file', mode: 'subtask',
+        needs_main: false, lane: 'parallel' },
+      { id: 'third', title: 'Third in the file', mode: 'subtask',
+        needs_main: false, lane: 'parallel' }
+    ],
+    closed: []
+  });
+  const tasks = load(writeRegistry([tie]));
+  check('equally startable tasks keep their file order',
+    tasks.projectTasks('ties').tasks.map(t => t.id), ['first', 'second', 'third']);
+}
+
+{
+  /* The sort must not reach outside the queued block. A blocked task that is
+     delegable and parallel is still blocked, and still below every queued one. */
+  const mix = makeRepo('mixed-states', {
+    tasks: [
+      { id: 'blocked-but-easy', title: 'Blocked, delegable, parallel',
+        mode: 'requires-user', needs_main: false, lane: 'parallel',
+        blocked_on: 'a human' },
+      { id: 'queued-but-awkward', title: 'Queued, main only, serial',
+        mode: 'main', needs_main: true, lane: 'serial' }
+    ],
+    closed: []
+  });
+  const tasks = load(writeRegistry([mix]));
+  check('startability never lifts a task out of its state',
+    tasks.projectTasks('mixed-states').tasks.map(t => t.state), ['queued', 'blocked']);
+}
+
+{
+  /* The state guard's real job. Cross-state order is already settled by the
+     primary key, so the guard only matters WITHIN the other blocks: without
+     it, two blocked tasks would be reordered by how startable they would have
+     been, which is meaningless for work that cannot be started at all. */
+  const blockedPair = makeRepo('blocked-pair', {
+    tasks: [
+      { id: 'awkward-first', title: 'Blocked, main only, serial', mode: 'requires-user',
+        needs_main: true, lane: 'serial', blocked_on: 'a human' },
+      { id: 'easy-second', title: 'Blocked, delegable, parallel', mode: 'requires-user',
+        needs_main: false, lane: 'parallel', blocked_on: 'a human' }
+    ],
+    closed: []
+  });
+  const tasks = load(writeRegistry([blockedPair]));
+  check('blocked tasks keep their file order, unsorted by startability',
+    tasks.projectTasks('blocked-pair').tasks.map(t => t.id),
+    ['awkward-first', 'easy-second']);
+}
+
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
 process.exit(failures ? 1 : 0);

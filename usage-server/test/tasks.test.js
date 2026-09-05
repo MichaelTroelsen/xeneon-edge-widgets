@@ -138,5 +138,122 @@ console.log('a repo that cannot be read:');
     [r.open, r.closed, r.error], [0, 0, null]);
 }
 
+console.log('run history:');
+
+const { execFileSync } = require('child_process');
+
+/* A real git repo with two commits, so commitTimes() is tested against git
+   rather than against a stub of it - the batching is the part that can be
+   wrong, and a stub would not exercise it. */
+function makeGitRepo(name, lines) {
+  const dir = makeRepo(name, { tasks: [], closed: [] });
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'Test');
+  git('config', 'commit.gpgsign', 'false');
+  const shas = [];
+  for (let i = 0; i < 2; i++) {
+    fs.writeFileSync(path.join(dir, 'f' + i + '.txt'), 'x');
+    git('add', '-A');
+    execFileSync('git', ['commit', '-q', '-m', 'c' + i], {
+      cwd: dir,
+      stdio: 'pipe',
+      env: Object.assign({}, process.env, {
+        GIT_AUTHOR_DATE: '2026-0' + (i + 1) + '-01T12:00:00+00:00',
+        GIT_COMMITTER_DATE: '2026-0' + (i + 1) + '-01T12:00:00+00:00'
+      })
+    });
+    shas.push(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim());
+  }
+  const runsPath = path.join(dir, '.claude', 'tasks', 'runs.jsonl');
+  fs.writeFileSync(runsPath, lines(shas).map(o => JSON.stringify(o)).join('\n') + '\n');
+  return { dir, shas };
+}
+
+{
+  const { dir, shas } = makeGitRepo('history', s => ([
+    { id: 'one', head: s[0], outcome: 'done', model: 'sonnet', effort: 'low', mode: 'subtask' },
+    { id: 'two', head: s[0], outcome: 'done', model: 'sonnet', effort: 'low', mode: 'subtask' },
+    { id: 'three', head: s[1], outcome: 'partial', model: 'opus', mode: 'main' }
+  ]));
+  const tasks = load(writeRegistry([dir]));
+
+  const read = tasks.readRuns(dir);
+  check('every well-formed line is read', read.runs.length, 3);
+  check('reading runs reports no error', read.error, null);
+
+  const t = tasks.commitTimes(dir, [shas[0], shas[1]]);
+  check('both SHAs resolve to a commit time', Object.keys(t.times).length, 2);
+  check('the time is the commit date, in epoch ms',
+    new Date(t.times[shas[0]]).toISOString(), '2026-01-01T12:00:00.000Z');
+
+  const h = tasks.datedHistory(dir, read.runs);
+  check('every run gets an entry', h.history.length, 3);
+  check('the source of the time is named as the commit, not the run',
+    h.history.every(e => e.atSource === 'commit'), true);
+  check('an absent effort reads as unknown rather than a default',
+    h.history.find(e => e.outcome === 'partial').effort, 'unknown');
+  check('entries are ordered oldest first',
+    h.history[0].at <= h.history[2].at, true);
+}
+
+{
+  /* An abbreviated head - runs.jsonl records them 7 characters long - must
+     resolve, because git echoes the FULL objectname back and a naive lookup
+     by the requested key finds nothing. */
+  const { dir, shas } = makeGitRepo('abbrev', s => ([
+    { id: 'short', head: s[0].slice(0, 7), outcome: 'done' }
+  ]));
+  const tasks = load(writeRegistry([dir]));
+  const h = tasks.datedHistory(dir, tasks.readRuns(dir).runs);
+  check('an abbreviated SHA resolves to its commit time', h.history.length, 1);
+}
+
+{
+  /* A torn or half-written final line must cost that line, not the file -
+     runs.jsonl is appended to by concurrent runners. */
+  const { dir } = makeGitRepo('torn', s => ([
+    { id: 'ok', head: s[0], outcome: 'done' }
+  ]));
+  fs.appendFileSync(path.join(dir, '.claude', 'tasks', 'runs.jsonl'), '{"id":"tor');
+  const tasks = load(writeRegistry([dir]));
+  check('a torn last line is skipped and the rest survive',
+    tasks.readRuns(dir).runs.length, 1);
+}
+
+{
+  /* A SHA that git does not know - history rewritten, or the record predates
+     a rebase - must drop that entry with a reason, not date it wrongly. */
+  const { dir } = makeGitRepo('unknown-sha', s => ([
+    { id: 'ok', head: s[0], outcome: 'done' },
+    { id: 'gone', head: '0000000000000000000000000000000000000000', outcome: 'done' }
+  ]));
+  const tasks = load(writeRegistry([dir]));
+  const h = tasks.datedHistory(dir, tasks.readRuns(dir).runs);
+  check('a run whose SHA git cannot resolve is dropped', h.history.length, 1);
+  check('and the drop is reported rather than silent',
+    typeof h.error === 'string' && /1/.test(h.error), true);
+}
+
+{
+  /* Not a git repo at all: history is unavailable with a stated reason, and
+     nothing throws. */
+  const plain = makeRepo('not-git', { tasks: [], closed: [] });
+  fs.writeFileSync(path.join(plain, '.claude', 'tasks', 'runs.jsonl'),
+    JSON.stringify({ id: 'a', head: 'deadbeef', outcome: 'done' }) + '\n');
+  const tasks = load(writeRegistry([plain]));
+  const h = tasks.datedHistory(plain, tasks.readRuns(plain).runs);
+  check('a repo that is not a git checkout yields no history', h.history, []);
+  check('and says why', typeof h.error === 'string' && h.error.length > 0, true);
+}
+
+{
+  const noRuns = makeRepo('no-runs', { tasks: [], closed: [] });
+  const tasks = load(writeRegistry([noRuns]));
+  check('a repo with no runs.jsonl yet is not an error',
+    tasks.readRuns(noRuns), { runs: [], error: null });
+}
+
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
 process.exit(failures ? 1 : 0);

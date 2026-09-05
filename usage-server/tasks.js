@@ -100,4 +100,125 @@ function readRepo(repo) {
   return base;
 }
 
-module.exports = { REGISTRY_PATH, discover, readRepo, normalise, whattaskFile };
+const { execFileSync } = require('child_process');
+
+function runsFile(repoPath) {
+  return path.join(repoPath, '.claude', 'tasks', 'runs.jsonl');
+}
+
+/* runs.jsonl is appended to by concurrent runners, so its last line can be a
+   torn partial write. That costs the line, never the file. */
+function readRuns(repoPath) {
+  let text;
+  try {
+    text = fs.readFileSync(runsFile(repoPath), 'utf8');
+  } catch (err) {
+    return { runs: [], error: null };   /* no runs yet is not a failure */
+  }
+  const runs = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      runs.push(JSON.parse(trimmed));
+    } catch (err) {
+      /* skip */
+    }
+  }
+  return { runs: runs, error: null };
+}
+
+/* NO RUN RECORD CARRIES A TIMESTAMP. Measured across four repos and 603
+   lines: the key union is id, head, model, effort, mode, lane, outcome,
+   evidence, verify_output, notes, opened, decision, runner - and no date.
+   `head` is a commit SHA, so the commit's own date is the closest honest time
+   available, and it travels labelled as such (atSource: "commit") so a view
+   never presents it as when the run happened.
+ *
+ * One `git cat-file --batch` process for the whole set, not one per record:
+ * 62 lines here carry only 23 distinct heads, and spawning git per line would
+ * cost seconds on every rebuild. */
+function commitTimes(repoPath, shas) {
+  const unique = Array.from(new Set(shas.filter(s => typeof s === 'string' && s)));
+  if (!unique.length) return { times: {}, error: null };
+  let out;
+  try {
+    out = execFileSync('git', ['cat-file', '--batch=%(objectname) %(objecttype)'], {
+      cwd: repoPath,
+      input: unique.join('\n') + '\n',
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+  } catch (err) {
+    return { times: {}, error: 'git could not be read in ' + repoPath + ': ' + err.message };
+  }
+  /* --batch prints a header line then the object body; for a commit the body
+     carries "committer <name> <email> <epoch> <tz>". Parse the epoch out of it
+     rather than shelling out again per SHA. A name git does not know comes
+     back as "<name> missing", whose type is not "commit" and is skipped. */
+  const times = {};
+  let current = null;
+  for (const line of out.split('\n')) {
+    const header = /^([0-9a-f]{40}) (\S+)$/.exec(line);
+    if (header) {
+      current = header[2] === 'commit' ? header[1] : null;
+      continue;
+    }
+    if (current) {
+      const committer = /^committer .*? (\d+) [+-]\d{4}\s*$/.exec(line);
+      if (committer) {
+        times[current] = Number(committer[1]) * 1000;
+        current = null;
+      }
+    }
+  }
+  /* Records carry abbreviated heads (7 characters, as git log --oneline
+     prints them) but --batch echoes the FULL objectname, so a lookup by the
+     requested key alone finds nothing. Map each requested SHA onto whichever
+     resolved name it prefixes. */
+  const resolved = {};
+  for (const sha of unique) {
+    if (times[sha] != null) { resolved[sha] = times[sha]; continue; }
+    const full = Object.keys(times).find(f => f.startsWith(sha));
+    if (full) resolved[sha] = times[full];
+  }
+  return { times: resolved, error: null };
+}
+
+function field(record, name) {
+  const v = record && record[name];
+  return (typeof v === 'string' && v) ? v : 'unknown';
+}
+
+function datedHistory(repoPath, runs) {
+  const { times, error } = commitTimes(repoPath, runs.map(r => r && r.head));
+  if (error) return { history: [], error: error };
+  const name = path.basename(path.normalize(repoPath));
+  const history = [];
+  let undated = 0;
+  for (const run of runs) {
+    const at = run && times[run.head];
+    if (at == null) { undated++; continue; }
+    history.push({
+      at: at,
+      atSource: 'commit',
+      outcome: field(run, 'outcome'),
+      model: field(run, 'model'),
+      effort: field(run, 'effort'),
+      mode: field(run, 'mode'),
+      repo: name
+    });
+  }
+  history.sort((a, b) => a.at - b.at);
+  return {
+    history: history,
+    error: undated
+      ? undated + ' run record(s) name a commit this repo no longer has, and are not shown'
+      : null
+  };
+}
+
+module.exports = {
+  REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
+  runsFile, readRuns, commitTimes, datedHistory
+};

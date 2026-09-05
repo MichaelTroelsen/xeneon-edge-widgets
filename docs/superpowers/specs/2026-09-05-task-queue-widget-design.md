@@ -142,11 +142,15 @@ whattask files, `serial.lock` present and empty, git failure, and the
 `collectQueuedTasks()` repoint finding all fixture repos rather than the
 top-level ones.
 
-`TaskQueue/test/layout.test.js` — ported from the usage widget's suite: every
-Edge slot size in both orientations, `OVERFLOW_EPS_PX = 1`, `* { transition:
-none !important }` injected because transitions do not advance under
-`--virtual-time-budget`, `--screenshot` flags for renders kept distinct from
-`--dump-dom` flags for probes, and `--user-data-dir` pointed somewhere
+`TaskQueue/test/layout.test.js` — ported from the usage widget's suite. It
+asserts the **840×344 S-H slot**, which is what both existing suites do; a
+wider slot matrix is not invented here, because neither shipped widget has one
+and inventing one for the third would be a new, unvalidated harness rather than
+a port. Carried across verbatim: `OVERFLOW_EPS_PX = 1`, the viewport driven to
+exactly 840×344 by correction rather than by a hard-coded Chrome deficit, `* {
+transition: none !important }` injected because transitions do not advance
+under `--virtual-time-budget`, `--screenshot` flags for renders kept distinct
+from `--dump-dom` flags for probes, and `--user-data-dir` pointed somewhere
 disposable.
 
 ## Deploy

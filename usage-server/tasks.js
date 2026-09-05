@@ -212,6 +212,25 @@ function readMutex(repoPath) {
            owner: owner, reason: reason };
 }
 
+/* The plan file lists what was open WHEN IT WAS WRITTEN. A runner that closes a
+   task appends to runs.jsonl and does not rewrite the plan, so between a
+   /runtask and the next /whattask the queue reads as larger than it is - the
+   count says 18 while three of them are finished.
+   Only `done` counts. `partial` is explicitly still open, which is the same
+   rule the runners themselves apply when deciding whether a dependency is
+   satisfied, so a task half-finished is not quietly retired here either. */
+function doneIds(repoPath) {
+  const done = new Set();
+  for (const run of readRuns(repoPath).runs) {
+    if (!run || typeof run.id !== 'string') continue;
+    /* Append-only, so a later line supersedes an earlier one for the same id -
+       a task can be recorded partial and then done, or done and then reopened. */
+    if (run.outcome === 'done') done.add(run.id);
+    else done.delete(run.id);
+  }
+  return done;
+}
+
 function readRepo(repo) {
   const base = {
     name: repo.name,
@@ -239,10 +258,18 @@ function readRepo(repo) {
     base.error = 'whattask.json could not be read: ' + err.message;
     return base;
   }
-  const tasks = (plan && Array.isArray(plan.tasks)) ? plan.tasks : [];
+  const planned = (plan && Array.isArray(plan.tasks)) ? plan.tasks : [];
   const closed = (plan && Array.isArray(plan.closed)) ? plan.closed : [];
+  /* Finished since the plan was written, so not open however the file reads. */
+  const finished = doneIds(repo.path);
+  const tasks = planned.filter(t => !(t && finished.has(t.id)));
+
   base.open = tasks.length;
   base.closed = closed.length;
+  /* How many the plan still lists but a runner has already closed - the
+     difference between the file and the truth, reported rather than hidden so
+     a stale plan is visible instead of merely wrong. */
+  base.doneSincePlan = planned.length - tasks.length;
   base.byMode = tally(tasks, 'mode');
   base.byLane = tally(tasks, 'lane');
   base.blocked = tasks.filter(t => t && t.blocked_on).length;
@@ -424,6 +451,8 @@ function projectTasks(name) {
      lock, where every holder's `task` matched an open task's id. A holder for a
      task the queue does not have adds no row: the lock is a claim about work,
      not a source of work. */
+  const finishedSincePlan = doneIds(repo.path);
+
   const held = new Set(readHolders(repo.path)
     .map(h => h && h.task)
     .filter(t => typeof t === 'string' && t));
@@ -454,14 +483,20 @@ function projectTasks(name) {
       /* Running beats everything - it is a fact about now. Then a human
          blocker, then a dependency: both stop the task, but only one of them
          clears itself. */
+      /* A task a runner has already finished is done, whatever the plan says.
+         It sits above the closed-array rows and below the live ones, and its
+         reason says the plan has not caught up rather than leaving the reader
+         to wonder why a finished task is in the open list. */
       state: held.has(t && t.id) ? 'running'
+        : (finishedSincePlan.has(t && t.id) ? 'done'
         : ((t && t.blocked_on) ? 'blocked'
-        : (waiting.length ? 'waiting' : 'queued')),
+        : (waiting.length ? 'waiting' : 'queued'))),
       /* 52 of 210 seize a stateful singleton and cannot be delegated to a
          subagent, which decides HOW the task can be run, not whether. */
       needsMain: !!(t && t.needs_main),
       waitingOn: waiting.length ? waiting : null,
-      reason: null
+      reason: finishedSincePlan.has(t && t.id)
+        ? 'done in a run; the plan has not been rewritten yet' : null
     };
   });
 
@@ -735,6 +770,6 @@ module.exports = {
   REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
   runsFile, readRuns, commitTimes, datedHistory, readHolders, build,
   readFiles, readMutex, pidAlive, isOrphan, TASK_FILES, MUTEX_STALE_MS, THIS_HOST,
-  projectTasks, TITLE_MAX, BLOCKED_MAX, DONE_MAX,
+  projectTasks, TITLE_MAX, BLOCKED_MAX, DONE_MAX, doneIds,
   aggregateHistory, modelFamily, dayKey
 };

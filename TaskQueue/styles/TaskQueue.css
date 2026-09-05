@@ -1100,7 +1100,7 @@ body {
 .tabs {
   flex: 0 0 auto;
   display: flex;
-  gap: calc(var(--layout-unit) * 0.5);
+  gap: calc(var(--layout-unit) * 0.6);
   min-width: 0;
 }
 
@@ -1113,13 +1113,19 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: calc(var(--layout-unit) * 0.45) calc(var(--layout-unit) * 0.7);
+  /* Sized as a TOUCH target, not as a label. This is the only control on the
+     panel a finger is meant to hit, and the webview forwards taps but no
+     drags - so a miss has no recovery gesture, you simply get the wrong
+     project. Taller and wider than the text needs, deliberately. */
+  padding: calc(var(--layout-unit) * 1.4) calc(var(--layout-unit) * 1.0);
+  min-height: calc(var(--layout-unit) * 6.4);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 0.92em;
+  font-size: 1.12em;
+  font-weight: 500;
   text-align: center;
   cursor: pointer;
 }
@@ -1188,8 +1194,9 @@ body {
 
 .tab .tab-count {
   flex: 0 0 auto;
-  margin-left: calc(var(--layout-unit) * 0.45);
-  opacity: 0.75;
+  margin-left: calc(var(--layout-unit) * 0.5);
+  opacity: 0.8;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 

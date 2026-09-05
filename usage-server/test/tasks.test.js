@@ -968,5 +968,54 @@ console.log('which queued task is most startable:');
     ['dear-first', 'cheap-second']);
 }
 
+console.log('tasks a runner has already finished:')
+
+{
+  /* The plan lists what was open WHEN IT WAS WRITTEN. A runner appends to
+     runs.jsonl and does not rewrite the plan, so between a /runtask and the
+     next /whattask the count reads larger than the truth. Measured on the real
+     repos when this was added: SIDM2 120 -> 58, h2g 83 -> 71, icue 18 -> 15. */
+  const r = makeRepo('finished-since-plan', {
+    tasks: [
+      { id: 'already-done', title: 'Finished by a runner', mode: 'subtask' },
+      { id: 'half-done', title: 'Recorded partial', mode: 'subtask' },
+      { id: 'still-open', title: 'Never run', mode: 'subtask' },
+      { id: 'done-then-reopened', title: 'Done, then run again badly', mode: 'subtask' }
+    ],
+    closed: []
+  });
+  const runs = [
+    { id: 'already-done', outcome: 'done', head: 'aaa1111' },
+    { id: 'half-done', outcome: 'partial', head: 'bbb2222' },
+    { id: 'done-then-reopened', outcome: 'done', head: 'ccc3333' },
+    { id: 'done-then-reopened', outcome: 'failed', head: 'ddd4444' }
+  ];
+  fs.writeFileSync(path.join(r, '.claude', 'tasks', 'runs.jsonl'),
+    runs.map(x => JSON.stringify(x)).join('\n') + '\n');
+  const tasks = load(writeRegistry([r]));
+  const repo = tasks.readRepo(tasks.discover()[0]);
+
+  /* Of the four, only `already-done` retires: partial is still open and the
+     reopened one came back on its later failure line. */
+  check('a task with a done record is not counted as open', repo.open, 3);
+  check('and the gap between the plan and the truth is reported', repo.doneSincePlan, 1);
+  /* partial is explicitly still open - the same rule the runners apply when
+     deciding whether a dependency is satisfied. */
+  check('a partial record does NOT retire a task', 
+    tasks.doneIds(r).has('half-done'), false);
+  /* Append-only: a later line supersedes an earlier one for the same id. */
+  check('a done record superseded by a later failure reopens the task',
+    tasks.doneIds(r).has('done-then-reopened'), false);
+
+  const list = tasks.projectTasks('finished-since-plan').tasks;
+  const by = {};
+  for (const t of list) by[t.id] = t;
+  check('the finished task is listed as done, not queued', by['already-done'].state, 'done');
+  check('and says the plan has not caught up rather than leaving it unexplained',
+    /plan has not been rewritten/.test(by['already-done'].reason || ''), true);
+  check('the partial one is still queued', by['half-done'].state, 'queued');
+  check('and so is the one that was reopened', by['done-then-reopened'].state, 'queued');
+}
+
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
 process.exit(failures ? 1 : 0);

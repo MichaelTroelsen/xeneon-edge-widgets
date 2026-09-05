@@ -363,11 +363,71 @@ console.log('the assembled payload:');
   ]));
   const tasks = load(writeRegistry([dir]));
   const snap = tasks.build();
-  check('byOutcome counts every run, an absent outcome becoming unknown',
-    snap.totals.byOutcome, { done: 2, partial: 1, unknown: 1 });
-  check('history reaches the payload', snap.history.length, 4);
-  check('and is ordered oldest first across repos',
-    snap.history.every((e, i) => i === 0 || snap.history[i - 1].at <= e.at), true);
+
+  /* The widget only ever aggregates these, so the feed aggregates them once
+     rather than shipping 605 records for the device's webview to re-bucket
+     every refresh. */
+  check('history is aggregated, not a list of records',
+    Array.isArray(snap.history), false);
+  check('every run is counted', snap.history.runs, 4);
+  check('outcomes are tallied from what the records name, not a fixed pair',
+    snap.history.outcome, { done: 2, partial: 1, unknown: 1 });
+  check('models are tallied', snap.history.model, { unknown: 4 });
+  check('efforts are tallied', snap.history.effort, { unknown: 4 });
+  check('days are keyed by calendar date',
+    Object.keys(snap.history.days).sort(), ['2026-01-01', '2026-02-01']);
+  check('and count the runs that fall on each',
+    snap.history.days['2026-01-01'], 2);
+  check('the span names the first and last day seen',
+    [snap.history.span.from, snap.history.span.to], ['2026-01-01', '2026-02-01']);
+}
+
+{
+  /* `model` is free text in the real records - 16 distinct values, 12 of them
+     one-off sentences - so it is reduced to the family it names rather than
+     tallied raw, which would put a paragraph where a model name belongs. */
+  const tasks = load(writeRegistry([]));
+  check('a bare family name is itself', tasks.modelFamily('sonnet'), 'sonnet');
+  check('a versioned id reduces to its family',
+    tasks.modelFamily('claude-opus-4-1-20250805'), 'opus');
+  check('a sentence reduces to the family it starts with',
+    tasks.modelFamily('sonnet (subagent) + Opus 5 orchestrator re-verification'), 'sonnet');
+  check('a sentence that only mentions a family later still finds it',
+    tasks.modelFamily('ran inline on Fable 5'), 'fable');
+  check('an absent model is unknown, not other', tasks.modelFamily(undefined), 'unknown');
+  check('something naming no family at all is grouped, not guessed at',
+    tasks.modelFamily('a bespoke local model'), 'other');
+}
+
+{
+  /* The full outcome set is FIVE across the real corpus - done, partial,
+     blocked, failed, inconclusive - not the two the icue repo alone shows.
+     A tally written to a fixed pair would silently hide 41 records. */
+  const { dir } = makeGitRepo('five-outcomes', s => ([
+    { id: 'a', head: s[0], outcome: 'done' },
+    { id: 'b', head: s[0], outcome: 'partial' },
+    { id: 'c', head: s[0], outcome: 'blocked' },
+    { id: 'd', head: s[1], outcome: 'failed' },
+    { id: 'e', head: s[1], outcome: 'inconclusive' }
+  ]));
+  const tasks = load(writeRegistry([dir]));
+  check('every outcome the records name is counted',
+    tasks.build().history.outcome,
+    { done: 1, partial: 1, blocked: 1, failed: 1, inconclusive: 1 });
+}
+
+{
+  /* The raw records stay reachable for debugging, behind an argument, so the
+     aggregation is not a one-way door. */
+  const { dir } = makeGitRepo('raw', s => ([
+    { id: 'a', head: s[0], outcome: 'done' }
+  ]));
+  const tasks = load(writeRegistry([dir]));
+  const raw = tasks.build(null, { raw: true });
+  check('raw:true adds the underlying records', Array.isArray(raw.historyRecords), true);
+  check('and they are still there in full', raw.historyRecords.length, 1);
+  check('while the default payload carries none',
+    tasks.build().historyRecords, undefined);
 }
 
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);

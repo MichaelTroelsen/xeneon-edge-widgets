@@ -261,10 +261,68 @@ function toMs(value) {
    for /usage. It is passed in rather than recomputed: serial.lock is empty
    whenever no /runqueue is mid-flight, which is nearly always, and a live view
    backed by holders alone would be blank almost every time it is looked at. */
-function build(live) {
+/* The LOCAL calendar date, which is the one the heatmap is drawn on and the
+   one the person reading the display is living in. The server and the display
+   are the same machine, so there is no timezone to reconcile. */
+function dayKey(ms) {
+  const d = new Date(ms);
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+
+/* The widget only ever aggregates the run records, so they are aggregated once
+   here rather than shipped whole for the device to re-bucket on every refresh:
+   605 records is ~75KB of the payload and collapses to a few hundred bytes.
+   Every tally enumerates what it finds - the real corpus names five outcomes
+   (done, partial, blocked, failed, inconclusive), not the two the icue repo
+   alone shows, and a fixed pair would hide 41 records. */
+/* `model` is FREE TEXT, not an enumeration. Measured across the real corpus:
+   16 distinct values, of which 12 are one-off sentences - "opus (recorded) /
+   ran on Fable 5, which sits above Opus - substitution stated before work
+   began, not a downgrade" is a single record's value. Tallying the raw strings
+   puts a paragraph where a model name belongs, so each is reduced to the
+   family it names. Anything that names no known family is grouped rather than
+   guessed at. */
+const MODEL_FAMILIES = ['fable', 'mythos', 'opus', 'sonnet', 'haiku'];
+
+function modelFamily(value) {
+  if (typeof value !== 'string' || !value) return 'unknown';
+  const lower = value.toLowerCase();
+  const head = MODEL_FAMILIES.find(f => lower.startsWith(f));
+  if (head) return head;
+  const anywhere = MODEL_FAMILIES.find(f => lower.includes(f));
+  return anywhere || (lower === 'unknown' ? 'unknown' : 'other');
+}
+
+function aggregateHistory(records) {
+  const days = {};
+  const outcome = {};
+  const model = {};
+  const effort = {};
+  for (const r of records) {
+    const key = dayKey(r.at);
+    days[key] = (days[key] || 0) + 1;
+    outcome[r.outcome] = (outcome[r.outcome] || 0) + 1;
+    const family = modelFamily(r.model);
+    model[family] = (model[family] || 0) + 1;
+    effort[r.effort] = (effort[r.effort] || 0) + 1;
+  }
+  const keys = Object.keys(days).sort();
+  return {
+    runs: records.length,
+    days: days,
+    outcome: outcome,
+    model: model,
+    effort: effort,
+    span: { from: keys[0] || null, to: keys[keys.length - 1] || null }
+  };
+}
+
+function build(live, opts) {
   const repos = discover().map(readRepo);
   const totals = {
-    open: 0, closed: 0, repos: repos.length, blocked: 0, byMode: {}, byOutcome: {}
+    open: 0, closed: 0, repos: repos.length, blocked: 0, byMode: {}
   };
   const running = [];
   let history = [];
@@ -286,10 +344,6 @@ function build(live) {
     }
 
     const read = readRuns(repo.path);
-    for (const run of read.runs) {
-      const outcome = field(run, 'outcome');
-      totals.byOutcome[outcome] = (totals.byOutcome[outcome] || 0) + 1;
-    }
     const dated = datedHistory(repo.path, read.runs);
     repo.historyError = dated.error;
     history = history.concat(dated.history);
@@ -312,18 +366,24 @@ function build(live) {
 
   history.sort((a, b) => a.at - b.at);
 
-  return {
+  const payload = {
     generatedAt: Date.now(),
     repos: repos,
     totals: totals,
     running: running,
-    history: history,
+    history: aggregateHistory(history),
     unavailable: repos.length ? null
       : 'no repo on this machine has a .claude/tasks/whattask.json - run /whattask in one to create a queue'
   };
+  /* Aggregating is not a one-way door: the records that went into it stay
+     reachable behind an argument, for the debug page and for anyone checking
+     the arithmetic. */
+  if (opts && opts.raw) payload.historyRecords = history;
+  return payload;
 }
 
 module.exports = {
   REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
-  runsFile, readRuns, commitTimes, datedHistory, readHolders, build
+  runsFile, readRuns, commitTimes, datedHistory, readHolders, build,
+  aggregateHistory, modelFamily, dayKey
 };

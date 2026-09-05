@@ -102,9 +102,41 @@ function extractString(src, varName) {
 const VIEWS = extractArray(widgetSrc, 'VIEWS');
 const START_VIEW = extractString(widgetSrc, 'view');
 
+/* readRefreshSeconds()'s fallback is the single source of truth; index.html's
+   data-default and the README table for THIS widget (the one whose feedUrl
+   is /tasks, not the ClaudeUsage one a few tables up) must each agree with
+   it, so a future change to the fallback only has to happen in one place. */
+function extractRefreshFallback(src) {
+  const m = src.match(/function readRefreshSeconds\(\)[\s\S]{0,200}?clampRange\([^,]+,\s*\d+,\s*\d+,\s*(\d+)\)/);
+  return m ? m[1] : null;
+}
+const REFRESH_FALLBACK = extractRefreshFallback(widgetSrc);
+
+const refreshIndexSrc = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+function extractRefreshDataDefault(src) {
+  const m = src.match(/name="x-icue-property" content="refreshSeconds"[^>]*data-default="(\d+)"/);
+  return m ? m[1] : null;
+}
+const INDEX_REFRESH_DEFAULT = extractRefreshDataDefault(refreshIndexSrc);
+
+const refreshReadmeSrc = fs.readFileSync(path.join(ROOT, '..', 'README.md'), 'utf8');
+function extractReadmeRefreshDefault(src) {
+  /* The TaskQueue table is the one preceded (within a handful of lines) by
+     this widget's own feedUrl row, not the ClaudeUsage table further up
+     that documents an unrelated refreshSeconds property. */
+  const m = src.match(/`feedUrl`[^\n]*\/tasks[^\n]*\n(?:[^\n]*\n)*?\| `refreshSeconds` \| slider 5–120 \| (\d+) \|/);
+  return m ? m[1] : null;
+}
+const README_REFRESH_DEFAULT = extractReadmeRefreshDefault(refreshReadmeSrc);
+
 console.log('metrics:');
 check('VIEWS was read out of widget.js', VIEWS, ['queue', 'live', 'history', 'files', 'projects']);
 check('the widget starts on the "queue" view', START_VIEW, 'queue');
+check('readRefreshSeconds() has a fallback to compare against', REFRESH_FALLBACK !== null, true);
+check(`index.html's refreshSeconds data-default agrees with widget.js's fallback (${REFRESH_FALLBACK})`,
+  INDEX_REFRESH_DEFAULT, REFRESH_FALLBACK);
+check(`the README's TaskQueue refreshSeconds default agrees with widget.js's fallback (${REFRESH_FALLBACK})`,
+  README_REFRESH_DEFAULT, REFRESH_FALLBACK);
 if (failures) {
   console.log('\nthe source constants could not be read; every tap count below would be aimed at the wrong view');
   console.log(`${failures} FAILED`);
@@ -191,15 +223,25 @@ function repo(name, open, closed, blocked, byMode, extra) {
   }, extra || {});
 }
 
+/* Ages modelled on the live feed on 2026-09-05: h2g weeks stale, icue
+   touched minutes ago, claude-setup never run at all (no runs.jsonl).
+   Built from Date.now() at fixture time, not a frozen epoch, so the
+   expected relative-age text does not go stale the way the widget itself
+   must not. */
 function baseFixture() {
+  const now = Date.now();
   return {
-    generatedAt: Date.now(),
+    generatedAt: now,
     repos: [
-      repo('SIDM2', 120, 42, 3, { subtask: 90, main: 27, 'requires-user': 3 }),
-      repo('h2g', 83, 105, 0, { subtask: 83 }),
-      repo('claude-setup', 3, 0, 0, { unknown: 3 }),
-      repo('icue', 2, 63, 2, { 'requires-user': 2 }),
-      repo('tdz-c64-knowledge', 2, 97, 0, { subtask: 2 })
+      repo('SIDM2', 120, 42, 3, { subtask: 90, main: 27, 'requires-user': 3 },
+        { lastRunAt: now - 45 * 60 * 1000 }),
+      repo('h2g', 83, 105, 0, { subtask: 83 },
+        { lastRunAt: now - 20 * 24 * 3600 * 1000 }),
+      repo('claude-setup', 3, 0, 0, { unknown: 3 }, { lastRunAt: null }),
+      repo('icue', 2, 63, 2, { 'requires-user': 2 },
+        { lastRunAt: now - 3 * 60 * 1000 }),
+      repo('tdz-c64-knowledge', 2, 97, 0, { subtask: 2 },
+        { lastRunAt: now - 9 * 24 * 3600 * 1000 })
     ],
     totals: {
       open: 210, closed: 307, repos: 5, blocked: 5,
@@ -209,6 +251,23 @@ function baseFixture() {
     history: emptyHistory(),
     unavailable: null
   };
+}
+
+/* baseFixture's feed order happens to already be busiest-first, which would
+   let the tab strip and the Queue list agree by ACCIDENT even if each still
+   ran its own independent sort - exactly the drift this fixture exists to
+   rule out. Same five repos, same counts, fed in alphabetical (case-
+   insensitive) order instead - the order discover() now guarantees - so the
+   feed order and the busiest-first order genuinely disagree at every
+   position, and only a widget that computes ONE order and reuses it in both
+   views can make the tab strip and the Queue list match. */
+function reorderedFixture() {
+  const f = baseFixture();
+  const byName = {};
+  for (const r of f.repos) byName[r.name] = r;
+  f.repos = ['claude-setup', 'h2g', 'icue', 'SIDM2', 'tdz-c64-knowledge']
+    .map(n => byName[n]);
+  return f;
 }
 
 function emptyHistory() {
@@ -648,56 +707,6 @@ window.__FEED_CALLS__ = 0;
       }
     }
 
-    /* Why-this-is-not-live. Captured as three separate things on purpose:
-       what the badge SAYS (the state, which was never the problem), what the
-       badge's title holds (the desktop-only affordance, which must not be
-       regressed but proves nothing about the device), and what is actually
-       RENDERED - text in the page, in a box with a size, inside .widget-root.
-       Only the third of those can be read on a screen with no cursor. */
-    var badge = document.getElementById('live');
-    out.badgeText = badge ? badge.textContent : null;
-    out.badgeTitle = badge ? badge.getAttribute('title') : null;
-    var why = document.getElementById('why');
-    var whyWrap = document.getElementById('why-wrap');
-    if (why && whyWrap) {
-      var wcs = window.getComputedStyle(whyWrap);
-      var wr = why.getBoundingClientRect();
-      out.why = {
-        /* U+200B is inserted between the pieces of an over-long token so the
-           line can break BETWEEN spans and never inside one; it is not part of
-           the message, so it comes out before anything is compared. */
-        text: why.textContent.replace(/\\u200b/g, ''),
-        spans: why.children.length,
-        wrapDisplay: wcs.display,
-        clientHeight: why.clientHeight,
-        scrollHeight: why.scrollHeight,
-        onScreen: wcs.display !== 'none' && wcs.visibility !== 'hidden' &&
-          why.clientHeight > 0 && wr.width > 0 &&
-          wr.top >= rr.top - 0.5 && wr.bottom <= rr.bottom + 0.5 &&
-          wr.left >= rr.left - 0.5 && wr.right <= rr.right + 0.5
-      };
-    } else {
-      out.why = null;
-    }
-
-    /* The strip is not free: it takes its line out of the usage view's body,
-       and the meters are what is left. .widget-root has 21.5px of padding, so
-       a meter squeezed out of its own box does NOT reach outside the widget
-       and the overflow check above cannot see it - these three edges can.
-       MEASURED at 840x344 in the LOCAL state: the weekly note ends at 293.3,
-       .meters ends at 303.3, the strip starts at 305.8. */
-    function edgesOf(sel) {
-      var e = document.querySelector(sel);
-      if (!e) return null;
-      var cs2 = window.getComputedStyle(e);
-      if (cs2.display === 'none') return null;
-      var b = e.getBoundingClientRect();
-      return { top: +b.top.toFixed(1), bottom: +b.bottom.toFixed(1) };
-    }
-    out.taskQueue = {
-      meters: edgesOf('.view-queue .meters'),
-      lists: edgesOf('.view-queue .lists')
-    };
 
     /* --- queue view --- */
     /* VISIBLE rows, not rows in the DOM. A display:none inherited from the
@@ -713,6 +722,13 @@ window.__FEED_CALLS__ = 0;
     out.repoRowNames = Array.prototype.map.call(
       document.querySelectorAll('#repo-rows li .row-name'), function (e) { return e.textContent; });
     out.repoRowErrors = document.querySelectorAll('#repo-rows li .row-figure.row-error').length;
+    /* The staleness fix: every non-error row must carry a relative age off
+       lastRunAt, and a repo with no runs.jsonl (lastRunAt: null) must say so
+       in place of an age rather than showing one built from nothing. */
+    out.repoRowAges = Array.prototype.map.call(
+      document.querySelectorAll('#repo-rows li .row-age'), function (e) { return e.textContent; });
+    out.repoRowFigureTexts = Array.prototype.map.call(
+      document.querySelectorAll('#repo-rows li .row-figure'), function (e) { return e.textContent; });
     var doneFill = document.getElementById('done-fill');
     var doneTrack = doneFill ? doneFill.parentElement : null;
     out.doneFillPercent = (doneFill && doneTrack && doneTrack.getBoundingClientRect().width)
@@ -908,6 +924,12 @@ window.__FEED_CALLS__ = 0;
       function (e) { return /main only/.test(e.textContent); }).length;
     out.projectPageDots = document.querySelectorAll('.view-projects .pages').length;
     out.otherPageDots = document.querySelectorAll('.view-queue .pages, .view-live .pages').length;
+    /* The fade that has to stand in for scrolling on hardware that forwards no
+       drags: present while #task-rows has content below what is on screen,
+       absent once it does not (whether because the list fits, or because a
+       reader has scrolled it to the bottom by wheel/trackpad). */
+    out.projectListCanScroll = document.getElementById('list-tasks')
+      ? document.getElementById('list-tasks').classList.contains('can-scroll') : null;
     out.taskHeadingText = (function () {
       var h = document.querySelector('#list-tasks h2');
       return h ? h.textContent.trim() : null;
@@ -990,6 +1012,22 @@ window.__FEED_CALLS__ = 0;
     }
     if (__REFRESH__) window.TaskQueue.onDataUpdated();
     setTimeout(function () {
+      /* Simulates the ONE input this list can actually take on the device -
+         a wheel or trackpad, never a drag - scrolled all the way to its own
+         bottom, to prove the fade clears there rather than staying lit as a
+         promise of rows that do not exist. Done here, in the same tick as
+         measure() rather than right after the taps, because the ?project=
+         answer that fills #task-rows with its real rows lands as a promise
+         microtask AFTER the tap loop returns - scrolling any earlier would
+         scroll the one-row "checking..." placeholder, not the list this
+         case exists to test. */
+      if (__SCROLL_BOTTOM__) {
+        var sb = document.getElementById('task-rows');
+        if (sb) {
+          sb.scrollTop = sb.scrollHeight;
+          sb.dispatchEvent(new Event('scroll'));
+        }
+      }
       var payload;
       try { payload = JSON.stringify(measure()); }
       catch (e) { payload = JSON.stringify({ notes: ['measure threw: ' + e] }); }
@@ -1016,6 +1054,7 @@ function writePage(name, taps, fixture, mutate, projects, tabIndex, projectsAfte
   let html = indexSrc.replace(SCRIPT_TAG, HARNESS
     .replace('__TAB_INDEX__', String(tabIndex == null ? -1 : tabIndex))
     .replace('__REFRESH__', refresh ? 'true' : 'false')
+    .replace('__SCROLL_BOTTOM__', o.scrollBottom ? 'true' : 'false')
     .replace('__CONTROL_JSON__', () => JSON.stringify(o.control || {}))
     .replace('__FEED_FAIL_ON__', String(o.feedFailOn || 0))
     .replace('__RACE_RELEASE__', () => JSON.stringify(o.release || null))
@@ -1074,7 +1113,15 @@ function writePageWithMutatedScript(name, taps, fixture, srcMutate, htmlMutate) 
 
 let winW = WIDTH, winH = HEIGHT;
 
-function render(page) {
+/* w/h are the CHROME WINDOW size (see the "Verifying a layout" README
+   section this file's header points at) - they default to the calibrated
+   840x344 pair so every pre-existing call site is unaffected, and are passed
+   explicitly by the additional-slot-sizes section below, each with its own
+   calibrated pair, so calibrating for one size never leaves the device-slot
+   renders using the wrong window. */
+function render(page, w, h) {
+  const useW = w == null ? winW : w;
+  const useH = h == null ? winH : h;
   const budget = PRE_TAP_MS + POST_TAP_MS + 800;
   const args = [
     '--headless',
@@ -1089,7 +1136,7 @@ function render(page) {
     '--mute-audio',
     '--force-device-scale-factor=1',
     `--user-data-dir=${PROFILE}`,
-    `--window-size=${winW},${winH}`,
+    `--window-size=${useW},${useH}`,
     `--virtual-time-budget=${budget}`,
     '--dump-dom',
     fileUrl(page)
@@ -1162,7 +1209,11 @@ const CASES = [
      NOT be marked stale - otherwise "is-stale" could be passing above for the
      wrong reason (always on) rather than because the poll actually failed. */
   { name: 'queue-fresh-after-refresh', taps: 0, want: 'queue', fixture: baseFixture(),
-    refresh: true }
+    refresh: true },
+  /* Feed order deliberately not busiest-first (see reorderedFixture) - the
+     partner of 'projects-reordered' below, read together to prove the two
+     views cannot drift apart. */
+  { name: 'queue-reordered', taps: 0, want: 'queue', fixture: reorderedFixture() }
 ];
 
 /* The projects view needs the second endpoint stubbed and, for the tab test, a
@@ -1196,6 +1247,33 @@ const SHAPELESS_AFTER = {
   SIDM2: { ok: true, generatedAt: Date.now(), items: [] }
 };
 
+/* GUARDED STATES. Neither shape below is one the real feed (usage-server/
+   tasks.js) can send today - projectTasks() only ever writes state to one of
+   running/done/blocked/waiting/queued, and only sets 'waiting' alongside a
+   non-empty waitingOn array (build() derives it from `waiting.length ?
+   waiting : null`). This is insurance against a future state or a future
+   waitingOn:null pairing, not a reproduction of a live bug - hence no change
+   to usage-server/tasks.js itself, only to how the widget draws what it is
+   given. */
+const GUARD_BODIES = Object.assign({}, PROJECT_BODIES, {
+  SIDM2: (function () {
+    const b = projectFixture('SIDM2', 120, 4, 2, 10, 20, 42);
+    b.tasks.unshift(
+      {
+        id: 'guard-unknown-state', title: 'a task in a state this widget has never seen',
+        mode: 'subtask', model: 'sonnet', effort: 'medium', lane: 'serial',
+        blocked: null, state: 'retrying', reason: null, needsMain: false, waitingOn: null
+      },
+      {
+        id: 'guard-waiting-null', title: 'waiting, but the feed never named what for',
+        mode: 'subtask', model: 'sonnet', effort: 'low', lane: 'serial',
+        blocked: null, state: 'waiting', reason: null, needsMain: false, waitingOn: null
+      }
+    );
+    return b;
+  })()
+});
+
 const PROJECT_CASES = [
   { name: 'projects', taps: 4, want: 'projects', fixture: baseFixture(), tab: null },
   { name: 'projects-tab-2', taps: 4, want: 'projects', fixture: baseFixture(), tab: 1 },
@@ -1224,7 +1302,30 @@ const PROJECT_CASES = [
   /* Same gap, reached the other way: a tab already showing SIDM2 is pressed
      to h2g, whose own request is the one left outstanding. */
   { name: 'projects-pending-tab', taps: 4, want: 'projects', fixture: baseFixture(),
-    tab: 1, control: { hold: true } }
+    tab: 1, control: { hold: true } },
+  /* The partner of 'queue-reordered': same fixture, so the two renders can be
+     compared to prove the tab strip and the Queue list present the SAME
+     order even when the feed's own order is neither of them. */
+  { name: 'projects-reordered', taps: 4, want: 'projects', fixture: reorderedFixture(),
+    tab: null },
+  /* THE FADE, both halves. 'projects' (tab: null, defaulting to SIDM2's 152
+     rows) already overflows the box, so it doubles as the "present" case.
+     'claude-setup' is the opposite fixture on purpose: 3 open tasks, 0 done,
+     nothing more than the empty-space class this project's box already has -
+     it must show NO fade, or the fade is not conditional at all, it is just
+     always on. tab: 2 is claude-setup in the busiest-first tab order
+     (SIDM2, h2g, claude-setup, icue, tdz-c64-knowledge). */
+  { name: 'projects-fits', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: 2 },
+  /* Same overflowing project as 'projects', scrolled to its own bottom by the
+     one input this list actually takes (wheel/trackpad, never a drag) - the
+     fade must clear there too, not just when the box happens to fit. */
+  { name: 'projects-scrolled-bottom', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: null, scrollBottom: true },
+  /* THE VERIFY case: an unknown state and a waiting/null pairing the real feed
+     cannot send today, fed to prove the two guards hold anyway. */
+  { name: 'projects-guard-states', taps: 4, want: 'projects', fixture: baseFixture(),
+    tab: null, bodies: GUARD_BODIES }
 ];
 
 const results = [];
@@ -1237,9 +1338,9 @@ for (const c of CASES) {
   if (r.error) fail(`${c.name}: ${r.error}`);
 }
 for (const c of PROJECT_CASES) {
-  const r = render(writePage(c.name, c.taps, c.fixture, null, PROJECT_BODIES, c.tab,
+  const r = render(writePage(c.name, c.taps, c.fixture, null, c.bodies || PROJECT_BODIES, c.tab,
                              c.after, c.refresh,
-                             { control: c.control, release: c.release }));
+                             { control: c.control, release: c.release, scrollBottom: c.scrollBottom }));
   r.name = c.name;
   r.wantView = c.want;
   results.push(r);
@@ -1325,6 +1426,105 @@ console.log('overflow — nothing reaches outside .widget-root:');
   }
 }
 
+/* ------------------------------------------------------ additional slot sizes */
+
+/* MEASURE FIRST. README.md claims every Edge slot size in both orientations;
+   the device slot (840x344) is the only one anything above this point ever
+   renders. Three more real slots, named in the README's "Verifying a layout"
+   section and TaskQueue.css:669/685 - S-V (696x416), M-H (840x696), and
+   portrait (696x840) - are rendered here through the SAME page files already
+   written above (nothing about a page depends on window size until Chrome
+   paints it, so there is no need to rewrite any HTML), calibrated the same
+   way as the device slot, and run through the exact same overflow /
+   clock-overlap / "the render is real" machinery - not a second, weaker
+   notion of fitting. */
+const ALL_CASE_NAMES = CASES.map(c => ({ name: c.name, want: c.want }))
+  .concat(PROJECT_CASES.map(c => ({ name: c.name, want: c.want })));
+
+const EXTRA_SIZES = [
+  { label: '696x416 (S-V)', w: 696, h: 416 },
+  { label: '840x696 (M-H)', w: 840, h: 696 },
+  { label: '696x840 (portrait)', w: 696, h: 840 }
+];
+
+for (const size of EXTRA_SIZES) {
+  console.log(`slot ${size.label}:`);
+  let cw = size.w, ch = size.h, seenExtra = null;
+  for (let i = 0; i < 4; i++) {
+    const probe = render(CALIBRATE, cw, ch);
+    if (probe.error) { seenExtra = probe; break; }
+    seenExtra = probe.viewport;
+    if (seenExtra.width === size.w && seenExtra.height === size.h) break;
+    cw += size.w - seenExtra.width;
+    ch += size.h - seenExtra.height;
+  }
+  check(`the viewport can be driven to exactly ${size.label}`,
+    seenExtra && seenExtra.width === size.w && seenExtra.height === size.h, true);
+  if (!(seenExtra && seenExtra.width === size.w && seenExtra.height === size.h)) {
+    console.log(`        best the browser would give: ${JSON.stringify(seenExtra)}`);
+    console.log(`        skipping ${size.label} - measuring the wrong viewport proves nothing`);
+    continue;
+  }
+  console.log(`  note  --window-size=${cw},${ch} yields a ${size.w}x${size.h} viewport`);
+
+  const sizeResults = ALL_CASE_NAMES.map(c => {
+    const r = render(path.join(PAGES, c.name + '.html'), cw, ch);
+    r.name = c.name; r.wantView = c.want;
+    if (r.error) fail(`${size.label} ${c.name}: ${r.error}`);
+    return r;
+  });
+  const sizeOk = sizeResults.filter(r => !r.error);
+  check(`${size.label}: every render came back`, sizeOk.length, sizeResults.length);
+  if (!sizeOk.length) { console.log(`  nothing rendered at ${size.label}`); continue; }
+
+  check(`${size.label}: window.innerWidth/innerHeight matched the slot for every render`,
+    sizeOk.filter(r => !r.viewport || r.viewport.width !== size.w || r.viewport.height !== size.h)
+      .map(r => `${r.name} ${r.viewport ? r.viewport.width + 'x' + r.viewport.height : 'unknown'}`), []);
+  /* "Not collapsed" scales with the slot rather than a device-slot-shaped
+     floor (root.width > 700 would fail a genuinely-fine 696-wide render) -
+     the point is to catch a blank/failed page, not to re-assert the slot
+     size, which the check above already does exactly. */
+  check(`${size.label}: .widget-root was measured at a real size, not a collapsed one`,
+    sizeOk.filter(r => !(r.root && r.root.width > size.w * 0.5 && r.root.height > size.h * 0.5))
+      .map(r => r.name), []);
+  /* The opposite failure mode: every check above could pass on a page that
+     rendered a correctly-sized .widget-root with NOTHING in it. r.tightest is
+     only ever set inside measure()'s loop over root's descendants, so its
+     absence means that loop found zero visible, non-zero-area boxes - an
+     empty page, not a fitting one. */
+  check(`${size.label}: every render measured at least one box (the page was not blank)`,
+    sizeOk.filter(r => !r.tightest).map(r => r.name), []);
+  check(`${size.label}: the tap sequence landed on the view it was aimed at`,
+    sizeOk.filter(r => r.activeDotView !== r.wantView ||
+      !String(r.activeViewClasses).split(/\s+/).includes('view-' + r.wantView) ||
+      !String(r.activeViewClasses).split(/\s+/).includes('is-active'))
+      .map(r => `${r.name}: dot=${r.activeDotView} class=${r.activeViewClasses}`), []);
+  check(`${size.label}: no render reported an unreadable box`,
+    sizeOk.flatMap(r => r.notes.map(n => `${r.name}: ${n}`)), []);
+  check(`${size.label}: no page threw while booting or rendering`,
+    sizeOk.flatMap(r => (r.pageErrors || []).map(e => `${r.name}: ${e}`)), []);
+  check(`${size.label}: nothing is drawn over the content, in any view`,
+    sizeOk.flatMap(r => (r.clockOverlaps || []).map(o => `${r.name}: ${o}`)), []);
+
+  console.log(`  overflow at ${size.label} — nothing reaches outside .widget-root:`);
+  let badAtSize = 0;
+  for (const r of sizeOk) {
+    for (const o of overflowsIn(r)) {
+      badAtSize++;
+      const side = ['left', 'top', 'right', 'bottom']
+        .filter(s => o.sides[s] > OVERFLOW_EPS_PX).join('/');
+      fail(`${size.label} ${r.name}: ${o.path} is ${o.by.toFixed(1)}px past the ${side} of .widget-root` +
+        ` (its box is ${o.width.toFixed(1)}x${o.height.toFixed(1)})`);
+    }
+  }
+  if (!badAtSize) console.log(`  pass  every box in all ${sizeOk.length} renders is inside .widget-root at ${size.label}`);
+  const tightExtra = sizeOk.filter(r => r.tightest).sort((a, b) => b.tightest.by - a.tightest.by)[0];
+  if (tightExtra) {
+    console.log(`  note  tightest fit: ${tightExtra.name} ${tightExtra.tightest.path}` +
+      `, ${(-tightExtra.tightest.by).toFixed(1)}px of headroom`);
+  }
+}
+
 console.log('the task files view:');
 check('every repo gets a row', byName['files'].fileRowNames.length, 5);
 check('with a column per task file plus the mutex',
@@ -1381,6 +1581,17 @@ check('each tab carries its open count',
   byName['projects'].tabCounts, ['120', '83', '3', '2', '2']);
 check('and it is the first until something is pressed',
   byName['projects'].tabActive[0], 'SIDM2');
+/* THE DEFECT ITSELF: the tab strip and the Queue list must present the same
+   repos in the same order. Checked against 'queue-reordered' /
+   'projects-reordered', whose shared fixture feeds the repos in neither
+   order (see reorderedFixture) - a widget that let each view sort
+   independently would show two different sequences here even though both
+   are reading the same underlying list. */
+check('the tab strip presents repos in the SAME order as the Queue list',
+  byName['projects-reordered'].tabNames, byName['queue-reordered'].repoRowNames);
+check('and that order is busiest-first (matching the Queue view), not feed order',
+  byName['projects-reordered'].tabNames,
+  ['SIDM2', 'h2g', 'claude-setup', 'icue', 'tdz-c64-knowledge']);
 /* The count is of OPEN work - 120 queued/blocked plus 2 running - with the 42
    done rows below it as history. Folding those in would make the queue look
    larger than it is. */
@@ -1536,6 +1747,22 @@ check('it grows no page dots', byName['projects'].projectPageDots, 0);
 check('while the lists that do page still have theirs',
   byName['queue'].otherPageDots > 0, true);
 
+/* THE FADE. With no paging and no drags, it is the only thing that says rows
+   sit below the visible ones - so it must actually turn on when they do, and
+   off when they do not, without growing page dots either way (still 0 above,
+   for every one of these cases). */
+console.log('the projects list carries a can-scroll fade instead:');
+check('present when the tab on screen overflows its box',
+  byName['projects'].projectListCanScroll, true);
+check('and it still grows no page dots while doing it',
+  byName['projects'].projectPageDots, 0);
+check('absent when the tab on screen fits without it',
+  byName['projects-fits'].projectListCanScroll, false);
+check('the fits-fixture really is the small one, not an accident',
+  byName['projects-fits'].tabActive, ['claude-setup']);
+check('absent again once the overflowing tab is scrolled to its own bottom',
+  byName['projects-scrolled-bottom'].projectListCanScroll, false);
+
 /* The tap is aimed at the tab's centre in page coordinates, so this exercises
    the elementFromPoint path the device will take - not a synthetic click. */
 console.log('pressing a tab:');
@@ -1636,6 +1863,13 @@ check('and none of them is in the DOM but invisible',
 check('the list itself is not display:none at the device slot',
   byName['queue'].repoListDisplay !== 'none', true);
 check('the busiest repo is listed first', byName['queue'].repoRowNames[0], 'SIDM2');
+/* THE ORDER ITSELF: not merely "busiest first" (already checked above), but
+   the exact case-insensitive-alphabetical tiebreak among equally-busy repos
+   (icue and tdz-c64-knowledge both carry 2 open) - the piece a case-sensitive
+   or accidental-input-order tiebreak would get wrong. */
+check('within an equal-open tie, the tiebreak is case-insensitive alphabetical',
+  byName['queue-reordered'].repoRowNames,
+  ['SIDM2', 'h2g', 'claude-setup', 'icue', 'tdz-c64-knowledge']);
 check('the completion figure is drawn from open and closed',
   byName['queue'].doneValueText, '59%');   /* 307 / (210 + 307) */
 check('and the bar is filled to match, within a pixel of rounding',
@@ -1645,6 +1879,32 @@ check('both raw counts are shown, not only the percentage',
 /* The one count on this view that asks something of whoever is reading it. */
 check('the count the human is blocking is called out on its own',
   byName['queue'].reposText, '5 repos · 5 waiting on you');
+
+/* THE STALENESS FIX. Rows sort by open descending: SIDM2, h2g, claude-setup,
+   icue, tdz-c64-knowledge - so this is the order lastRunAt lands in too.
+   Two DIFFERENT claims, not one: a row with a run says how long ago, in the
+   same order of magnitude the fixture put it in (minutes for the two just
+   touched, weeks for the two left stale); the one row with no runs.jsonl
+   (lastRunAt: null) says so in words rather than showing any age at all -
+   an "0m ago" or "NaN ago" there would be a worse lie than the silence it
+   replaced. */
+check('every non-error row carries an age or an explicit never-run, in feed order',
+  byName['queue'].repoRowAges,
+  ['45m ago', '2w ago', 'never run', '3m ago', '1w ago']);
+check('the never-run repo says so exactly, not a fabricated age',
+  byName['queue'].repoRowAges[2], 'never run');
+check('the two repos just touched read as recent (minutes, not hours or days)',
+  /^\d+m ago$/.test(byName['queue'].repoRowAges[0]) &&
+  /^\d+m ago$/.test(byName['queue'].repoRowAges[3]), true);
+check('the two stale repos read in weeks, not minutes',
+  /^\d+w ago$/.test(byName['queue'].repoRowAges[1]) &&
+  /^\d+w ago$/.test(byName['queue'].repoRowAges[4]), true);
+/* The age lives inside the same figure as the open/closed counts, not a
+   second competing figure - so the counts must still be there too. */
+check('the age sits alongside the open/closed counts, not in place of them',
+  byName['queue'].repoRowFigureTexts[0], '120 open · 42 closed · 3 blocked · 45m ago');
+check('and the never-run row still shows its counts',
+  byName['queue'].repoRowFigureTexts[2], '3 open · 0 closed · never run');
 
 console.log('a nearly-finished queue:');
 /* Finished is the BEST state this meter can be in - it is not a plan
@@ -1763,6 +2023,36 @@ check('and draws no grid at all in that state',
   byName['history-none'].historyGridDisplay, 'none');
 check('while a view with history shows no note',
   byName['history'].historyNoteDisplay, 'none');
+
+console.log('a state and a waitingOn the feed cannot send today, guarded anyway:');
+/* THE VERIFY. `state: 'retrying'` is not one of the five this widget knows;
+   `state: 'waiting', waitingOn: null` is a pairing projectTasks() never
+   produces (waiting is only ever set alongside a non-empty array). Both rows
+   must render with no literal "undefined" in their text and no page error. */
+{
+  const r = byName['projects-guard-states'];
+  check('no row anywhere on the page renders the word "undefined"',
+    r.rowNames.filter(n => /undefined/.test(n)), []);
+  check('and no script error was thrown rendering them',
+    r.pageErrors, []);
+  /* THE OPPOSITE CLAIM: the two checks above could pass because the rows were
+     never drawn at all, or because the guarded task was dropped before it
+     reached the DOM. Prove each is genuinely present, in fixture order (both
+     were unshifted to the front), with its title and data-state intact. */
+  check('the unknown-state row is on screen with its title intact',
+    r.rowNames[0], '? a task in a state this widget has never seen');
+  check('drawn under its own real state, not folded into plain queued',
+    r.rowStates[0], 'retrying');
+  check('the waiting/null row is on screen with its title intact too',
+    r.rowNames[1], '⋯ waiting, but the feed never named what for');
+  check('its data-state is waiting, same as a normal waiting row',
+    r.rowStates[1], 'waiting');
+  /* waitingMeta reads the FIRST .st-waiting row's figure - our guarded row is
+     unshifted to the front, so this is it: waitingOn is null, so the fallback
+     word, not a thrown .join(). */
+  check('and its meta falls back to the bare word rather than throwing on .join',
+    r.waitingMeta, 'waiting');
+}
 
 /* -------------------------------------------------------------------- ellipsis */
 

@@ -16,7 +16,6 @@
   var WIDGET_VERSION = '1.3.8';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/tasks';
   var REQUEST_TIMEOUT_MS = 6000;
-  var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
   var TAP_SLOP_PX = 12;       /* movement beyond this is a scroll, not a tap */
   var TAP_MAX_MS = 700;
   var PAGE_MS = 5000;         /* dwell on each page of an overflowing region */
@@ -57,41 +56,15 @@
     return getIcueProperty('colorTheme') === 'light' ? 'light' : 'dark';
   }
 
+  /* 15s: matches index.html's data-default and the README table, and keeps
+     the staleness mark (3 missed refreshes) at 45s rather than 30s, trading
+     a little freshness for less load on a feed that also serves a physical
+     device. */
   function readRefreshSeconds() {
-    return clampRange(getIcueProperty('refreshSeconds'), 5, 120, 10);
+    return clampRange(getIcueProperty('refreshSeconds'), 5, 120, 15);
   }
 
-  /* 'auto' means the runtime's own locale rather than a hard default, so the
-     corner clock matches the machine the dashboard is plugged into. */
-  /* resolvedOptions().hour12 is the direct answer but is not reported by every
-     engine, so fall back to formatting an afternoon and looking for a meridiem
-     in it. Neither working means 24-hour. */
   /* ---------- formatting ---------- */
-
-  function formatCountdown(target) {
-    if (!target) return '';
-    var ms = target - Date.now();
-    if (ms <= 0) return 'Resetting now';
-    var mins = Math.floor(ms / 60000);
-    var hrs = Math.floor(mins / 60);
-    mins -= hrs * 60;
-    if (hrs > 0) return 'Resets in ' + hrs + ' hr ' + mins + ' min';
-    return 'Resets in ' + mins + ' min';
-  }
-
-  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-  function formatWeekday(target) {
-    if (!target) return '';
-    var d = new Date(target);
-    var h = d.getHours();
-    var suffix = h >= 12 ? 'PM' : 'AM';
-    var hour12 = h % 12;
-    if (hour12 === 0) hour12 = 12;
-    var mins = d.getMinutes();
-    var minPart = mins ? ':' + (mins < 10 ? '0' + mins : mins) : ':00';
-    return 'Resets ' + DAYS[d.getDay()] + ' ' + hour12 + minPart + ' ' + suffix;
-  }
 
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -192,6 +165,23 @@
 
   /* ---------- the queue view ---------- */
 
+  /* The single source of "which repo comes before which", shared by the
+     Queue list and the Projects tab strip below. Busiest first: the device
+     slot shows FOUR rows, so putting the repo with the most open work at the
+     top of the Queue view IS the interface, the same reasoning
+     projectTasks()'s own within-block ordering already applies one level
+     down. Ties (equal open counts, or a fixture with none) fall back to
+     array order, which is discover()'s case-insensitive alphabetical order
+     by the time it reaches here - Array#sort is stable, so that tiebreak
+     survives the sort rather than being shuffled.
+     Built ONCE and read by both renderers, rather than each calling its own
+     `.sort()` on `data.repos`: two independent sorts, however similar, are
+     exactly how the tab strip and the Queue list drifted apart before - one
+     order computed here cannot silently diverge from itself. */
+  function orderedRepos() {
+    return (data.repos || []).slice().sort(function (a, b) { return (b.open || 0) - (a.open || 0); });
+  }
+
   function renderQueue() {
     var t = data.totals || {};
     if (data.unavailable) {
@@ -218,8 +208,27 @@
     els.repos.textContent = (t.repos || 0) + ((t.repos === 1) ? ' repo' : ' repos') +
       (waiting ? ' · ' + waiting + ' waiting on you' : '');
 
-    var rows = (data.repos || []).slice().sort(function (a, b) { return b.open - a.open; });
-    renderRepoRows(els.repoRows, rows);
+    renderRepoRows(els.repoRows, orderedRepos());
+  }
+
+  /* lastRunAt, as the feed actually serves it: epoch milliseconds (a float -
+     Date.now() math on the server side), or null for a repo whose
+     .claude/tasks/runs.jsonl has never been written. null is a real case,
+     not a missing field to paper over with "0m ago" - that would claim a
+     repo was touched moments ago when it has never run at all. */
+  function formatLastRun(lastRunAt) {
+    if (lastRunAt == null) return 'never run';
+    var diff = Date.now() - lastRunAt;
+    if (diff < 0) diff = 0;
+    var secs = Math.round(diff / 1000);
+    if (secs < 60) return secs + 's ago';
+    var mins = Math.floor(secs / 60);
+    if (mins < 60) return mins + 'm ago';
+    var hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    var days = Math.floor(hrs / 24);
+    if (days < 7) return days + 'd ago';
+    return Math.floor(days / 7) + 'w ago';
   }
 
   function renderRepoRows(ul, rows) {
@@ -242,7 +251,11 @@
         figure.textContent = r.error;
       } else {
         figure.textContent = num(r.open) + ' open · ' + num(r.closed) + ' closed' +
-          (r.blocked ? ' · ' + r.blocked + ' blocked' : '');
+          (r.blocked ? ' · ' + r.blocked + ' blocked' : '') + ' · ';
+        var age = document.createElement('span');
+        age.className = 'row-age';
+        age.textContent = formatLastRun(r.lastRunAt);
+        figure.appendChild(age);
       }
       li.appendChild(figure);
       ul.appendChild(li);
@@ -472,9 +485,13 @@
   var projectPending = null;
 
   /* The overview's repo list is the source of truth for which tabs exist, so a
-     project that disappears from the feed cannot stay selected. */
+     project that disappears from the feed cannot stay selected.
+     Ordered by orderedRepos(), the same busiest-first order the Queue view's
+     rows use - not the feed's own order - so the tab strip and the Queue
+     list can never present the same repos in two different sequences. */
   function projectNames() {
-    return (data && data.repos ? data.repos : []).map(function (r) { return r.name; });
+    if (!data || !data.repos) return [];
+    return orderedRepos().map(function (r) { return r.name; });
   }
 
   function currentProject() {
@@ -650,7 +667,13 @@
 
       var top = document.createElement('span');
       top.className = 'row-name';
-      top.textContent = STATE_MARK[task.state] + (task.title || task.id);
+      /* A state this widget has never seen must not draw as a plain queued row
+         (STATE_MARK's own fallback for 'queued' is '') - that would silently
+         claim a task is ready to run when it might be anything. Falling back to
+         '' or to STATE_MARK[task.state] undefined (which prints the literal
+         word "undefined" on the panel) are both worse than being visibly
+         unrecognised, so an unmapped state gets its own mark. */
+      top.textContent = (STATE_MARK[task.state] || '? ') + (task.title || task.id);
       li.appendChild(top);
 
       var meta = document.createElement('span');
@@ -664,8 +687,14 @@
         meta.textContent = task.reason || 'closed';
       } else if (task.state === 'waiting') {
         /* Which task it is waiting on, not merely that it is: the whole value
-           of the state is knowing what has to land first. */
-        meta.textContent = 'waiting on ' + task.waitingOn.join(', ');
+           of the state is knowing what has to land first. The feed today only
+           ever sets state 'waiting' alongside a non-empty waitingOn array, but
+           that pairing is not enforced here - a null waitingOn would throw on
+           .join and blank the whole widget, so it is guarded rather than
+           trusted. */
+        meta.textContent = (task.waitingOn && task.waitingOn.length)
+          ? 'waiting on ' + task.waitingOn.join(', ')
+          : 'waiting';
       } else {
         var parts = [task.mode, task.model + '/' + task.effort];
         /* Decides HOW it can be run, not whether - so it rides with the other
@@ -756,12 +785,6 @@
     if (p.length !== 3) return NaN;
     var n = Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
     return Number.isFinite(n) ? Math.floor(n / 86400000) : NaN;
-  }
-
-  function shortDate(iso) {
-    var p = String(iso).split('-');
-    if (p.length !== 3) return iso;
-    return Number(p[2]) + ' ' + MONTHS[Number(p[1]) - 1];
   }
 
   function svg(name, attrs) {
@@ -959,18 +982,25 @@
      the reader's own pace rather than moved out from under them. It keeps its
      overflow-y so a wheel or trackpad still reaches the rest - and note the
      measurement in README.md: the Edge webview forwards taps but NOT drags, so
-     on the panel itself this list shows what fits and no more. */
+     on the panel itself a reader cannot drag this list open by hand. That is
+     exactly why the fade below still applies to it: with no scrolling and no
+     page dots, the fade is the only thing that says rows exist under the
+     fold, so refreshPaging still marks it - it just never pages it. */
   var NO_PAGING = { projects: true };
 
   function refreshPaging() {
     paged = [];
     var av = document.querySelector('.view.is-active');
     if (!av) return;
-    if (NO_PAGING[view]) {
-      /* Clear any dots and fade a previous view left behind. */
+    var skipPaging = !!NO_PAGING[view];
+    if (skipPaging) {
+      /* Clear any dots a previous view left behind. This view must not grow
+         its own - see NO_PAGING - but that is not licence to skip the fade
+         below: with no scrolling and no dots, the fade is the ONLY thing
+         that says rows exist under the fold, so it still gets computed for
+         whichever element here actually overflows. */
       var stale = av.querySelectorAll('.pages');
       for (var p = 0; p < stale.length; p++) stale[p].parentNode.removeChild(stale[p]);
-      return;
     }
     var all = av.querySelectorAll('*');
     for (var i = 0; i < all.length; i++) {
@@ -978,6 +1008,30 @@
       if (el.clientHeight === 0) continue;
       var oy = window.getComputedStyle(el).overflowY;
       if (oy !== 'auto' && oy !== 'scroll') continue;
+      if (skipPaging) {
+        /* No scrollTop reset and no page key/dots: this list scrolls only by
+           wheel or trackpad, never by the pager, so its position is the
+           reader's to keep. Only the fade is this function's business here,
+           and markFade reads scrollTop as it stands rather than one this
+           function chose.
+           A scroll listener too, bound once per element: refreshPaging only
+           runs again on the next poll (up to readRefreshSeconds() later) or a
+           view change, and updating the fade only that rarely would leave it
+           lit for a reader who has already scrolled to the bottom by hand. */
+        markFade(el);
+        if (!el.__fadeBound) {
+          el.__fadeBound = true;
+          /* Wrapped in an IIFE rather than closing over the loop's own `el`
+             directly: `el` is a `var`, so every listener bound across every
+             iteration of this loop would otherwise share ONE variable and
+             fire against whichever element the loop visited LAST, not the
+             one each was bound to. */
+          (function (target) {
+            target.addEventListener('scroll', function () { markFade(target); }, { passive: true });
+          })(el);
+        }
+        continue;
+      }
       /* DOM order is stable, so a positional key survives a re-render and
          keeps a list on the page it was showing. */
       if (!el.id && !el.getAttribute('data-page-key')) {
@@ -1108,7 +1162,7 @@
   /* The elapsed times in the live view are relative, so tick them between
      polls - otherwise a held lock reads as the same age for a whole refresh
      interval. Only the live view has them, so nothing else is touched. */
-  function startClock() {
+  function startLiveTicker() {
     setInterval(function () {
       if (data && view === 'live') renderLive();
     }, 5000);
@@ -1224,7 +1278,7 @@
   })();
 
   showState('loading-state');
-  startClock();
+  startLiveTicker();
   startPaging();
   fetchFeed();
   bootCheck();

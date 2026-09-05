@@ -12,7 +12,6 @@
   /* Spacing and shape */
   --space-gap: calc(var(--layout-unit) * 2.6);
   --space-pad: calc(var(--layout-unit) * 5);
-  --radius: calc(var(--layout-unit) * 2);
   --bar-h: calc(var(--layout-unit) * 2.4);
 
   /* Type. Every step is +0.5 layout units over the original scale, which is
@@ -112,8 +111,9 @@ body {
    it - about 50px at the device slot, or two rows of a 27px list. Removing it
    gives that back to the data, which is what the panel is for. */
 
-/* The state wrapper must itself be the full-height column, otherwise .body has
-   no height to distribute and every flex-basis:0 child collapses to nothing. */
+/* The state wrapper must itself be the full-height column, otherwise the
+   active .view has no height to distribute and every flex-basis:0 child
+   collapses to nothing. */
 .content {
   flex: 1 1 auto;
   min-height: 0;
@@ -154,33 +154,6 @@ body {
 }
 
 .head .updated.is-stale { color: var(--warn); }
-
-.head .live {
-  font-size: var(--font-badge);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--ok);
-  border: 1px solid var(--ok);
-  border-radius: calc(var(--layout-unit) * 1);
-  padding: calc(var(--layout-unit) * 0.6) calc(var(--layout-unit) * 1.4);
-}
-
-.head .live.is-stale {
-  color: var(--warn);
-  border-color: var(--warn);
-}
-
-.head .live.is-local {
-  color: var(--muted);
-  border-color: var(--line);
-}
-
-/* Anthropic answered, but only for one of the two windows. Amber rather than
-   green because part of what is on screen is a different metric. */
-.head .live.is-partial {
-  color: var(--warn);
-  border-color: var(--warn);
-}
 
 .head .version {
   font-size: var(--font-badge);
@@ -319,16 +292,6 @@ body {
   .lists-detail .meta { display: none; }
 }
 
-/* -------------------------------------------------------------------- body */
-
-.body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: row;
-  gap: calc(var(--layout-unit) * 6);
-}
-
 .meters {
   flex: 1 1 auto;
   min-width: 0;
@@ -394,53 +357,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* ------------------------------------------------- why a reading is not live */
-
-/* The badge says LIVE / LIVE· / LIVE¹ / LOCAL, so the STATE was always on
-   screen; the REASON was in a title attribute, which on a device with no
-   cursor is the same as not saying it. This strip says it in the page.
-
-   Sized in whole lines, never in leftover space: at 840x344 the usage view has
-   22.3px of slack between the two meters (MEASURED - .body is 260.3px and the
-   meters need 237.9px with both bars showing), so one line is what there is,
-   and a second would push the meters out of the widget. Larger slots get
-   three. Anything longer than that is paged one line at a time by the same
-   mechanism that pages the activity lists - the device forwards no drags, so
-   scrolling is not an option and truncation would lose the actual cause. */
-.why-wrap {
-  flex: 0 0 auto;
-  display: none;
-  position: relative;
-  margin-top: calc(var(--layout-unit) * 0.6);
-}
-
-.view-queue.has-why .why-wrap { display: block; }
-
-.why {
-  height: calc(var(--font-badge) * 1.25 * var(--why-lines, 3));
-  line-height: 1.25;
-  font-size: var(--font-badge);
-  color: var(--warn);
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* "There is more of this below", the same promise .list.can-scroll makes -
-   but a bottom fade over a one-line box would wash out the line it is meant to
-   be helping, so it is a marker at the end of the line instead. */
-.why-wrap.can-scroll::after {
-  content: '…';
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  padding-left: calc(var(--layout-unit) * 1.2);
-  background: var(--bg);
-  color: var(--warn);
-  font-size: var(--font-badge);
-  line-height: 1.25;
-  pointer-events: none;
 }
 
 .track {
@@ -661,7 +577,6 @@ body {
 /* Portrait: meters on top, the two lists stacked underneath. The meters keep
    their natural height so the surplus goes to the lists, not to dead space. */
 @media (max-aspect-ratio: 0.95) {
-  .body { flex-direction: column; gap: calc(var(--layout-unit) * 3); }
   .meters { flex: 0 0 auto; }
   .lists { flex-direction: column; flex: 1 1 auto; }
 }
@@ -677,18 +592,14 @@ body {
 @media (max-height: 460px) {
   .meters { justify-content: space-evenly; }
   :root { --font-value: calc(var(--layout-unit) * 6.5); }
-  /* One line is the whole budget here - see the measurement on .why-wrap. */
-  :root { --why-lines: 1; }
 }
 
 /* M-H 840x696 — too narrow for meters and lists side by side, tall enough for
    one list stacked underneath. Landscape-only: 696x840 is portrait and has the
    height for both lists, so it must not match here. */
 @media (max-width: 900px) and (min-height: 600px) and (min-aspect-ratio: 0.95) {
-  .body { flex-direction: column; }
   .meters { flex: 0 0 auto; }
   .lists { flex-direction: column; }
-  #list-subtasks { display: none; }
 }
 
 /* Very short slots: drop the reset captions and the weekly bucket row. */
@@ -815,8 +726,6 @@ body {
   padding: 0 calc(var(--layout-unit) * 6);
   text-align: center;
 }
-.view-history.is-unavailable .history { display: none; }
-.view-history.is-unavailable .history-note { display: block; }
 
 /* ---------- tokens by model ---------- */
 
@@ -892,10 +801,11 @@ body {
 /* ------------------------------------------------------------ task queue */
 
 /* Rules inherited from the Claude Code Usage stylesheet that this widget's
-   markup has no elements for - .cols and its tables, .why, .models and its
+   markup has no elements for - .cols and its tables, .models and its
    chart - are left in place rather than deleted. They match nothing here, so
    they cost only bytes; removing them by line range is how a rule that IS
-   live gets taken out by accident. */
+   live gets taken out by accident. (.why and .why-wrap, formerly in the same
+   boat, were removed by symbol once confirmed dead - see history.) */
 
 /* A repo row, and a running row: a name that may ellipsis, and a figure that
    must not. Distinct from .list li, which carries the usage widget's status

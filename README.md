@@ -1,8 +1,9 @@
 # iCUE widgets for the CORSAIR Xeneon Edge
 
 Three HTML widgets for the Xeneon Edge dashboard display, plus the local feed
-two of them need. All target `dashboard_lcd` and adapt across every Edge slot
-size in both orientations.
+two of them need. All target `dashboard_lcd` and lay out from one CSS
+baseline meant to flex with the slot — how much of that is actually verified,
+per widget and slot size, is stated in that widget's own section below.
 
 ## Deploying
 
@@ -285,6 +286,11 @@ debugging.
 | `feedUrl` | text | `http://127.0.0.1:41777/tasks` |
 | `colorTheme` | tabs | `dark` / `light` |
 | `refreshSeconds` | slider 5–120 | 15 |
+
+**Layout is verified at four slots**, not only the device one:
+840×344 (S-H, the physical slot), 696×416 (S-V), 840×696 (M-H) and 696×840
+(portrait) — `test/layout.test.js` renders all five views at each and asserts
+nothing overflows `.widget-root`. Other Edge slot sizes are untested.
 
 **This widget has no clock**, unlike the other two. It sat in the bottom-right
 corner drawn over the views, so every region ending in rows that carry a figure

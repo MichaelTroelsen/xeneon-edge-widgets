@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  var WIDGET_VERSION = '1.0.0';
+  var WIDGET_VERSION = '1.1.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/tasks';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -27,10 +27,11 @@
   var timer = null;
   var data = null;
   var lastError = '';
-  var VIEWS = ['queue', 'live', 'history'];
+  var VIEWS = ['queue', 'live', 'history', 'files'];
   var view = 'queue';   /* tapping the widget cycles through VIEWS */
 
-  var TITLES = { queue: 'Task queue', live: 'Running now', history: 'Runs' };
+  var TITLES = { queue: 'Task queue', live: 'Running now', history: 'Runs',
+                 files: 'Task files' };
   function getIcueProperty(name) {
     if (typeof window !== 'undefined' && Object.prototype.hasOwnProperty.call(window, name)) {
       var value = window[name];
@@ -373,6 +374,86 @@
     }
   }
 
+  /* ---------- the task files view ---------- */
+
+  var FILE_COLUMNS = [
+    { key: 'whattask.json',   head: 'queue' },
+    { key: 'runs.jsonl',      head: 'runs' },
+    { key: 'serial.lock',     head: 'lock' },
+    { key: 'decisions.jsonl', head: 'decis' },
+    { key: 'interview.json',  head: 'interv' }
+  ];
+
+  function kb(bytes) {
+    if (bytes == null) return '–';          /* absent, not zero */
+    if (bytes < 1024) return bytes + 'b';
+    var k = bytes / 1024;
+    return (k >= 1000 ? Math.round(k / 1024) + 'm' : Math.round(k) + 'k');
+  }
+
+  function renderFiles() {
+    var repos = data.repos || [];
+    var alarms = data.alarms || [];
+
+    /* The alarms are the reason this view exists, so they go ABOVE the table
+       and are never a column in it - a red cell in a grid of sizes is exactly
+       the thing an eye skates past. */
+    els.alarms.textContent = '';
+    for (var a = 0; a < alarms.length; a++) {
+      var al = alarms[a];
+      var row = document.createElement('div');
+      row.className = 'alarm alarm-' + al.kind;
+      row.appendChild(cell('span', '⚠', 'sign'));
+      row.appendChild(cell('span', al.repo + ' · ' + al.task, 'who'));
+      row.appendChild(cell('span', al.message, 'what'));
+      els.alarms.appendChild(row);
+    }
+    els.alarms.style.display = alarms.length ? '' : 'none';
+
+    /* The header says the machine is clean when it is, rather than leaving the
+       absence of an alarm to be inferred from an empty strip. */
+    var stuck = 0;
+    for (var m = 0; m < repos.length; m++) if (repos[m].mutex && repos[m].mutex.held) stuck++;
+    els.repos.textContent = repos.length + (repos.length === 1 ? ' repo' : ' repos') +
+      ' · ' + (alarms.length
+        ? alarms.length + (alarms.length === 1 ? ' alarm' : ' alarms')
+        : (stuck ? stuck + ' mutex held' : 'all clear'));
+
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var hr = document.createElement('tr');
+    hr.appendChild(cell('th', '', 'name'));
+    for (var c = 0; c < FILE_COLUMNS.length; c++) {
+      hr.appendChild(cell('th', FILE_COLUMNS[c].head, 'n'));
+    }
+    hr.appendChild(cell('th', 'mutex', 'n'));
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    for (var i = 0; i < repos.length; i++) {
+      var r = repos[i];
+      var tr = document.createElement('tr');
+      tr.appendChild(cell('td', r.name, 'name'));
+      for (var j = 0; j < FILE_COLUMNS.length; j++) {
+        var f = (r.files || {})[FILE_COLUMNS[j].key] || {};
+        var td = cell('td', kb(f.present ? f.bytes : null), 'n');
+        if (!f.present) td.classList.add('absent');
+        tr.appendChild(td);
+      }
+      var mx = r.mutex || {};
+      var mtd = cell('td', mx.held ? '●' : '○', 'n mx');
+      if (mx.stale) mtd.classList.add('mx-stale');
+      else if (mx.held) mtd.classList.add('mx-held');
+      tr.appendChild(mtd);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+
+    els.filetable.textContent = '';
+    els.filetable.appendChild(table);
+  }
+
   /* ---------- the dispatcher ---------- */
 
   function render() {
@@ -383,7 +464,8 @@
 
     if (view === 'queue') renderQueue();
     else if (view === 'live') renderLive();
-    else renderHistory();
+    else if (view === 'history') renderHistory();
+    else renderFiles();
 
     refreshPaging();
   }
@@ -393,6 +475,7 @@
     els.viewQueue.classList.toggle('is-active', view === 'queue');
     els.viewLive.classList.toggle('is-active', view === 'live');
     els.viewHistory.classList.toggle('is-active', view === 'history');
+    els.viewFiles.classList.toggle('is-active', view === 'files');
     Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
       d.classList.toggle('is-active', d.getAttribute('data-view') === view);
     });
@@ -792,6 +875,10 @@
     els.figs = document.getElementById('figs');
     els.outcomes = document.getElementById('outcomes');
     els.historyNote = document.getElementById('history-note');
+
+    els.viewFiles = document.querySelector('.view-files');
+    els.alarms = document.getElementById('alarms');
+    els.filetable = document.getElementById('filetable');
 
     if (els.version) els.version.textContent = 'v' + WIDGET_VERSION;
   }

@@ -103,7 +103,7 @@ const VIEWS = extractArray(widgetSrc, 'VIEWS');
 const START_VIEW = extractString(widgetSrc, 'view');
 
 console.log('metrics:');
-check('VIEWS was read out of widget.js', VIEWS, ['queue', 'live', 'history']);
+check('VIEWS was read out of widget.js', VIEWS, ['queue', 'live', 'history', 'files']);
 check('the widget starts on the "queue" view', START_VIEW, 'queue');
 if (failures) {
   console.log('\nthe source constants could not be read; every tap count below would be aimed at the wrong view');
@@ -299,6 +299,51 @@ function historyFixture() {
 /* History that could not be dated: git unreachable in one repo. The view must
    print the reason, because an empty grid reads as months of silence. */
 const HISTORY_ERROR = 'git could not be read in C:/Users/x/SIDM2: spawnSync git ENOENT';
+
+/* Files present, sizes as they really are, nothing wrong: the all-clear state
+   the view spends most of its life in. */
+function filesFixture() {
+  const f = baseFixture();
+  const sizes = {
+    SIDM2: [208896, 1896448, 1024, 12288, 32768],
+    h2g: [159744, 835584, null, null, null],
+    'claude-setup': [8192, null, null, null, null],
+    icue: [32768, 307200, 1024, 7168, 11264],
+    'tdz-c64-knowledge': [45056, 380928, 1024, 9216, 20480]
+  };
+  const names = ['whattask.json', 'runs.jsonl', 'serial.lock', 'decisions.jsonl', 'interview.json'];
+  for (const r of f.repos) {
+    r.files = {};
+    names.forEach((n, i) => {
+      const b = sizes[r.name][i];
+      r.files[n] = b == null
+        ? { present: false, bytes: null, mtime: null }
+        : { present: true, bytes: b, mtime: 1757000000000 };
+    });
+    r.mutex = { held: false, stale: false, since: null, owner: null, reason: null };
+  }
+  f.alarms = [];
+  return f;
+}
+
+/* The state this view exists for, taken from the real one found on this
+   machine: SIDM2 holding a record whose pid is dead, plus a stuck mutex. */
+function alarmFixture() {
+  const f = filesFixture();
+  f.repos[0].mutex = {
+    held: true, stale: true, since: Date.now() - 22 * 60 * 1000,
+    owner: { pid: 26852, host: 'TDZDesktop', cmd: '/runqueue' },
+    reason: 'pid 26852 is not running and the lock is 22 min old (over 15 min)'
+  };
+  f.alarms = [
+    { kind: 'orphan', repo: 'SIDM2', task: 'sdi-control-rerun-at-j8', pid: 26852,
+      pathCount: 8,
+      message: 'pid 26852 is not running, so 8 paths stay refused until it is reaped' },
+    { kind: 'stale-mutex', repo: 'SIDM2', task: '/runqueue', pid: 26852, pathCount: 0,
+      message: 'pid 26852 is not running and the lock is 22 min old (over 15 min)' }
+  ];
+  return f;
+}
 
 function noHistoryFixture() {
   const f = baseFixture();
@@ -533,6 +578,43 @@ window.__FIXTURE__ = __PAYLOAD__;
     out.outcomeCounts = Array.prototype.map.call(
       document.querySelectorAll('#outcomes .oc .n'), function (e) { return e.textContent; });
 
+    /* --- task files view --- */
+    out.alarmCount = document.querySelectorAll('#alarms .alarm').length;
+    out.alarmKinds = Array.prototype.map.call(
+      document.querySelectorAll('#alarms .alarm'), function (e) {
+        return (e.getAttribute('class') || '').replace('alarm ', ''); });
+    out.alarmTexts = Array.prototype.map.call(
+      document.querySelectorAll('#alarms .alarm'), function (e) { return e.textContent; });
+    var alarmsEl = document.getElementById('alarms');
+    out.alarmsDisplay = alarmsEl ? window.getComputedStyle(alarmsEl).display : null;
+    out.fileRowNames = Array.prototype.map.call(
+      document.querySelectorAll('#filetable tbody td.name'), function (e) { return e.textContent; });
+    out.fileHeads = Array.prototype.map.call(
+      document.querySelectorAll('#filetable thead th'), function (e) { return e.textContent; });
+    out.fileAbsentCells = document.querySelectorAll('#filetable td.absent').length;
+    out.mutexCells = Array.prototype.map.call(
+      document.querySelectorAll('#filetable td.mx'), function (e) {
+        return e.textContent + ':' + (e.classList.contains('mx-stale') ? 'stale'
+          : e.classList.contains('mx-held') ? 'held' : 'free'); });
+
+    /* An undefined CSS custom property makes the whole declaration invalid and
+       the element silently keeps its inherited value - no error, no visual cue,
+       and nothing a geometry measurement can see. var(--accent) shipped that
+       way and went unnoticed. Resolve the ones that carry meaning. */
+    function resolved(sel, prop) {
+      var e = document.querySelector(sel);
+      if (!e) return null;
+      var v = window.getComputedStyle(e).getPropertyValue(prop);
+      return v ? v.trim() : null;
+    }
+    out.colours = {
+      holderName: resolved('.lists-live li[data-kind="holder"] .row-name', 'color'),
+      sessionName: resolved('.lists-live #activity li .row-name', 'color'),
+      alarmSign: resolved('#alarms .alarm .sign', 'color'),
+      staleMutex: resolved('#filetable td.mx-stale', 'color'),
+      bodyText: resolved('.widget-root', 'color')
+    };
+
     var errorHintEl = document.getElementById('error-hint');
     var errorStateEl = document.querySelector('.error-state');
     out.errorHintText = errorHintEl ? errorHintEl.textContent : null;
@@ -699,7 +781,9 @@ const CASES = [
   { name: 'live', taps: 1, want: 'live', fixture: runningFixture() },
   { name: 'live-idle', taps: 1, want: 'live', fixture: idleFixture() },
   { name: 'history', taps: 2, want: 'history', fixture: historyFixture() },
-  { name: 'history-none', taps: 2, want: 'history', fixture: noHistoryFixture() }
+  { name: 'history-none', taps: 2, want: 'history', fixture: noHistoryFixture() },
+  { name: 'files', taps: 3, want: 'files', fixture: filesFixture() },
+  { name: 'files-alarms', taps: 3, want: 'files', fixture: alarmFixture() }
 ];
 
 const results = [];
@@ -778,6 +862,53 @@ console.log('overflow — nothing reaches outside .widget-root:');
     console.log(`  note  tightest fit: ${tight.name} ${tight.tightest.path}` +
       `, ${(-tight.tightest.by).toFixed(1)}px of headroom`);
   }
+}
+
+console.log('the task files view:');
+check('every repo gets a row', byName['files'].fileRowNames.length, 5);
+check('with a column per task file plus the mutex',
+  byName['files'].fileHeads, ['', 'queue', 'runs', 'lock', 'decis', 'interv', 'mutex']);
+/* Absence is real state: h2g has no serial.lock, claude-setup no runs.jsonl.
+   A dash, not a zero, which would read as a file that exists and is empty. */
+/* h2g is missing three (lock, decisions, interview) and claude-setup four
+   (runs and the same three). */
+check('a file that is not there is marked absent rather than shown as zero',
+  byName['files'].fileAbsentCells, 7);
+check('a clean machine shows no alarm strip at all',
+  byName['files'].alarmsDisplay, 'none');
+check('and says so in the header rather than leaving it to be inferred',
+  byName['files'].reposText, '5 repos · all clear');
+check('every mutex reads free when nothing is held',
+  byName['files'].mutexCells.every(c => c === '○:free'), true);
+
+console.log('when something is wrong:');
+check('both faults are raised, above the table',
+  byName['files-alarms'].alarmCount, 2);
+/* An orphan and a stuck mutex are different faults - one refuses a named set
+   of paths, the other blocks everything - so they must not look alike. */
+check('and are distinguishable from each other',
+  byName['files-alarms'].alarmKinds, ['alarm-orphan', 'alarm-stale-mutex']);
+check('the orphan names the dead pid and what it is holding up',
+  /pid 26852 is not running, so 8 paths stay refused/.test(byName['files-alarms'].alarmTexts[0]), true);
+check('the header counts them instead of saying all clear',
+  byName['files-alarms'].reposText, '5 repos · 2 alarms');
+check('and the stale mutex is marked in its own cell too',
+  byName['files-alarms'].mutexCells[0], '●:stale');
+
+/* An undefined custom property is silently invalid - the declaration is
+   dropped and the element keeps its inherited colour. var(--accent) shipped
+   like that and nothing caught it, because geometry cannot see a colour. */
+console.log('colours that carry meaning actually resolve:');
+{
+  /* Read from the render where each element actually exists: the holder rows
+     are only built on the live view, the alarm strip only on the files one. */
+  const live = byName['live'].colours;
+  const files = byName['files-alarms'].colours;
+  check('a lock holder row resolves a colour at all', !!live.holderName, true);
+  check('and is coloured differently from a session row',
+    live.holderName !== live.sessionName, true);
+  check('an alarm sign is not just body text', files.alarmSign !== files.bodyText, true);
+  check('a stale mutex cell is not just body text', files.staleMutex !== files.bodyText, true);
 }
 
 /* -------------------------------------------------------------------- ellipsis */

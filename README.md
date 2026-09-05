@@ -287,8 +287,8 @@ debugging.
 | `timeFormat` | combobox | `auto` / `12` / `24` |
 | `refreshSeconds` | slider 5–120 | 15 |
 
-**Tap the widget** to cycle three views: the queue, what is running, and the run
-history.
+**Tap the widget** to cycle four views: the queue, what is running, the run
+history, and the state of the task files.
 
 ### Which repos it finds
 
@@ -360,6 +360,43 @@ text, not an enumeration: 16 distinct values, 12 of them one-off sentences, one
 reading `opus (recorded) / ran on Fable 5, which sits above Opus — substitution
 stated before work began, not a downgrade`. Each is reduced to the family it
 names, which collapses to sonnet 314, opus 283, fable 8.
+
+### Task files
+
+The state of the files `/whattask` and the run commands keep in
+`.claude/tasks/` — `whattask.json`, `runs.jsonl`, `serial.lock`,
+`decisions.jsonl` and `interview.json` — per repo, with sizes. **Absence is
+real state**, drawn as a dash rather than a zero: `h2g` has no `serial.lock`
+and `claude-setup` no `runs.jsonl`, and a zero would read as a file that exists
+and is empty.
+
+The point of the view is the alarm strip above the table, which carries two
+faults the machine does not otherwise surface. Both tests come from the
+mit-setup `LOCKING.md` rather than being invented here:
+
+**An orphaned holder record.** A registry record in `serial.lock` outlives the
+mutex by design — minutes or hours, while its task runs — so the common crash
+is a session dying while holding one and no mutex at all. Nothing on the mutex
+path ever notices, and every path that record names is refused for every later
+run until someone reaps it. A record is an orphan when its `host` is this
+machine **and** its `pid` is not running. **Age is deliberately not part of the
+test**: a long task legitimately holds a record for hours, and the pid is the
+only evidence that matters. A record from another host is reported as
+*unknowable*, never as healthy — it cannot be checked from here.
+
+This was not hypothetical. The first time the view ran against real data it
+found `SIDM2` holding `sdi-control-rerun-at-j8` under a pid that was not
+running, with eight paths refused behind it.
+
+**A stale mutex.** `serial.lock.d/` is the actual lock — a directory, because
+`mkdir` fails atomically if it exists. It is held for *milliseconds* around a
+single registry update, so a feed polling every ten seconds will essentially
+never catch it legitimately held; in practice this reports a stuck one. It is
+stale only on proof: the `pid` is not running on this host **and** the recorded
+`at` is more than **15 minutes** old. Neither alone is enough, and a live pid is
+never called stale at any age — that is a hung run, which the view says instead.
+A directory with no `owner` file in it is *held by someone still starting up*,
+not stale, and is reported as exactly that.
 
 ### What the feed sends
 

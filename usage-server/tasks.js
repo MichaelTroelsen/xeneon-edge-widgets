@@ -93,6 +93,125 @@ function readHolders(repoPath) {
   }
 }
 
+/* The files /whattask, /runtask and the run commands keep in .claude/tasks/.
+   serial.lock.d is deliberately not here: it is a DIRECTORY and the mutex, not
+   a file, and it is reported separately. */
+const TASK_FILES = [
+  'whattask.json',    /* the queue itself - tasks (open) and closed */
+  'runs.jsonl',       /* one appended line per run attempt */
+  'serial.lock',      /* the registry of holder records */
+  'decisions.jsonl',  /* answered questions, from /runhuman */
+  'interview.json'    /* the open questions it works from */
+];
+
+const THIS_HOST = process.env.CLAUDE_TASKS_HOST || os.hostname();
+
+/* A mutex is held for MILLISECONDS around one registry update, so minutes
+   already mean something went wrong. LOCKING.md's own number, not a guess. */
+const MUTEX_STALE_MS = 15 * 60 * 1000;
+
+/* signal 0 does no killing - it only asks whether the pid can be signalled.
+   ESRCH means no such process; EPERM means it exists and belongs to someone
+   else, which is still alive. Cheaper than spawning a shell per pid, and this
+   runs on every rebuild. */
+function pidAlive(pid) {
+  if (typeof pid !== 'number' || !Number.isFinite(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err.code === 'EPERM') return true;
+    return false;
+  }
+}
+
+/* Whether a record's pid can be judged AT ALL. A pid on another host cannot be
+   checked from here, so the answer is null - unknowable - and never false.
+   LOCKING.md is explicit that such a record is always treated as live. */
+function isOrphan(record) {
+  if (!record || record.host !== THIS_HOST) return null;
+  const alive = pidAlive(record.pid);
+  if (alive === null) return null;
+  return !alive;
+}
+
+function readFiles(repoPath) {
+  const dir = path.join(repoPath, '.claude', 'tasks');
+  const out = {};
+  for (const name of TASK_FILES) {
+    try {
+      const st = fs.statSync(path.join(dir, name));
+      out[name] = { present: true, bytes: st.size, mtime: st.mtimeMs };
+    } catch (err) {
+      /* Absence is real state - h2g has no serial.lock, claude-setup no
+         runs.jsonl - so it is reported as absent rather than as zero bytes,
+         which would read as an empty file that exists. */
+      out[name] = { present: false, bytes: null, mtime: null };
+    }
+  }
+  return out;
+}
+
+/* serial.lock.d/ is the actual mutex: a directory, created with mkdir because
+   the check-and-create is atomic in the filesystem. Because it is held for
+   milliseconds, a feed polling every ten seconds will essentially never catch
+   it legitimately held - so in practice this reports a STUCK one. */
+function readMutex(repoPath) {
+  const dir = path.join(repoPath, '.claude', 'tasks', 'serial.lock.d');
+  let st;
+  try {
+    st = fs.statSync(dir);
+    if (!st.isDirectory()) return { held: false, stale: false, since: null, owner: null, reason: null };
+  } catch (err) {
+    return { held: false, stale: false, since: null, owner: null, reason: null };
+  }
+
+  let owner = null;
+  try {
+    owner = JSON.parse(fs.readFileSync(path.join(dir, 'owner'), 'utf8'));
+  } catch (err) {
+    owner = null;
+  }
+
+  /* "A reader can see the directory for a moment with no owner file in it -
+     that is HELD by someone still starting up, not stale. Never treat a
+     missing owner as an invitation to take the lock." Report it, do not
+     conclude from it. */
+  if (!owner || typeof owner !== 'object') {
+    const age = Date.now() - st.mtimeMs;
+    return {
+      held: true, stale: false, since: st.mtimeMs, owner: null,
+      reason: age > MUTEX_STALE_MS
+        ? 'held with no readable owner file for ' + Math.round(age / 60000) +
+          ' min - past the staleness window, but a missing owner is not proof of death; check it by hand'
+        : 'held with no owner file yet - someone is still starting up'
+    };
+  }
+
+  const at = Date.parse(owner.at);
+  const age = Number.isNaN(at) ? null : Date.now() - at;
+  const alive = owner.host === THIS_HOST ? pidAlive(owner.pid) : null;
+
+  /* BOTH conditions, and neither alone is enough: the pid is dead on this
+     machine, AND the recorded time is past the window. A live pid is never
+     stale at any age - that is a hung run and a question for the human. */
+  const stale = alive === false && age !== null && age > MUTEX_STALE_MS;
+
+  let reason = null;
+  if (stale) {
+    reason = 'pid ' + owner.pid + ' is not running and the lock is ' +
+      Math.round(age / 60000) + ' min old (over 15 min)';
+  } else if (alive === true && age !== null && age > MUTEX_STALE_MS) {
+    reason = 'pid ' + owner.pid + ' is alive and has held this for ' +
+      Math.round(age / 60000) + ' min - a hung run, not a stale lock';
+  } else if (alive === null) {
+    reason = 'held by ' + owner.host + ', which cannot be checked from here';
+  }
+
+  return { held: true, stale: stale, since: Number.isNaN(at) ? st.mtimeMs : at,
+           owner: owner, reason: reason };
+}
+
 function readRepo(repo) {
   const base = {
     name: repo.name,
@@ -103,6 +222,8 @@ function readRepo(repo) {
     byLane: {},
     blocked: 0,
     holders: readHolders(repo.path),
+    files: readFiles(repo.path),
+    mutex: readMutex(repo.path),
     lastRunAt: null,
     error: null
   };
@@ -325,6 +446,7 @@ function build(live, opts) {
     open: 0, closed: 0, repos: repos.length, blocked: 0, byMode: {}
   };
   const running = [];
+  const alarms = [];
   let history = [];
 
   for (const repo of repos) {
@@ -348,13 +470,45 @@ function build(live, opts) {
       const detail = touches.length
         ? touches.length + (touches.length === 1 ? ' path' : ' paths') + ' · ' + touches.join(', ')
         : '';
+      const label = holder.task || holder.cmd || holder.run || 'a held task';
+      const orphan = isOrphan(holder);
       running.push({
         kind: 'holder',
-        label: holder.task || holder.cmd || holder.run || 'a held task',
+        label: label,
         repo: repo.name,
         since: toMs(holder.at),
         head: typeof holder.head === 'string' ? holder.head : null,
+        pid: typeof holder.pid === 'number' ? holder.pid : null,
+        host: typeof holder.host === 'string' ? holder.host : null,
+        orphan: orphan,
+        pathCount: touches.length,
         detail: detail
+      });
+      /* The failure nothing else on this machine surfaces. A registry record
+         outlives the mutex by design, so a session that dies holding one
+         leaves no trace on the mutex path - and every path it names is
+         refused for every later run until someone reaps it. */
+      if (orphan === true) {
+        alarms.push({
+          kind: 'orphan',
+          repo: repo.name,
+          task: label,
+          pid: holder.pid,
+          pathCount: touches.length,
+          message: 'pid ' + holder.pid + ' is not running, so ' + touches.length +
+            (touches.length === 1 ? ' path stays' : ' paths stay') + ' refused until it is reaped'
+        });
+      }
+    }
+
+    if (repo.mutex.stale) {
+      alarms.push({
+        kind: 'stale-mutex',
+        repo: repo.name,
+        task: (repo.mutex.owner && repo.mutex.owner.cmd) || 'unknown',
+        pid: repo.mutex.owner ? repo.mutex.owner.pid : null,
+        pathCount: 0,
+        message: repo.mutex.reason
       });
     }
 
@@ -386,6 +540,7 @@ function build(live, opts) {
     repos: repos,
     totals: totals,
     running: running,
+    alarms: alarms,
     history: aggregateHistory(history),
     unavailable: repos.length ? null
       : 'no repo on this machine has a .claude/tasks/whattask.json - run /whattask in one to create a queue'
@@ -400,5 +555,6 @@ function build(live, opts) {
 module.exports = {
   REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
   runsFile, readRuns, commitTimes, datedHistory, readHolders, build,
+  readFiles, readMutex, pidAlive, isOrphan, TASK_FILES, MUTEX_STALE_MS, THIS_HOST,
   aggregateHistory, modelFamily, dayKey
 };

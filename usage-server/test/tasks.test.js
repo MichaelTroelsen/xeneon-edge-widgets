@@ -467,5 +467,154 @@ console.log('the assembled payload:');
     tasks.build().historyRecords, undefined);
 }
 
+console.log('the task files:');
+
+const os2 = require('os');
+const THIS_HOST = os2.hostname();
+const DEAD_PID = 999999;      /* far above the Windows and Linux pid ranges in use */
+const LIVE_PID = process.pid; /* this test process is unambiguously alive */
+
+{
+  const full = makeRepo('all-files', { tasks: [], closed: [] });
+  const dir = path.join(full, '.claude', 'tasks');
+  fs.writeFileSync(path.join(dir, 'runs.jsonl'), '{"id":"a"}\n');
+  fs.writeFileSync(path.join(dir, 'serial.lock'), '[]');
+  fs.writeFileSync(path.join(dir, 'decisions.jsonl'), '{"d":1}\n');
+  fs.writeFileSync(path.join(dir, 'interview.json'), '{}');
+  const tasks = load(writeRegistry([full]));
+  const f = tasks.readRepo(tasks.discover()[0]).files;
+  check('every task file is reported',
+    Object.keys(f).sort(),
+    ['decisions.jsonl', 'interview.json', 'runs.jsonl', 'serial.lock', 'whattask.json']);
+  check('a present file says so and carries its size',
+    [f['runs.jsonl'].present, f['runs.jsonl'].bytes > 0], [true, true]);
+  check('and when it was last written', typeof f['runs.jsonl'].mtime, 'number');
+}
+
+{
+  /* Absence is real state, not an error: h2g has no serial.lock and
+     claude-setup has no runs.jsonl. */
+  const sparse = makeRepo('sparse', { tasks: [], closed: [] });
+  const tasks = load(writeRegistry([sparse]));
+  const f = tasks.readRepo(tasks.discover()[0]).files;
+  check('a file that is not there is absent, not zero-sized',
+    [f['runs.jsonl'].present, f['runs.jsonl'].bytes], [false, null]);
+  check('while the one that is there is present', f['whattask.json'].present, true);
+}
+
+console.log('the mutex:');
+
+function writeMutex(repoDir, owner) {
+  const d = path.join(repoDir, '.claude', 'tasks', 'serial.lock.d');
+  fs.mkdirSync(d, { recursive: true });
+  if (owner !== null) fs.writeFileSync(path.join(d, 'owner'), JSON.stringify(owner));
+  return d;
+}
+
+{
+  const free = makeRepo('mutex-free', { tasks: [], closed: [] });
+  const tasks = load(writeRegistry([free]));
+  const m = tasks.readRepo(tasks.discover()[0]).mutex;
+  check('no serial.lock.d means the mutex is free', [m.held, m.stale], [false, false]);
+}
+
+{
+  /* Held by something alive is NORMAL - it is taken for milliseconds around a
+     registry update. Never stale at any age while the pid lives. */
+  const live = makeRepo('mutex-live', { tasks: [], closed: [] });
+  writeMutex(live, { pid: LIVE_PID, host: THIS_HOST, cmd: '/runqueue',
+                     at: new Date(Date.now() - 60 * 60 * 1000).toISOString() });
+  const tasks = load(writeRegistry([live]));
+  const m = tasks.readRepo(tasks.discover()[0]).mutex;
+  check('a mutex held by a live pid is held', m.held, true);
+  check('and is NOT stale even an hour old - a live pid is never broken', m.stale, false);
+  check('its owner is reported so the human can see who holds it', m.owner.pid, LIVE_PID);
+}
+
+{
+  /* Both conditions, per LOCKING.md: the pid is dead on THIS host AND the
+     recorded `at` is more than 15 minutes old. Neither alone is enough. */
+  const stale = makeRepo('mutex-stale', { tasks: [], closed: [] });
+  writeMutex(stale, { pid: DEAD_PID, host: THIS_HOST, cmd: '/runqueue',
+                      at: new Date(Date.now() - 20 * 60 * 1000).toISOString() });
+  const tasks = load(writeRegistry([stale]));
+  const m = tasks.readRepo(tasks.discover()[0]).mutex;
+  check('a dead pid past the staleness window is stale', m.stale, true);
+  check('and says why', /15 min|not running/.test(m.reason || ''), true);
+}
+
+{
+  const young = makeRepo('mutex-young-dead', { tasks: [], closed: [] });
+  writeMutex(young, { pid: DEAD_PID, host: THIS_HOST, cmd: '/runqueue',
+                      at: new Date(Date.now() - 60 * 1000).toISOString() });
+  const tasks = load(writeRegistry([young]));
+  check('a dead pid INSIDE the window is not yet stale - the age test is required too',
+    tasks.readRepo(tasks.discover()[0]).mutex.stale, false);
+}
+
+{
+  const elsewhere = makeRepo('mutex-other-host', { tasks: [], closed: [] });
+  writeMutex(elsewhere, { pid: DEAD_PID, host: 'SomeOtherMachine', cmd: '/runqueue',
+                          at: new Date(Date.now() - 20 * 60 * 1000).toISOString() });
+  const tasks = load(writeRegistry([elsewhere]));
+  check('a pid on another host cannot be checked from here, so it is never stale',
+    tasks.readRepo(tasks.discover()[0]).mutex.stale, false);
+}
+
+{
+  /* "A reader can see the directory for a moment with no owner file in it -
+     that is HELD by someone still starting up, not stale." */
+  const starting = makeRepo('mutex-no-owner', { tasks: [], closed: [] });
+  writeMutex(starting, null);
+  const tasks = load(writeRegistry([starting]));
+  const m = tasks.readRepo(tasks.discover()[0]).mutex;
+  check('a directory with no owner file is held, not stale', [m.held, m.stale], [true, false]);
+  check('and that is reported as the startup window rather than as an unknown',
+    /starting up|no owner/.test(m.reason || ''), true);
+}
+
+console.log('orphaned holder records:');
+
+{
+  /* The failure the mutex path NEVER notices: a session dies holding a
+     registry record and no mutex, and the paths it names are refused forever.
+     Age is not part of the test - a long task holds a record for hours. */
+  const orph = makeRepo('orphaned', { tasks: [], closed: [] });
+  fs.writeFileSync(path.join(orph, '.claude', 'tasks', 'serial.lock'), JSON.stringify([
+    { task: 'dead-one', head: 'abc1234', touches: ['rw:a.js', 'rw:b.js'],
+      pid: DEAD_PID, host: THIS_HOST },
+    { task: 'live-one', head: 'def5678', touches: ['rw:c.js'],
+      pid: LIVE_PID, host: THIS_HOST },
+    { task: 'far-away', head: 'aaa1111', touches: ['rw:d.js'],
+      pid: DEAD_PID, host: 'SomeOtherMachine' }
+  ]));
+  const tasks = load(writeRegistry([orph]));
+  const running = tasks.build().running;
+  const by = {};
+  for (const r of running) by[r.label] = r;
+  check('a record whose pid is dead on this host is an orphan', by['dead-one'].orphan, true);
+  check('a record whose pid is alive is not', by['live-one'].orphan, false);
+  /* null, never false: unknowable is not the same as fine, and the protocol
+     says a record from another host is always treated as live. */
+  check('a record from another host is unknowable, not declared healthy',
+    by['far-away'].orphan, null);
+  check('an orphan says how many paths it is refusing', by['dead-one'].pathCount, 2);
+
+  const snap = tasks.build();
+  check('orphans are collected as alarms rather than left in a column',
+    snap.alarms.map(a => a.kind), ['orphan']);
+  check('and the alarm names the repo, the task and the dead pid',
+    [snap.alarms[0].repo, snap.alarms[0].task, snap.alarms[0].pid],
+    ['orphaned', 'dead-one', DEAD_PID]);
+  check('a clean machine raises no alarms', tasks.build().alarms.length, 1);
+}
+
+{
+  const clean = makeRepo('no-alarms', { tasks: [], closed: [] });
+  fs.writeFileSync(path.join(clean, '.claude', 'tasks', 'serial.lock'), '[]');
+  const tasks = load(writeRegistry([clean]));
+  check('nothing held and nothing dead means no alarms', tasks.build().alarms, []);
+}
+
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
 process.exit(failures ? 1 : 0);

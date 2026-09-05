@@ -978,7 +978,7 @@ body {
    columns already separate them; this makes the distinction survive a glance
    from across a room, which is the distance this display is read at. */
 .lists-live li[data-kind="holder"] .row-name {
-  color: var(--accent);
+  color: var(--fill);
   font-weight: 600;
 }
 
@@ -1034,5 +1034,95 @@ body {
 
 /* Only the two that mean something went wrong are coloured. Colouring all
    five would make the palette the message rather than the counts. */
-.outcomes .oc-failed .n { color: var(--crit); }
+.outcomes .oc-failed .n { color: var(--bad); }
 .outcomes .oc-blocked .n { color: var(--warn); }
+
+/* ------------------------------------------------------------- task files */
+
+.view-files { gap: calc(var(--layout-unit) * 0.9); }
+
+/* The alarm strip sits ABOVE the table and is never a column in it. An
+   orphaned holder refuses every path it names for every later run and nothing
+   on the mutex path notices, so it has to be the loudest thing on the view -
+   a red cell in a grid of file sizes is what an eye skates past. */
+.alarms {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--layout-unit) * 0.35);
+}
+
+.alarm {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--layout-unit) * 0.6);
+  padding: calc(var(--layout-unit) * 0.4) calc(var(--layout-unit) * 0.7);
+  border-left: 3px solid var(--bad);
+  background: var(--line);
+  border-radius: 3px;
+  min-width: 0;
+}
+
+.alarm .sign { flex: 0 0 auto; color: var(--bad); }
+.alarm .who { flex: 0 0 auto; font-weight: 600; color: var(--text); }
+.alarm .what {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A stale mutex is a different fault from an orphan - it blocks everything at
+   once rather than a named set of paths - so it is amber against the orphan's
+   red, and reads as distinct at a glance. */
+.alarm-stale-mutex {
+  border-left-color: var(--warn);
+  background: var(--line);
+}
+.alarm-stale-mutex .sign { color: var(--warn); }
+
+.filetable {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.filetable table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.filetable th,
+.filetable td {
+  padding: calc(var(--layout-unit) * 0.28) calc(var(--layout-unit) * 0.4);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.filetable th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.86em;
+  border-bottom: 1px solid var(--line);
+}
+
+.filetable .name {
+  text-align: left;
+  width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.filetable td.name { color: var(--text); }
+
+/* A file that is not there reads as a dash, muted - distinct from a file that
+   exists and happens to be small. */
+.filetable td.absent { color: var(--track); }
+
+.filetable td.mx { color: var(--muted); }
+.filetable td.mx-held { color: var(--warn); }
+.filetable td.mx-stale { color: var(--bad); font-weight: 700; }

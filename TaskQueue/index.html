@@ -30,7 +30,7 @@
         <span class="title" id="title">Task queue</span>
         <span class="repos" id="repos"></span>
         <span class="updated" id="updated"></span>
-        <span class="dots" aria-hidden="true"><i class="dot" data-view="queue"></i><i class="dot" data-view="live"></i><i class="dot" data-view="history"></i></span>
+        <span class="dots" aria-hidden="true"><i class="dot" data-view="queue"></i><i class="dot" data-view="live"></i><i class="dot" data-view="history"></i><i class="dot" data-view="files"></i></span>
         <span class="version" id="version"></span>
       </header>
 
@@ -99,6 +99,16 @@
         <!-- Same rule as the queue note: history that could not be dated says
              so, because an empty grid reads as months of silence. -->
         <div class="history-note" id="history-note"></div>
+      </div>
+
+      <!-- The state of the files /whattask and the run commands keep, per repo.
+           The alarm strip is the point of the view: an orphaned holder record
+           refuses every path it names for every later run, and NOTHING on the
+           mutex path ever notices it, because a registry record outlives the
+           mutex by design. The table underneath is context. -->
+      <div class="view view-files">
+        <div class="alarms" id="alarms"></div>
+        <div class="filetable" id="filetable"></div>
       </div>
     </div>
 

@@ -715,13 +715,15 @@ body {
   .lists { flex-direction: column; flex: 1 1 auto; }
 }
 
-/* Short slots — S-H 840x344 and S-V 696x416. Nothing but the meters fits, so
-   the session percentage grows into the hero role. Keyed on height, not width:
-   a width rule here collides with the M-H rule below. */
-/* Scoped to the usage view on purpose: the detail view is nothing but lists,
-   so hiding them there would leave a blank screen. */
+/* Short slots — S-H 840x344 and S-V 696x416.
+   The usage widget hid its lists here, because its first view carried TWO
+   meters and nothing else fitted beside them. THAT REASONING DOES NOT CARRY:
+   this view has one meter, and the repo list is the whole point of it. The
+   rule came across with a blanket .view-usage -> .view-queue rename and blanked
+   the list on the device at 840x344 - visible only on the glass, because the
+   layout suite was counting rows in the DOM rather than rows that render.
+   Keyed on height, not width: a width rule here collides with the M-H rule. */
 @media (max-height: 460px) {
-  .view-queue .lists { display: none; }
   .meters { justify-content: space-evenly; }
   :root { --font-value: calc(var(--layout-unit) * 6.5); }
   /* One line is the whole budget here - see the measurement on .why-wrap. */

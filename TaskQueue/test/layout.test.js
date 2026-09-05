@@ -533,7 +533,16 @@ window.__FIXTURE__ = __PAYLOAD__;
     };
 
     /* --- queue view --- */
-    out.repoRowCount = document.querySelectorAll('#repo-rows li').length;
+    /* VISIBLE rows, not rows in the DOM. A display:none inherited from the
+       usage widget's stylesheet blanked this whole list on the device while a
+       querySelectorAll count still reported five - the defect reached the
+       glass because the probe could not tell the difference. offsetParent is
+       null for anything display:none, itself or via an ancestor. */
+    out.repoRowCount = Array.prototype.filter.call(
+      document.querySelectorAll('#repo-rows li'), function (e) { return e.offsetParent !== null; }).length;
+    out.repoRowsInDom = document.querySelectorAll('#repo-rows li').length;
+    var listEl = document.getElementById('list-repos');
+    out.repoListDisplay = listEl ? window.getComputedStyle(listEl).display : null;
     out.repoRowNames = Array.prototype.map.call(
       document.querySelectorAll('#repo-rows li .row-name'), function (e) { return e.textContent; });
     out.repoRowErrors = document.querySelectorAll('#repo-rows li .row-figure.row-error').length;
@@ -553,7 +562,9 @@ window.__FIXTURE__ = __PAYLOAD__;
 
     /* --- live view --- */
     out.holderKinds = Array.prototype.map.call(
-      document.querySelectorAll('#holders li'), function (e) { return e.getAttribute('data-kind'); });
+      Array.prototype.filter.call(document.querySelectorAll('#holders li'),
+        function (e) { return e.offsetParent !== null; }),
+      function (e) { return e.getAttribute('data-kind'); });
     out.activityKinds = Array.prototype.map.call(
       document.querySelectorAll('#activity li'), function (e) { return e.getAttribute('data-kind'); });
     out.liveHeadings = Array.prototype.map.call(
@@ -588,7 +599,9 @@ window.__FIXTURE__ = __PAYLOAD__;
     var alarmsEl = document.getElementById('alarms');
     out.alarmsDisplay = alarmsEl ? window.getComputedStyle(alarmsEl).display : null;
     out.fileRowNames = Array.prototype.map.call(
-      document.querySelectorAll('#filetable tbody td.name'), function (e) { return e.textContent; });
+      Array.prototype.filter.call(document.querySelectorAll('#filetable tbody td.name'),
+        function (e) { return e.offsetParent !== null; }),
+      function (e) { return e.textContent; });
     out.fileHeads = Array.prototype.map.call(
       document.querySelectorAll('#filetable thead th'), function (e) { return e.textContent; });
     out.fileAbsentCells = document.querySelectorAll('#filetable td.absent').length;
@@ -921,6 +934,12 @@ function ellipsisedFigsIn(r) {
 
 console.log('the queue view:');
 check('every repo reaches the screen', byName['queue'].repoRowCount, 5);
+/* The two must agree. When they diverge, rows exist and are not rendered -
+   which is exactly how the repo list arrived on the device blank. */
+check('and none of them is in the DOM but invisible',
+  byName['queue'].repoRowCount, byName['queue'].repoRowsInDom);
+check('the list itself is not display:none at the device slot',
+  byName['queue'].repoListDisplay !== 'none', true);
 check('the busiest repo is listed first', byName['queue'].repoRowNames[0], 'SIDM2');
 check('the completion figure is drawn from open and closed',
   byName['queue'].doneValueText, '59%');   /* 307 / (210 + 307) */

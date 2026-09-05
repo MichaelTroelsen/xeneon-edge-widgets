@@ -333,13 +333,28 @@ function build(live, opts) {
     totals.blocked += repo.blocked;
     mergeCounts(totals.byMode, repo.byMode);
 
+    /* MEASURED against a real lock rather than assumed from LOCKING.md's
+       example: a registry record is { task, head, touches, pid, host }. It
+       carries NO timestamp - the mutex owner file has an `at`, the registry
+       records do not - so a holder has no age to show, and claiming one would
+       be inventing it. `touches` is the path list; the earlier guess of
+       `paths` came from the owner file's shape and matched nothing.
+       The count leads, because the joined list is long enough to be
+       ellipsised away and the number of locked paths is the part that must
+       survive truncation. */
     for (const holder of repo.holders) {
+      const touches = Array.isArray(holder.touches) ? holder.touches
+        : (Array.isArray(holder.paths) ? holder.paths : []);
+      const detail = touches.length
+        ? touches.length + (touches.length === 1 ? ' path' : ' paths') + ' · ' + touches.join(', ')
+        : '';
       running.push({
         kind: 'holder',
         label: holder.task || holder.cmd || holder.run || 'a held task',
         repo: repo.name,
         since: toMs(holder.at),
-        detail: Array.isArray(holder.paths) ? holder.paths.join(', ') : ''
+        head: typeof holder.head === 'string' ? holder.head : null,
+        detail: detail
       });
     }
 

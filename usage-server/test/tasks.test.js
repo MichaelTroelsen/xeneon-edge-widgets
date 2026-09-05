@@ -270,6 +270,43 @@ console.log('lock holders:');
 }
 
 {
+  /* THE REAL RECORD SHAPE, copied from a live serial.lock rather than inferred
+     from LOCKING.md - whose example is the MUTEX OWNER file, a different thing
+     with different fields. A registry record is { task, head, touches, pid,
+     host }: the path list is `touches`, not `paths`, and there is no
+     timestamp at all, so a holder has no age and claiming one would be
+     inventing it. The first version of this code read holder.paths and
+     holder.at, and rendered neither. */
+  const live = makeRepo('live-lock', { tasks: [], closed: [] });
+  fs.writeFileSync(path.join(live, '.claude', 'tasks', 'serial.lock'), JSON.stringify([
+    { task: 'sdi-control-rerun-at-j8', head: 'ff52cb4',
+      touches: ['r:pyscript/sdi_native_sweep.py', 'rw:drivers_src/mon/layout.inc',
+                'rw:out/romuzak_driver.prg'],
+      pid: 26852, host: 'TDZDesktop' }
+  ]));
+  const tasks = load(writeRegistry([live]));
+  const run = tasks.build().running[0];
+  check('a real holder is labelled by its task', run.label, 'sdi-control-rerun-at-j8');
+  check('its locked paths come from `touches`, and lead with the count',
+    run.detail,
+    '3 paths · r:pyscript/sdi_native_sweep.py, rw:drivers_src/mon/layout.inc, rw:out/romuzak_driver.prg');
+  check('a single path is not called "1 paths"',
+    tasks.build().running[0].detail.startsWith('3 paths'), true);
+  check('it carries the commit it is working from', run.head, 'ff52cb4');
+  /* Not "0", not Date.now() - the record has no time in it. */
+  check('and has NO age, because the record carries no timestamp', run.since, null);
+}
+
+{
+  const one = makeRepo('one-path-lock', { tasks: [], closed: [] });
+  fs.writeFileSync(path.join(one, '.claude', 'tasks', 'serial.lock'), JSON.stringify([
+    { task: 't', touches: ['rw:a.js'] }
+  ]));
+  const tasks = load(writeRegistry([one]));
+  check('one locked path is singular', tasks.build().running[0].detail, '1 path · rw:a.js');
+}
+
+{
   /* [] is serial.lock's RESTING state - it is empty in all five real repos
      right now, and only fills while a /runqueue is mid-flight. An empty lock
      is not an error and not an absence. */

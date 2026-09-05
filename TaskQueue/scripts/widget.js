@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  var WIDGET_VERSION = '1.3.2';
+  var WIDGET_VERSION = '1.3.3';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/tasks';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */

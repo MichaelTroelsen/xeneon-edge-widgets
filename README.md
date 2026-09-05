@@ -401,15 +401,16 @@ not stale, and is reported as exactly that.
 ### Projects
 
 One project at a time, chosen by tapping its tab. The tabs run across the top,
-one per repo with a queue; the selected one is filled rather than merely
+one per repo with a queue, **each carrying its open count** so which project has
+work is answerable without pressing through all five. The selected one is filled rather than merely
 outlined, because a border-only treatment is the first thing to disappear at
 the distance this display is read from. More projects narrow the tabs rather
 than pushing one off the edge — five fit at 840px today and that is not a
 property worth depending on.
 
 Underneath, that project's tasks — **open and closed alike**, ordered running,
-queued, blocked, then done, so the top of the list is what is happening now and
-the bottom is history. Blocked sits below queued because it is not actionable
+queued, blocked, waiting, then done, so the top of the list is what is happening
+now and the bottom is history. Blocked sits below queued because it is not actionable
 by the runner — it is waiting on a person — which keeps the actionable half of
 the list unbroken at the top. The heading counts open work only; folding the done rows
 into one total would make the queue look larger than it is.
@@ -418,7 +419,8 @@ into one total would make the queue look larger than it is.
 |---|---|---|
 | running | green, at full weight — the one row saying what the machine is doing this second | `▶` |
 | queued | body text | none |
-| blocked | amber | `⚠` |
+| blocked | amber — waiting on a person | `⚠` |
+| waiting | blue — waiting on another task, which clears itself | `⋯` |
 | done | receded to muted, its figures dimmer still | `✓` |
 
 **Every state carries a marker as well as a colour.** This panel is read from
@@ -430,6 +432,20 @@ green.
 same id the queue uses, verified against a real lock. A holder naming a task
 the queue does not have adds no row — the lock is a claim about work, not a
 source of it.
+
+**`waiting` is the state that changes what "open" means.** Measured across the
+real queues: 25 of 210 open tasks carry a `depends_on`, and **20 of those name a
+task that is still open**. Those twenty are not pickable however ready they
+look, and before this state existed they rendered identically to the 88 that
+are — the difference between a queue of 108 and a queue of 88. Blue rather than
+amber because nothing is wrong: a dependency clears itself when the other task
+lands, where a human blocker does not. A task that is both reports as
+`blocked`, for the same reason.
+
+**`main only`** rides alongside the model and effort on a queued row. 52 of 210
+tasks seize a stateful singleton and cannot be delegated to a subagent; it
+decides *how* a task can be run, not whether, so it joins the run attributes
+rather than displacing them.
 
 A queued row carries its mode, model and effort. Whatever decides what happens
 to the task **next** displaces those, because the row has one line for it: the
@@ -459,8 +475,18 @@ of which about 295KB is prose — `verify`, `why_model`, `why_lane`, `evidence` 
 that no 840×344 slot can show at any size. Trimmed to what a row draws they are
 still 49KB against the overview's 2.4KB, and the widget only ever looks at one
 project at a time, so the overview stays small and this is pulled on demand.
-Titles are capped at 90 characters and blocking reasons at 110; 90 is the
-longest title that actually occurs.
+Blocking reasons are capped at 110 characters — they are paragraphs in these
+files and a row has one line for them. Titles are capped at 140, which is the
+real maximum. The earlier cap of 90 was arrived at by capping titles at 90 and
+reading back the longest — the cap measuring itself — and it silently truncated
+about a third of real titles (median 79, p90 109, max 140). A row has 609px at
+the device slot, so CSS ellipsis does the visible trimming; cutting in the feed
+throws away text the desktop dashboard has the width to show.
+
+**Only the ten most recently closed tasks travel**, with the total alongside so
+the list can say `32 older done tasks not shown` rather than simply ending. The
+device slot renders **four rows** — measured — so all 42 of SIDM2's done rows
+sitting under 120 open ones would be unreachable there.
 
 ### What the feed sends
 

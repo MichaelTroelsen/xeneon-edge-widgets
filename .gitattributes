@@ -1,0 +1,21 @@
+# Line endings are LF everywhere, in the index AND in the working tree.
+#
+# This file exists because the mismatch between those two cost three separate
+# incidents in two days. core.autocrlf=true was rewriting files to CRLF on
+# checkout while the index stayed LF (verified: 0 CRLF blobs in HEAD), and git
+# reported the tree clean throughout, because it compared post-conversion.
+#
+# That is invisible until something reads the bytes rather than asking git.
+# Both layout suites mutate their own source and match multi-line string
+# literals against it, so a file that silently changed newline convention made
+# a needle stop matching - and the suite then reported "the source mutation
+# matched nothing, so it would have tested a clean build" rather than failing
+# the assertion the reader expected. It broke in both directions: once when a
+# text-mode write converted LF to CRLF, once when a git stash round-trip
+# converted it back.
+#
+# eol=lf rather than -text on purpose. -text would freeze whatever is on disk,
+# which would have preserved the corruption; eol=lf pins the working tree to
+# what the index already holds, on every machine, whatever core.autocrlf says
+# locally.
+* text=auto eol=lf

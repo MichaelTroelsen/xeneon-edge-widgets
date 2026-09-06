@@ -367,6 +367,11 @@ const LONG_ERROR =
   ' · a Claude Code session is active but statusline-tee.json does not exist -' +
   ' statusline-tee.js is probably not wired into statusLine.command';
 
+/* The static lead-in widget.js's render() pins outside the pager - see
+   claudeusage-why-strip-pages-as-fragments. Kept as one constant so the
+   EXPECT table and the paging-persistence check below cannot drift apart. */
+const WHY_PREFIX_TEXT = 'Anthropic figures unavailable:';
+
 function localFixture() {
   const f = fullStatsFixture();
   f.official = { ok: false, error: LONG_ERROR };
@@ -630,6 +635,33 @@ window.__FIXTURE__ = __PAYLOAD__;
     } else {
       out.why = null;
     }
+
+    /* The pinned lead-in, captured separately from #why itself: text is what
+       a reader actually sees, insideWhy proves pageOffsets(el) (keyed off
+       #why's OWN children) was not handed a wrapper that now contains the
+       label - it must stay a plain sibling for the pager's existing DOM walk
+       to still find only the words. */
+    var whyPrefixEl = document.getElementById('why-prefix');
+    /* Geometry as well as presence. The lead-in is absolutely positioned over
+       .why-wrap, so it only stays READABLE because #why carries a padding-left
+       measured from the label. Presence alone cannot see that: with the padding
+       gone the label is still on screen, still a sibling, still on every page -
+       and painted straight over the first word of every line. */
+    var whyWords = why ? why.querySelectorAll('span') : [];
+    var whyMinLeft = null;
+    for (var wi = 0; wi < whyWords.length; wi++) {
+      var wb = whyWords[wi].getBoundingClientRect();
+      if (wb.width <= 0) continue;
+      if (whyMinLeft === null || wb.left < whyMinLeft) whyMinLeft = wb.left;
+    }
+    out.whyPrefix = whyPrefixEl ? {
+      text: whyPrefixEl.textContent,
+      displayed: window.getComputedStyle(whyPrefixEl).display !== 'none' &&
+        window.getComputedStyle(whyPrefixEl).visibility !== 'hidden' && !whyPrefixEl.hidden,
+      insideWhy: !!(why && why.contains(whyPrefixEl)),
+      right: +whyPrefixEl.getBoundingClientRect().right.toFixed(1),
+      firstWordLeft: whyMinLeft === null ? null : +whyMinLeft.toFixed(1)
+    } : null;
 
     /* The strip is not free: it takes its line out of the usage view's body,
        and the meters are what is left. .widget-root has 21.5px of padding, so
@@ -1147,11 +1179,16 @@ console.log('the reason a reading is not live is on screen, not in a tooltip:');
   const byName = {};
   ok.forEach(r => { byName[r.name] = r; });
 
+  /* prefix is set only for the state the OAuth endpoint is actually
+     unreachable in - the other two fallback states explain something ELSE
+     (a stale-but-present reading, a partially-covered one) and never carried
+     this lead-in even before the fix, so pinning it there would be new
+     wording this task was never asked to add. */
   const EXPECT = {
-    'why-live': { badge: 'LIVE', shown: false, must: null },
-    'why-local': { badge: 'LOCAL', shown: true, must: LONG_ERROR },
-    'why-stale': { badge: 'LIVE·', shown: true, must: LONG_ERROR },
-    'why-partial': { badge: 'LIVE¹', shown: true, must: 'the other meter shows measured tokens' }
+    'why-live': { badge: 'LIVE', shown: false, must: null, prefix: null },
+    'why-local': { badge: 'LOCAL', shown: true, must: LONG_ERROR, prefix: WHY_PREFIX_TEXT },
+    'why-stale': { badge: 'LIVE·', shown: true, must: LONG_ERROR, prefix: null },
+    'why-partial': { badge: 'LIVE¹', shown: true, must: 'the other meter shows measured tokens', prefix: null }
   };
 
   Object.keys(EXPECT).forEach(name => {
@@ -1168,6 +1205,8 @@ console.log('the reason a reading is not live is on screen, not in a tooltip:');
         { display: 'none', height: 0, text: '' });
       check(`${name}: the badge still carries a title for a desktop reader`,
         typeof r.badgeTitle === 'string' && r.badgeTitle.length > 0, true);
+      check(`${name}: no pinned lead-in either - there is nothing to explain`,
+        r.whyPrefix ? r.whyPrefix.displayed : false, false);
       return;
     }
 
@@ -1181,6 +1220,29 @@ console.log('the reason a reading is not live is on screen, not in a tooltip:');
       !!(r.why && r.why.clientHeight > 0 && r.why.scrollHeight >= r.why.clientHeight), true);
     check(`${name}: the badge's title still holds the same reason for a desktop reader`,
       typeof r.badgeTitle === 'string' && r.badgeTitle.indexOf(e.must) !== -1, true);
+
+    /* The lead-in that made a later page read as a bare error/path with no
+       context - claudeusage-why-strip-pages-as-fragments. Checked on its own
+       element, never as a substring of r.why.text: that text is #why's OWN
+       content only (why.textContent), so if this ever passed it would mean
+       the label went back to being baked into the same string the pager
+       scrolls, exactly the bug this task exists to remove. */
+    if (e.prefix) {
+      check(`${name}: the pinned lead-in is on screen`,
+        r.whyPrefix ? { text: r.whyPrefix.text, displayed: r.whyPrefix.displayed } : null,
+        { text: e.prefix, displayed: true });
+      check(`${name}: the lead-in is #why's sibling, not a wrapper - pageOffsets() still keys off #why's own children`,
+        r.whyPrefix ? r.whyPrefix.insideWhy : null, false);
+      check(`${name}: the reason text handed to the pager no longer carries the lead-in itself`,
+        r.why ? r.why.text.indexOf(e.prefix) === -1 : null, true);
+      check(`${name}: and every line of the reason is indented clear of the lead-in, not painted under it`,
+        r.whyPrefix && r.whyPrefix.firstWordLeft !== null
+          ? r.whyPrefix.firstWordLeft >= r.whyPrefix.right - 0.5
+          : null, true);
+    } else {
+      check(`${name}: this fallback state never carried the lead-in, and still does not`,
+        r.whyPrefix ? r.whyPrefix.displayed : false, false);
+    }
     if (r.why) {
       console.log(`        ${name}: ${r.why.clientHeight}px box, ${r.why.scrollHeight}px of text, ` +
         `${r.why.spans} spans — "${r.why.text.slice(0, 64)}${r.why.text.length > 64 ? '…' : ''}"`);
@@ -1209,6 +1271,26 @@ console.log('the reason a reading is not live is on screen, not in a tooltip:');
       `.meters ends ${shownLocal.usage.meters.bottom}, ` +
       `the strip runs ${shownLocal.usage.whyWrap.top}–${shownLocal.usage.whyWrap.bottom}`);
   }
+}
+
+/* decision:claudeusage-why-strip-pages-as-fragments explicitly forbids
+   reintroducing the vertical reservation decision:claudeusage-why-strip-
+   vertical-budget already closed. #why itself must therefore be exactly as
+   tall whether or not the pinned lead-in is showing beside it - proof that
+   the lead-in was paid for out of WIDTH (padding-left on #why, undone by
+   setWhyLabel() the moment there is no prefix) rather than a line of
+   height taken from it. why-stale/why-partial never show the lead-in
+   (EXPECT above) and share the same --why-lines budget as why-local, so
+   any difference here can only come from the lead-in's own cost. */
+console.log('the pinned lead-in costs no vertical space:');
+{
+  const withPrefix = ok.find(r => r.name === 'why-local');
+  const withoutPrefix = ok.find(r => r.name === 'why-stale') || ok.find(r => r.name === 'why-partial');
+  check('#why is exactly as tall with the lead-in pinned beside it as without one',
+    withPrefix && withoutPrefix && withPrefix.why && withoutPrefix.why
+      ? withPrefix.why.clientHeight : 'a why-state did not render',
+    withPrefix && withoutPrefix && withPrefix.why && withoutPrefix.why
+      ? withoutPrefix.why.clientHeight : 'a why-state did not render');
 }
 
 /* ----------------------------------------------------- the assertions can fail */
@@ -1383,6 +1465,21 @@ const SAMPLER = `<script>
         fade: box ? box.classList.contains('can-scroll') : null
       });
     }
+    /* The pinned lead-in lives outside every scroller (it has no
+       overflow-y:auto/scroll of its own), so the loop above never sees it -
+       it is captured here, once per tick, as a synthetic non-scroller entry
+       so the persistence check below can see whether it survives the SAME
+       page turns that move #why underneath it. */
+    var wp = document.getElementById('why-prefix');
+    if (wp) {
+      out.push({
+        id: 'why-prefix', rows: 0, clientHeight: 0, scrollTop: 0, maxScroll: 0,
+        dots: 0, activeDot: -1, visible: [], deep: [], deepTotal: {}, fade: null,
+        text: wp.textContent,
+        displayed: window.getComputedStyle(wp).display !== 'none' &&
+          window.getComputedStyle(wp).visibility !== 'hidden' && !wp.hidden
+      });
+    }
     return out;
   }
   var samples = [], n = 0;
@@ -1456,6 +1553,17 @@ function byScroller(samples) {
     }
   }));
   return out;
+}
+
+/* Reads the synthetic 'why-prefix' entry snap() pushes each tick (see the
+   SAMPLER above) into one array, oldest first, so a persistence check can
+   walk it across every page turn rather than a single sample. */
+function whyPrefixSamples(samples) {
+  return samples.map(snap => {
+    if (!snap) return null;
+    const e = snap.find(s => s.id === 'why-prefix');
+    return e ? { text: e.text, displayed: e.displayed } : null;
+  });
 }
 
 const DETAIL_TAPS = VIEWS.indexOf('detail');
@@ -1681,6 +1789,21 @@ console.log('paging — the whole reason becomes readable without a drag:');
       console.log(`        ${w.clientHeight}px box, ${w.maxScroll}px of scroll, ` +
         `${Array.from(w.offsets).sort((a, b) => a - b).join('/')} page offsets`);
     }
+
+    /* The actual reported symptom: on the ORIGINAL code the lead-in sat on
+       page one of the same string #why pages, so it was gone by page two.
+       This walks every sample the pager produced (not just the first or the
+       last) and requires the pinned lead-in to be showing, with the SAME
+       text, on every single one of them - while w above already proved the
+       reason itself keeps paging to its end underneath it. Neither check
+       alone is the fix; both have to hold at once. */
+    const prefixSamples = whyPrefixSamples(r.samples).filter(Boolean);
+    check('the pinned lead-in was captured on every sampled page turn',
+      prefixSamples.length, r.samples.length);
+    const everyPageShowsIt = prefixSamples.every(s => s.displayed && s.text === WHY_PREFIX_TEXT);
+    check('the pinned lead-in reads the same thing on every page, not just the first',
+      everyPageShowsIt ? true : prefixSamples.map(s => s.text),
+      true);
   }
 }
 
@@ -1758,6 +1881,44 @@ console.log('the reason checks are not vacuous:');
     console.log(`        ${w.rows} child(ren), ${missing.length} never fully visible, ` +
       `${Array.from(w.offsets).join('/')} page offsets (a box that never moves)`);
   }
+}
+{
+  /* The EXACT pre-fix behaviour this task exists to remove: the lead-in baked
+     back into the one string handed to setWhy(), nothing pinned outside the
+     pager. Mutates the CALL SITES in render(), not setWhyLabel() itself -
+     the persistence check above measures what render() DOES, so the mutation
+     has to hit the same seam or it would collapse onto the very code it is
+     meant to be independent of. */
+  const page = writePagingPage('mutation-why-prefix-not-pinned', VIEWS.indexOf('usage'), localFixture(),
+    null, src => src.replace('setWhyLabel(whyPrefix);\n    setWhy(reason);',
+      'setWhyLabel(\'\');\n    setWhy(titleText);'));
+  const r = renderPaging(page);
+  const prefixSamples = r.error ? [] : whyPrefixSamples(r.samples).filter(Boolean);
+  check('reverting to the baked-in lead-in trips the every-page-shows-it check',
+    r.error ? `render failed: ${r.error}` : prefixSamples.length > 0, false);
+  if (!r.error) console.log(`        ${prefixSamples.length} of ${r.samples.length} sampled pages showed a pinned lead-in (want 0)`);
+}
+{
+  /* The rejected design, reintroduced on purpose: give the label its own
+     line by shrinking #why's height instead of its width. This is exactly
+     the reservation decision:claudeusage-why-strip-vertical-budget already
+     closed, reborn one line at a time - the height check above exists to
+     catch it. why-stale is the "without" side: same viewport, same
+     --why-lines budget, no lead-in. */
+  const mutateHeight = src => src.replace(
+    'els.why.style.paddingLeft !== pad) els.why.style.paddingLeft = pad;',
+    "els.why.style.paddingLeft !== pad) els.why.style.paddingLeft = pad;\n" +
+    "    els.why.style.height = 'calc(var(--font-badge) * 1.25 * (var(--why-lines, 3) - 1))';");
+  const rWith = render(writePageWithMutatedScript('mutation-why-prefix-vertical-reservation-with',
+    VIEWS.indexOf('usage'), localFixture(), mutateHeight));
+  const rWithout = render(writePageWithMutatedScript('mutation-why-prefix-vertical-reservation-without',
+    VIEWS.indexOf('usage'), staleFixture(), mutateHeight));
+  const heights = (!rWith.error && !rWithout.error && rWith.why && rWithout.why)
+    ? { withPrefix: rWith.why.clientHeight, withoutPrefix: rWithout.why.clientHeight } : null;
+  check('reintroducing a per-line reservation trips the no-vertical-cost check',
+    heights ? heights.withPrefix !== heights.withoutPrefix : `render failed (with: ${rWith.error}, without: ${rWithout.error})`,
+    true);
+  if (heights) console.log(`        with the lead-in: ${heights.withPrefix}px, without: ${heights.withoutPrefix}px`);
 }
 
 /* ------------------------------------------------------------------- teardown */

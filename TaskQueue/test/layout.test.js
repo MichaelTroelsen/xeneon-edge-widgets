@@ -1294,6 +1294,19 @@ async function startBrowser() {
       reject(new Error(`chrome exited before it was ready to debug (code ${code})`));
     });
   });
+  /* The global WebSocket is what lets this suite drive one browser over the
+     DevTools protocol without adding a dependency to a repo that has none. It
+     became a default global in Node 22; Node 21 needed --experimental-websocket
+     and Node 20 has none at all. Without this guard the failure is a bare
+     ReferenceError from inside a render, which reads as a broken test rather
+     than an unsupported runtime. */
+  if (typeof WebSocket === 'undefined') {
+    throw new Error(
+      'this suite needs a global WebSocket, which Node ' + process.versions.node +
+      ' does not provide - it is a default global from Node 22 onward. ' +
+      'Run the suite on Node 22 or newer.'
+    );
+  }
   cdpWs = new WebSocket(wsUrl);
   await new Promise((resolve, reject) => {
     cdpWs.onopen = () => resolve();

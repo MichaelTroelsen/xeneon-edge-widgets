@@ -9,8 +9,14 @@ name: tests
 # here: it needs an agent runner and spends real tokens.
 
 on:
+  # EVERY branch, not just main. Work here happens on long-lived branches and
+  # `branches: [main]` meant nine commits of it - a widget rewrite, a suite
+  # rewrite, and the fix for the very failure main was red with - never met CI
+  # at all. Meanwhile main stayed red for a week from a bug already fixed on a
+  # branch, so the badge said "broken" while the tree said otherwise and neither
+  # was informative.
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -22,7 +28,12 @@ jobs:
         # windows is the platform this is developed and run on; ubuntu catches
         # the path and line-ending assumptions that are easy to make on it.
         os: [ubuntu-latest, windows-latest]
-        node: [20, 22]
+        # 22 is the FLOOR, not a preference. TaskQueue's layout suite drives one
+        # browser over the DevTools protocol using the global WebSocket, which is
+        # a default global only from Node 22; Node 20 has none, so that suite
+        # cannot run there at all. Node 20 is also deprecated on the runners,
+        # which already force actions onto 24.
+        node: [22, 24]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

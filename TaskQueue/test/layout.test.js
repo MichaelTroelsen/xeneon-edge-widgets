@@ -238,6 +238,25 @@ function fileUrl(p) {
    tasks than the other four together, and repo names as long as the longest
    real one - so the layout is exercised against realistic magnitudes rather
    than toy ones. */
+/* baseFixture's five repos overflow the queue list on Windows and NOT on
+   ubuntu, where the fonts are narrower - which failed CI on a check that only
+   ever wanted to prove the pager works at all. Twenty rows clears any plausible
+   font rather than sitting on the threshold. */
+function manyRepoFixture() {
+  const f = baseFixture();
+  const now = Date.now();
+  f.repos = [];
+  for (let i = 0; i < 20; i++) {
+    f.repos.push(repo('repo-' + String(i).padStart(2, '0'), 20 - i, i, 0,
+      { subtask: 20 - i }, { lastRunAt: now - (i + 1) * 60 * 1000 }));
+  }
+  f.totals = {
+    open: 210, closed: 190, repos: f.repos.length, blocked: 0,
+    byMode: { subtask: 210 }
+  };
+  return f;
+}
+
 function repo(name, open, closed, blocked, byMode, extra) {
   return Object.assign({
     name: name, path: 'C:/Users/x/' + name,
@@ -1454,6 +1473,10 @@ console.log('renders:');
 
 const CASES = [
   { name: 'queue', taps: 0, want: 'queue', fixture: baseFixture() },
+  /* Enough repos that the queue list overflows on ANY font. Only the
+     does-the-pager-work guard below reads this; baseFixture stays at five
+     because a great many other checks are written against those exact rows. */
+  { name: 'queue-many', taps: 0, want: 'queue', fixture: manyRepoFixture() },
   { name: 'queue-finished', taps: 0, want: 'queue', fixture: finishedFixture() },
   { name: 'queue-unavailable', taps: 0, want: 'queue', fixture: unavailableFixture() },
   { name: 'queue-repo-error', taps: 0, want: 'queue', fixture: repoErrorFixture() },
@@ -2027,8 +2050,13 @@ console.log('the projects list does not page itself:');
    below the fold would otherwise be unreachable. This one is long and meant to
    be read at the reader's own pace, so it holds still. */
 check('it grows no page dots', byName['projects'].projectPageDots, 0);
+/* Read from the 20-repo render, not the 5-repo one. This guard exists only to
+   show the 0 above is meaningful - that a list CAN page - so it must not rest
+   on whether five rows happen to overflow, which is a font-metric coin toss:
+   they do on Windows and do not on ubuntu, and CI failed here for exactly that
+   reason while the widget was behaving correctly on both. */
 check('while the lists that do page still have theirs',
-  byName['queue'].otherPageDots > 0, true);
+  byName['queue-many'].otherPageDots > 0, true);
 
 /* THE FADE. With no paging and no drags, it is the only thing that says rows
    sit below the visible ones - so it must actually turn on when they do, and

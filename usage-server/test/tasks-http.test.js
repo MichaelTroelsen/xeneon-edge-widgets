@@ -147,6 +147,39 @@ async function main() {
     check('and the server is still answering afterwards',
       (await get('/tasks')).status, 200);
 
+    console.log('the /taskshtml route:');
+    const html = await get('/taskshtml');
+    check('/taskshtml answers 200', html.status, 200);
+    check('and answers as HTML, not JSON',
+      /text\/html/.test(html.type), true);
+    check('it is a complete document',
+      /^<!doctype html>/i.test(html.body), true);
+    check('both fixture repos are on the page',
+      /flat-repo/.test(html.body) && /nested-repo/.test(html.body), true);
+    check('it says it is the feed rather than the panel',
+      /shows what the .*tasks.* feed says/i.test(html.body), true);
+    check('and /tasks still answers JSON, so the new route shadows nothing',
+      /application\/json/.test((await get('/tasks')).type), true);
+
+    console.log('?project= on the /taskshtml page:');
+    const one = await get('/taskshtml?project=flat-repo');
+    check('/taskshtml?project= answers 200', one.status, 200);
+    /* flat-repo already appears in the Repos overview table regardless of
+       ?project=, so a bare /flat-repo/ test would pass even if the project
+       argument were silently dropped and ignored - the exact vacuous-by-
+       coincidence shape this repo keeps finding. Matched against the
+       project heading itself instead, which only renders when the project
+       table actually appended. */
+    check('and names the project', /<h2>Project: flat-repo<\/h2>/.test(one.body), true);
+    check('and shows one of its tasks', /A flat task/.test(one.body), true);
+    /* Same rule as the /tasks route above: a malformed percent-escape is the
+       caller's mistake and must be answered 4xx, never allowed to throw
+       inside the request handler and take the whole process down. */
+    const htmlBad = await get('/taskshtml?project=%ZZ');
+    check('a malformed percent-escape is a 400, not a crash', htmlBad.status, 400);
+    check('and the server is still up afterwards',
+      (await get('/taskshtml')).status, 200);
+
     console.log('the /usage route, which must not have moved:');
     const usage = await get('/usage');
     check('/usage still answers 200 alongside /tasks', usage.status, 200);

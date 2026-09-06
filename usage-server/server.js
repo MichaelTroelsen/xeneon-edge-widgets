@@ -20,6 +20,7 @@ const usagehtml = require('./usagehtml');
 const official = require('./official');
 const statusline = require('./statusline');
 const tasks = require('./tasks');
+const taskshtml = require('./taskshtml');
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
@@ -1334,6 +1335,39 @@ const server = http.createServer((req, res) => {
       if (!snapshot) rebuild();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(usagehtml.render(snapshot, loadConfig()));
+      return;
+    }
+
+    /* The HTML view of the task feed. Above /tasks for the same reason /tasks is
+       above /usage: a route that matches on a prefix must never be given the
+       chance to shadow a longer one. /tasks is an exact comparison today, and
+       this ordering means it can stop being one safely. */
+    if (req.url === '/taskshtml' || req.url.startsWith('/taskshtml?')) {
+      const live = snapshot
+        ? { sessions: snapshot.sessions, workflows: snapshot.workflows,
+            subtasks: snapshot.subtasks }
+        : null;
+      /* ?project=<name> appends that project's own task table, the same
+         name /tasks accepts. Percent-decoded inside the same try as
+         everything else and answered 4xx rather than thrown - a malformed
+         escape is the caller's mistake, and must never take the process
+         down. Same rule the /tasks route above already follows. */
+      const hq = req.url.indexOf('?') >= 0 ? req.url.slice(req.url.indexOf('?') + 1) : '';
+      const hMatch = /(?:^|&)project=([^&]*)/.exec(hq);
+      let proj = null;
+      if (hMatch) {
+        let name;
+        try {
+          name = decodeURIComponent(hMatch[1]);
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('project= is not valid percent-encoding');
+          return;
+        }
+        proj = tasks.projectTasks(name);
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(taskshtml.render(tasks.build(live, { raw: false }), proj));
       return;
     }
 

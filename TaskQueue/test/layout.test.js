@@ -51,7 +51,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+const { spawnSync, spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const WIDTH = 840;
@@ -1211,16 +1211,59 @@ function writePageWithMutatedScript(name, taps, fixture, srcMutate, htmlMutate, 
 
 let winW = WIDTH, winH = HEIGHT;
 
-/* w/h are the CHROME WINDOW size (see the "Verifying a layout" README
-   section this file's header points at) - they default to the calibrated
-   840x344 pair so every pre-existing call site is unaffected, and are passed
-   explicitly by the additional-slot-sizes section below, each with its own
-   calibrated pair, so calibrating for one size never leaves the device-slot
-   renders using the wrong window. */
-function render(page, w, h) {
-  const useW = w == null ? winW : w;
-  const useH = h == null ? winH : h;
-  const budget = PRE_TAP_MS + POST_TAP_MS + 800;
+/* --------------------------------------------- one browser, reused for every render */
+
+/* MEASURED (this machine, 8-sample warmed-up medians, same flags as below):
+ *   chrome --dump-dom about:blank                         ~479ms
+ *   chrome --dump-dom about:blank --virtual-time-budget=1150ms  ~489ms (i.e.
+ *     the budget wait costs ~0-30ms real time - it fast-forwards virtual
+ *     timers, it does not sleep)
+ *   chrome --dump-dom <the real widget index.html>         ~632ms
+ * So of every ~630ms spent on one render, ~480ms (roughly three quarters) is
+ * PURE CHROME PROCESS STARTUP that has nothing to do with the page, the
+ * fixture, or the virtual-time wait, and ~150ms is the page's own load +
+ * script + measure() work. A suite that renders ~125 pages (27 cases x 4
+ * slots, minus a few reused calibration probes, plus calibration and
+ * mutation-test renders) was therefore paying for ~125 process boots it did
+ * not need. This section launches Chrome ONCE, then drives it over the
+ * DevTools protocol for every render: each render opens a brand-new browser
+ * TARGET (window) - a fresh top-level browsing context with its own
+ * window/document/globals, exactly as isolated from every other render as a
+ * separate OS process was, per the browser's own cross-context security
+ * boundary - runs the fixture in it, reads its data-layout attribute, and
+ * closes it. Steady-state, this measured ~110-180ms per render with no
+ * process spawn in the loop at all.
+ */
+let cdpChild = null;
+let cdpWs = null;
+let cdpNextId = 1;
+const cdpPending = new Map();
+const cdpEventWaiters = [];
+
+function cdpSend(method, params, sessionId) {
+  return new Promise((resolve, reject) => {
+    const id = cdpNextId++;
+    const msg = { id, method, params: params || {} };
+    if (sessionId) msg.sessionId = sessionId;
+    cdpPending.set(id, { resolve, reject, method });
+    cdpWs.send(JSON.stringify(msg));
+  });
+}
+
+function cdpWaitForEvent(method, sessionId, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const waiter = { method, sessionId, resolve: null };
+    const timer = setTimeout(() => {
+      const idx = cdpEventWaiters.indexOf(waiter);
+      if (idx >= 0) cdpEventWaiters.splice(idx, 1);
+      reject(new Error(`timeout waiting for ${method}`));
+    }, timeoutMs);
+    waiter.resolve = (params) => { clearTimeout(timer); resolve(params); };
+    cdpEventWaiters.push(waiter);
+  });
+}
+
+async function startBrowser() {
   const args = [
     '--headless',
     '--disable-gpu',
@@ -1234,20 +1277,105 @@ function render(page, w, h) {
     '--mute-audio',
     '--force-device-scale-factor=1',
     `--user-data-dir=${PROFILE}`,
-    `--window-size=${useW},${useH}`,
-    `--virtual-time-budget=${budget}`,
-    '--dump-dom',
-    fileUrl(page)
+    '--remote-debugging-port=0'
   ];
-  const res = spawnSync(CHROME, args, { encoding: 'utf8', timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
-  if (res.error) return { error: String(res.error) };
-  const dom = res.stdout || '';
-  const m = dom.match(/data-layout="([^"]*)"/);
-  if (!m) return { error: 'no data-layout in the dumped DOM (the page never measured itself)' };
+  cdpChild = spawn(CHROME, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  let buf = '';
+  const wsUrl = await new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('chrome did not print a DevTools websocket URL in time')), 15000);
+    cdpChild.stderr.on('data', d => {
+      buf += d.toString();
+      const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
+      if (m) { clearTimeout(timer); resolve(m[1]); }
+    });
+    cdpChild.on('exit', code => {
+      clearTimeout(timer);
+      reject(new Error(`chrome exited before it was ready to debug (code ${code})`));
+    });
+  });
+  cdpWs = new WebSocket(wsUrl);
+  await new Promise((resolve, reject) => {
+    cdpWs.onopen = () => resolve();
+    cdpWs.onerror = (e) => reject(new Error(`websocket error connecting to chrome: ${e.message || e}`));
+  });
+  cdpWs.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.id && cdpPending.has(msg.id)) {
+      const { resolve, reject } = cdpPending.get(msg.id);
+      cdpPending.delete(msg.id);
+      if (msg.error) reject(new Error(`${msg.method || 'command'} failed: ${JSON.stringify(msg.error)}`));
+      else resolve(msg.result);
+    } else if (msg.method) {
+      for (let i = cdpEventWaiters.length - 1; i >= 0; i--) {
+        const w = cdpEventWaiters[i];
+        if (w.method === msg.method && (!w.sessionId || w.sessionId === msg.sessionId)) {
+          cdpEventWaiters.splice(i, 1);
+          w.resolve(msg.params);
+        }
+      }
+    }
+  };
+}
+
+/* Registered as soon as the browser exists, so every exit path - the normal
+   end of the file, an early process.exit(1) on a calibration failure, an
+   uncaught rejection - still reaps the one Chrome process this file started.
+   A process 'exit' handler runs synchronously, which is all child.kill() (a
+   signal send) needs. */
+function stopBrowser() {
+  try { if (cdpWs) cdpWs.close(); } catch (e) { /* already gone */ }
+  try { if (cdpChild) cdpChild.kill(); } catch (e) { /* already gone */ }
+}
+process.on('exit', stopBrowser);
+
+/* w/h are the CHROME WINDOW size (see the "Verifying a layout" README
+   section this file's header points at) - they default to the calibrated
+   840x344 pair so every pre-existing call site is unaffected, and are passed
+   explicitly by the additional-slot-sizes section below, each with its own
+   calibrated pair, so calibrating for one size never leaves the device-slot
+   renders using the wrong window. Each call opens its own Target (a fresh
+   window/document/JS realm - see the state-isolation note above), navigates
+   it to `page`, lets the SAME --virtual-time-budget's worth of virtual time
+   elapse (via Emulation.setVirtualTimePolicy, the CDP equivalent of the old
+   command-line flag) so the page's own PRE_TAP_MS/POST_TAP_MS timers run to
+   completion, reads its data-layout attribute, and closes the window - never
+   reusing a window across renders. */
+async function render(page, w, h) {
+  const useW = w == null ? winW : w;
+  const useH = h == null ? winH : h;
+  const budget = PRE_TAP_MS + POST_TAP_MS + 800;
+  const url = fileUrl(page);
+  let targetId = null;
   try {
-    return JSON.parse(decodeURIComponent(m[1]));
+    const created = await cdpSend('Target.createTarget',
+      { url: 'about:blank', width: useW, height: useH, newWindow: true });
+    targetId = created.targetId;
+    const { sessionId } = await cdpSend('Target.attachToTarget', { targetId, flatten: true });
+    await cdpSend('Page.enable', {}, sessionId);
+    await cdpSend('Runtime.enable', {}, sessionId);
+    const loadP = cdpWaitForEvent('Page.loadEventFired', sessionId, 20000);
+    await cdpSend('Page.navigate', { url }, sessionId);
+    await loadP;
+    const expiredP = cdpWaitForEvent('Emulation.virtualTimeBudgetExpired', sessionId, 20000);
+    await cdpSend('Emulation.setVirtualTimePolicy',
+      { policy: 'pauseIfNetworkFetchesPending', budget }, sessionId);
+    await expiredP;
+    const evalRes = await cdpSend('Runtime.evaluate', {
+      expression: 'document.documentElement.getAttribute("data-layout")',
+      returnByValue: true
+    }, sessionId);
+    const raw = evalRes.result && evalRes.result.value;
+    if (raw == null) return { error: 'no data-layout in the dumped DOM (the page never measured itself)' };
+    try {
+      return JSON.parse(decodeURIComponent(raw));
+    } catch (e) {
+      return { error: 'data-layout did not parse: ' + e };
+    }
   } catch (e) {
-    return { error: 'data-layout did not parse: ' + e };
+    return { error: String(e && e.message || e) };
+  } finally {
+    if (targetId) { try { await cdpSend('Target.closeTarget', { targetId }); } catch (e) { /* already gone */ } }
   }
 }
 
@@ -1261,10 +1389,36 @@ fs.writeFileSync(CALIBRATE,
   '{viewport:{width:window.innerWidth,height:window.innerHeight}})));' +
   '</scr' + 'ipt></body></html>');
 
+/* Everything below opens Target windows on the one Chrome process started
+   here and awaits their renders, so it has to run inside an async function -
+   there is no top-level await in this CommonJS file. Wrapped as a single
+   IIFE rather than converting the module to ESM, to keep the diff to "make
+   render() async and await its call sites" instead of a build-format change. */
+(async () => {
+
+await startBrowser();
+
+/* THE FOUR SLOTS THIS SUITE PROMISES. Independent of EXTRA_SIZES below (that
+   array drives the rendering; these literal numbers are what a future edit
+   is held to) - so deleting an EXTRA_SIZES entry, or changing one's w/h
+   without meaning to, leaves a hole here that 'every slot promised was
+   actually exercised' (near the end of this file) turns red for, instead of
+   the suite quietly testing three slots and calling it four. Keyed by w/h,
+   not by a label string, so renaming a slot's label cannot paper over its
+   size silently going missing. */
+const REQUIRED_SLOTS = [
+  { w: 840, h: 344 },   /* the device slot */
+  { w: 696, h: 416 },   /* S-V */
+  { w: 840, h: 696 },   /* M-H */
+  { w: 696, h: 840 }    /* portrait */
+];
+const slotKey = (w, h) => `${w}x${h}`;
+const slotExercised = {};
+
 console.log('slot:');
 let seen = null;
 for (let i = 0; i < 4; i++) {
-  const probe = render(CALIBRATE);
+  const probe = await render(CALIBRATE);
   if (probe.error) { seen = probe; break; }
   seen = probe.viewport;
   if (seen.width === WIDTH && seen.height === HEIGHT) break;
@@ -1428,7 +1582,7 @@ const PROJECT_CASES = [
 
 const results = [];
 for (const c of CASES) {
-  const r = render(writePage(c.name, c.taps, c.fixture, null, null, null, null, c.refresh,
+  const r = await render(writePage(c.name, c.taps, c.fixture, null, null, null, null, c.refresh,
                              { feedFailOn: c.feedFailOn }));
   r.name = c.name;
   r.wantView = c.want;
@@ -1436,7 +1590,7 @@ for (const c of CASES) {
   if (r.error) fail(`${c.name}: ${r.error}`);
 }
 for (const c of PROJECT_CASES) {
-  const r = render(writePage(c.name, c.taps, c.fixture, null, c.bodies || PROJECT_BODIES, c.tab,
+  const r = await render(writePage(c.name, c.taps, c.fixture, null, c.bodies || PROJECT_BODIES, c.tab,
                              c.after, c.refresh,
                              { control: c.control, release: c.release, scrollBottom: c.scrollBottom }));
   r.name = c.name;
@@ -1451,7 +1605,7 @@ for (const c of PROJECT_CASES) {
    advice is wrong. This is the behaviour 2fe3364 established for the usage
    widget, ported with the code. */
 const FEED_ERROR_TEXT = 'no snapshot has ever been built: rebuild threw TypeError at line 12';
-const feedErrorResult = render(writeErrorBodyPage('feed-error-body', 503, FEED_ERROR_TEXT));
+const feedErrorResult = await render(writeErrorBodyPage('feed-error-body', 503, FEED_ERROR_TEXT));
 if (feedErrorResult.error) fail(`feed-error-body: ${feedErrorResult.error}`);
 check('a 503 with an error body is shown as error-state',
   feedErrorResult.errorStateVisible, true);
@@ -1467,6 +1621,11 @@ if (!ok.length) {
   console.log(`${failures} FAILED`);
   process.exit(1);
 }
+/* The device slot's own entry in the slot-coverage ledger: only true if the
+   WHOLE fixture matrix rendered here without error - results.length > 0
+   rules out an emptied CASES/PROJECT_CASES vacuously satisfying "ok equals
+   results". */
+slotExercised[slotKey(WIDTH, HEIGHT)] = results.length > 0 && ok.length === results.length;
 const byName = {};
 for (const r of ok) byName[r.name] = r;
 
@@ -1549,7 +1708,7 @@ for (const size of EXTRA_SIZES) {
   console.log(`slot ${size.label}:`);
   let cw = size.w, ch = size.h, seenExtra = null;
   for (let i = 0; i < 4; i++) {
-    const probe = render(CALIBRATE, cw, ch);
+    const probe = await render(CALIBRATE, cw, ch);
     if (probe.error) { seenExtra = probe; break; }
     seenExtra = probe.viewport;
     if (seenExtra.width === size.w && seenExtra.height === size.h) break;
@@ -1565,14 +1724,18 @@ for (const size of EXTRA_SIZES) {
   }
   console.log(`  note  --window-size=${cw},${ch} yields a ${size.w}x${size.h} viewport`);
 
-  const sizeResults = ALL_CASE_NAMES.map(c => {
-    const r = render(path.join(PAGES, c.name + '.html'), cw, ch);
+  const sizeResults = [];
+  for (const c of ALL_CASE_NAMES) {
+    const r = await render(path.join(PAGES, c.name + '.html'), cw, ch);
     r.name = c.name; r.wantView = c.want;
     if (r.error) fail(`${size.label} ${c.name}: ${r.error}`);
-    return r;
-  });
+    sizeResults.push(r);
+  }
   const sizeOk = sizeResults.filter(r => !r.error);
   check(`${size.label}: every render came back`, sizeOk.length, sizeResults.length);
+  /* This slot's entry in the same ledger the device slot wrote to above -
+     same rule: the whole matrix, with nothing missing. */
+  slotExercised[slotKey(size.w, size.h)] = sizeResults.length > 0 && sizeOk.length === sizeResults.length;
   if (!sizeOk.length) { console.log(`  nothing rendered at ${size.label}`); continue; }
 
   check(`${size.label}: window.innerWidth/innerHeight matched the slot for every render`,
@@ -1622,6 +1785,15 @@ for (const size of EXTRA_SIZES) {
       `, ${(-tightExtra.tightest.by).toFixed(1)}px of headroom`);
   }
 }
+
+/* THE COVERAGE PROMISE ITSELF, asserted rather than merely arranged for: the
+   full fixture matrix rendered at all four slots, or this fails - not a
+   comment above the loop, a check that a dropped EXTRA_SIZES entry, a
+   changed w/h, or a slot whose calibration silently failed turns red. */
+console.log('slot coverage:');
+check('every one of the four slot sizes ran the full fixture matrix',
+  REQUIRED_SLOTS.map(s => ({ slot: slotKey(s.w, s.h), exercised: !!slotExercised[slotKey(s.w, s.h)] })),
+  REQUIRED_SLOTS.map(s => ({ slot: slotKey(s.w, s.h), exercised: true })));
 
 console.log('the task files view:');
 check('every repo gets a row', byName['files'].fileRowNames.length, 5);
@@ -2195,7 +2367,7 @@ const THROWN_BODIES = Object.assign({}, PROJECT_BODIES, {
    can never quietly measure a clean build and pass for the wrong reason. */
 const ROW_ANCHOR = '    top.textContent = (STATE_MARK';
 {
-  const thrown = render(writePageWithMutatedScript('projects-row-throws', 4, baseFixture(),
+  const thrown = await render(writePageWithMutatedScript('projects-row-throws', 4, baseFixture(),
     src => src.replace(ROW_ANCHOR, () =>
       '    if (task.id === ' + JSON.stringify(THROWN_ROW_ID) + ') throw new TypeError(' +
       JSON.stringify(THROWN_ROW_MESSAGE) + ');\n' + ROW_ANCHOR),
@@ -2203,7 +2375,7 @@ const ROW_ANCHOR = '    top.textContent = (STATE_MARK';
   /* THE OPPOSITE DIRECTION: the same fixture and the same bodies, unmutated.
      If the checks below could fire on a healthy render they would fire here,
      and the marker would be an alarm on every run rather than a signal. */
-  const clean = render(writePage('projects-row-clean', 4, baseFixture(), null,
+  const clean = await render(writePage('projects-row-clean', 4, baseFixture(), null,
     THROWN_BODIES, null, null, false, {}));
 
   check('both renders came back', [!!thrown.error, !!clean.error], [false, false]);
@@ -2264,13 +2436,13 @@ const REPO_ANCHOR = '    name.textContent = r.name;';
   const fixture = baseFixture();
   fixture.repos.unshift(repo(REPO_ROW_NAME, 1, 1, 0, { subtask: 1 }));
 
-  const thrown = render(writePageWithMutatedScript('repo-row-throws', 0, fixture,
+  const thrown = await render(writePageWithMutatedScript('repo-row-throws', 0, fixture,
     src => src.replace(REPO_ANCHOR, () =>
       '    if (r.name === ' + JSON.stringify(REPO_ROW_NAME) + ') throw new TypeError(' +
       JSON.stringify(REPO_ROW_MESSAGE) + ');\n' + REPO_ANCHOR)));
   /* THE OPPOSITE DIRECTION: same fixture, unmutated. If these checks could
      fire on a healthy render they would fire here too. */
-  const clean = render(writePage('repo-row-clean', 0, fixture));
+  const clean = await render(writePage('repo-row-clean', 0, fixture));
 
   check('both renders came back', [!!thrown.error, !!clean.error], [false, false]);
 
@@ -2309,11 +2481,11 @@ const RUNNING_ANCHOR = '    name.textContent = r.label;';
   fixture.running.push({ kind: 'session', label: RUNNING_ROW_LABEL,
     repo: 'SIDM2', since: Date.now() - 1000, detail: '' });
 
-  const thrown = render(writePageWithMutatedScript('running-row-throws', 1, fixture,
+  const thrown = await render(writePageWithMutatedScript('running-row-throws', 1, fixture,
     src => src.replace(RUNNING_ANCHOR, () =>
       '    if (r.label === ' + JSON.stringify(RUNNING_ROW_LABEL) + ') throw new TypeError(' +
       JSON.stringify(RUNNING_ROW_MESSAGE) + ');\n' + RUNNING_ANCHOR)));
-  const clean = render(writePage('running-row-clean', 1, fixture));
+  const clean = await render(writePage('running-row-clean', 1, fixture));
 
   check('both renders came back', [!!thrown.error, !!clean.error], [false, false]);
 
@@ -2353,11 +2525,11 @@ const FILE_COLUMNS_TEST_COUNT = 7;
   const fixture = filesFixture();
   fixture.repos[0].name = FILE_ROW_NAME;   /* files/mutex already assigned by name above */
 
-  const thrown = render(writePageWithMutatedScript('file-row-throws', 3, fixture,
+  const thrown = await render(writePageWithMutatedScript('file-row-throws', 3, fixture,
     src => src.replace(FILE_ANCHOR, () =>
       '    if (r.name === ' + JSON.stringify(FILE_ROW_NAME) + ') throw new TypeError(' +
       JSON.stringify(FILE_ROW_MESSAGE) + ');\n' + FILE_ANCHOR)));
-  const clean = render(writePage('file-row-clean', 3, fixture));
+  const clean = await render(writePage('file-row-clean', 3, fixture));
 
   check('both renders came back', [!!thrown.error, !!clean.error], [false, false]);
 
@@ -2431,3 +2603,8 @@ check('no source file was modified by this run',
 
 console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
 process.exit(failures ? 1 : 0);
+
+})().catch(err => {
+  console.error('FATAL:', (err && err.stack) || err);
+  process.exit(1);
+});

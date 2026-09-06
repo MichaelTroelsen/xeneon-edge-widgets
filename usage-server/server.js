@@ -95,6 +95,7 @@ const LIVE_RUN_STALE_MS = 15 * 60 * 1000;
 
 let config = null;
 let configMtime = 0;
+let configSize = -1;
 
 /* Per-file cursor so a rebuild only parses bytes that are new. Transcript files
    run to hundreds of KB each and there are hundreds of them. */
@@ -330,9 +331,11 @@ function watchCredentials() {
 function loadConfig() {
   try {
     const stat = fs.statSync(CONFIG_PATH);
-    if (config && stat.mtimeMs === configMtime) return config;
+    /* mtime AND size, for the reason spelled out on the stats cache below. */
+    if (config && stat.mtimeMs === configMtime && stat.size === configSize) return config;
     config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
     configMtime = stat.mtimeMs;
+    configSize = stat.size;
   } catch (err) {
     if (!config) {
       console.error('Could not read limits.json, using built-in defaults:', err.message);
@@ -365,6 +368,7 @@ const STATS_SUPPORTED_VERSION = 5;
 
 let statsCache = null;
 let statsCacheMtime = 0;
+let statsCacheSize = -1;
 
 function isPlainObject(x) {
   return x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -395,7 +399,17 @@ function readStats() {
     return { unavailable: 'stats-cache.json not found at ' + STATS_FILE };
   }
 
-  if (statsCache && stat.mtimeMs === statsCacheMtime) return statsCache;
+  /* mtime AND size. mtime alone is not a fingerprint: two writes landing in the
+     same filesystem timestamp tick are indistinguishable, and the second is then
+     served from a cache that believes nothing changed. That is not theoretical -
+     it failed CI on windows/node24 (run 34019417869): the stats suite rewrote the
+     file from broken to valid and got `undefined` back, because both writes
+     shared an mtimeMs. Claude Code rewrites stats-cache.json on its own cadence,
+     so the same collision serves a stale reading on a real panel until some later
+     write happens to land on a different tick. */
+  if (statsCache && stat.mtimeMs === statsCacheMtime && stat.size === statsCacheSize) {
+    return statsCache;
+  }
 
   let raw;
   try {
@@ -404,6 +418,7 @@ function readStats() {
     const result = { unavailable: 'stats-cache.json could not be parsed: ' + err.message };
     statsCache = result;
     statsCacheMtime = stat.mtimeMs;
+    statsCacheSize = stat.size;
     return result;
   }
 
@@ -414,6 +429,7 @@ function readStats() {
     };
     statsCache = result;
     statsCacheMtime = stat.mtimeMs;
+    statsCacheSize = stat.size;
     return result;
   }
 
@@ -429,6 +445,7 @@ function readStats() {
   };
   statsCache = result;
   statsCacheMtime = stat.mtimeMs;
+  statsCacheSize = stat.size;
   return result;
 }
 

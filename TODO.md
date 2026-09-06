@@ -559,6 +559,34 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       the orphan alarm, and that this is deliberate per `LOCKING.md` (a false
       reap is worse than a missed one).
 
+### Open
+
+- [ ] **A browser view of the task feed, like `/usagehtml`** (medium). The
+      server has `/usagehtml` (`usagehtml.js`, ~14K) rendering the usage
+      snapshot as HTML, and nothing equivalent for tasks: `/tasks` and
+      `/tasks?project=<name>` are JSON only, so the feed can only be read
+      through the widget that consumes it. That is the wrong way round when the
+      widget itself is what you are debugging — a panel showing nothing and a
+      feed serving nothing look identical from across the room, and the only
+      current way to tell them apart is to read raw JSON.
+
+      **Decide the scope before building it**, because the two readings differ
+      by an order of magnitude. A DIAGNOSTIC view — the repos, their counts, the
+      running block, and whatever `?project=` returns, as plain tables — is a
+      small file and answers "is the feed right?". A view that MIRRORS the
+      widget's five views is a second implementation of the widget, and then
+      two renderers drift apart and neither is authoritative.
+
+      Recommend the diagnostic one, and say so in its own page: it exists to
+      show what the feed says, not what the panel shows. Follow `/usagehtml`'s
+      shape — its own module beside `usagehtml.js`, a route above the `/usage`
+      prefix handler so it cannot be shadowed (`server.js:1343` says why `/tasks`
+      sits where it does: `/usage` matches on a prefix), and no new dependency.
+
+      Worth checking first: `/tasks` already carries the live block that `/usage`
+      computes, so a diagnostic page can show sessions, workflows and subtasks
+      without recomputing anything.
+
 ## All three widgets
 
 - [x] **tab-buttons throws in iCUE's settings panel** (fixed in `c1f7644` by

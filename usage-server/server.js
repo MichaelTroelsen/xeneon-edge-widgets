@@ -19,6 +19,7 @@ const http = require('http');
 const usagehtml = require('./usagehtml');
 const official = require('./official');
 const statusline = require('./statusline');
+const tasks = require('./tasks');
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
@@ -94,6 +95,7 @@ const LIVE_RUN_STALE_MS = 15 * 60 * 1000;
 
 let config = null;
 let configMtime = 0;
+let configSize = -1;
 
 /* Per-file cursor so a rebuild only parses bytes that are new. Transcript files
    run to hundreds of KB each and there are hundreds of them. */
@@ -106,6 +108,12 @@ let lastQuota = null; /* most recent 429 quotaLimits record seen, if any */
    simply hasn't refreshed apart from one that is refreshing and failing -
    see the /health handler below for the three states this drives. */
 let lastRebuildError = null;
+
+/* Cumulative across the process, like tasks.js's own gitSpawnCount - so the
+   verbose rebuild line below reports the DELTA for just this rebuild, which
+   is what "one read per file per build" is actually a claim about. Read only
+   under CLAUDE_USAGE_VERBOSE; production rebuilds never touch it. */
+let lastTaskFileReads = 0;
 
 /* Anthropic's own figures, refreshed on their own slower timer. The index
    rebuilds every 20s but this is an undocumented endpoint on someone else's
@@ -281,8 +289,23 @@ let lastCredentialsMtime = null;
    without it a single rotation would run this handler, and any immediate
    refetch it triggers, twice. */
 function watchCredentials() {
-  const dir = path.dirname(CREDENTIALS_FILE);
+  let dir = path.dirname(CREDENTIALS_FILE);
   const base = path.basename(CREDENTIALS_FILE);
+  /* Resolve 8.3 short names before watching. libuv compares the path it was
+     given against the long path Windows reports back for each event, and when
+     they disagree it does not fail the call - it ABORTS the process:
+       Assertion failed: !_wcsnicmp(filename, dir, dirlen), src\win\fs-event.c:72
+     That is not catchable, so the try/catch below cannot save us; the whole
+     server dies. Seen on a GitHub windows runner, where os.tmpdir() is
+     C:\Users\RUNNER~1\... - but a real user reaches it too, since %USERPROFILE%
+     gets a short name whenever the account name is long enough, and this file
+     lives under it. realpathSync.native expands the short form to the true one. */
+  try {
+    dir = fs.realpathSync.native(dir);
+  } catch (err) {
+    /* Not there yet, or no permission to resolve it; fs.watch below will just
+       fail its own way, which IS catchable. */
+  }
   try {
     fs.watch(dir, (event, filename) => {
       if (filename !== base) return;
@@ -308,9 +331,11 @@ function watchCredentials() {
 function loadConfig() {
   try {
     const stat = fs.statSync(CONFIG_PATH);
-    if (config && stat.mtimeMs === configMtime) return config;
+    /* mtime AND size, for the reason spelled out on the stats cache below. */
+    if (config && stat.mtimeMs === configMtime && stat.size === configSize) return config;
     config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
     configMtime = stat.mtimeMs;
+    configSize = stat.size;
   } catch (err) {
     if (!config) {
       console.error('Could not read limits.json, using built-in defaults:', err.message);
@@ -343,6 +368,7 @@ const STATS_SUPPORTED_VERSION = 5;
 
 let statsCache = null;
 let statsCacheMtime = 0;
+let statsCacheSize = -1;
 
 function isPlainObject(x) {
   return x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -373,7 +399,17 @@ function readStats() {
     return { unavailable: 'stats-cache.json not found at ' + STATS_FILE };
   }
 
-  if (statsCache && stat.mtimeMs === statsCacheMtime) return statsCache;
+  /* mtime AND size. mtime alone is not a fingerprint: two writes landing in the
+     same filesystem timestamp tick are indistinguishable, and the second is then
+     served from a cache that believes nothing changed. That is not theoretical -
+     it failed CI on windows/node24 (run 34019417869): the stats suite rewrote the
+     file from broken to valid and got `undefined` back, because both writes
+     shared an mtimeMs. Claude Code rewrites stats-cache.json on its own cadence,
+     so the same collision serves a stale reading on a real panel until some later
+     write happens to land on a different tick. */
+  if (statsCache && stat.mtimeMs === statsCacheMtime && stat.size === statsCacheSize) {
+    return statsCache;
+  }
 
   let raw;
   try {
@@ -382,6 +418,7 @@ function readStats() {
     const result = { unavailable: 'stats-cache.json could not be parsed: ' + err.message };
     statsCache = result;
     statsCacheMtime = stat.mtimeMs;
+    statsCacheSize = stat.size;
     return result;
   }
 
@@ -392,6 +429,7 @@ function readStats() {
     };
     statsCache = result;
     statsCacheMtime = stat.mtimeMs;
+    statsCacheSize = stat.size;
     return result;
   }
 
@@ -407,6 +445,7 @@ function readStats() {
   };
   statsCache = result;
   statsCacheMtime = stat.mtimeMs;
+  statsCacheSize = stat.size;
   return result;
 }
 
@@ -1083,46 +1122,40 @@ function collectLiveRuns() {
 }
 
 /* Queued work from the whattask.json task plans, so the subtask list still says
-   something useful when no workflow is currently running. */
+   something useful when no workflow is currently running.
+
+   This WAS a one-level readdirSync of ~/claude, which found 3 of the 5 repos
+   that actually have queues - it walked straight past the two nested under
+   c64server/, and with them 122 of 210 open tasks. tasks.discover() reads the
+   real project registry in ~/.claude.json instead, so this list and the /tasks
+   feed can never disagree about which repos exist. */
 function collectQueuedTasks() {
-  const roots = [path.join(HOME, 'claude')];
   const found = [];
-  for (const root of roots) {
-    let entries;
-    try {
-      entries = fs.readdirSync(root, { withFileTypes: true });
-    } catch (err) {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const file = path.join(root, entry.name, '.claude', 'tasks', 'whattask.json');
-      let stat;
-      try {
-        stat = fs.statSync(file);
-      } catch (err) {
-        continue;
-      }
-      let plan;
-      try {
-        plan = JSON.parse(fs.readFileSync(file, 'utf8'));
-      } catch (err) {
-        continue;
-      }
-      for (const task of plan.tasks || []) {
-        found.push({
-          label: task.title || task.id,
-          model: (task.model || '').replace(/^claude-/, ''),
-          state: task.blocked_on ? 'blocked' : 'queued',
-          phase: task.lane || '',
-          tokens: 0,
-          toolCalls: 0,
-          workflow: 'whattask',
-          project: entry.name,
-          startedAt: stat.mtimeMs,
-          source: 'whattask'
-        });
-      }
+  for (const repo of tasks.discover()) {
+    /* One cache per repo, shared between this readRepo() call and the
+       readPlan() call right after it, so whattask.json - already read once
+       inside readRepo() - is not read a second time here for the same repo.
+       tasks.js's own build() scopes its cache the same way, per build, for
+       the reason given there: the file changes between rebuilds, so nothing
+       here keeps this cache past the one repo it was made for. */
+    const cache = new Map();
+    const read = tasks.readRepo(repo, cache);
+    if (read.error) continue;
+    const parsed = tasks.readPlan(repo.path, cache);
+    if (parsed.error) continue;
+    for (const task of parsed.tasks) {
+      found.push({
+        label: task.title || task.id,
+        model: (task.model || '').replace(/^claude-/, ''),
+        state: task.blocked_on ? 'blocked' : 'queued',
+        phase: task.lane || '',
+        tokens: 0,
+        toolCalls: 0,
+        workflow: 'whattask',
+        project: repo.name,
+        startedAt: read.lastRunAt || Date.now(),
+        source: 'whattask'
+      });
     }
   }
   return found;
@@ -1257,9 +1290,11 @@ function rebuild() {
        the current state instead of just the current numbers. */
     lastRebuildError = null;
     if (process.env.CLAUDE_USAGE_VERBOSE) {
+      const reads = tasks.getFileReadCount();
       console.log(`rebuilt in ${Date.now() - started}ms  ` +
         `sessions=${snapshot.counts.sessions} workflows=${snapshot.counts.workflows} ` +
-        `subtasks=${snapshot.counts.subtasks}`);
+        `subtasks=${snapshot.counts.subtasks} taskFileReads=${reads - lastTaskFileReads}`);
+      lastTaskFileReads = reads;
     }
   } catch (err) {
     /* This used to be the whole handler: log to stderr - which
@@ -1299,6 +1334,51 @@ const server = http.createServer((req, res) => {
       if (!snapshot) rebuild();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(usagehtml.render(snapshot, loadConfig()));
+      return;
+    }
+
+    /* The whattask feed. Its own endpoint rather than a block inside /usage:
+       the /usage contract is what the Claude Code Usage widget reads and is
+       deliberately left exactly as that widget expects it.
+       Placed above the /usage handler below, which matches on a prefix, so
+       this route can never be shadowed by it. */
+    if (req.url === '/tasks' || req.url.startsWith('/tasks?')) {
+      /* The live block is handed over rather than recomputed, so the task
+         widget's running view shows the same activity /usage does. Without it
+         that view would be blank whenever no /runqueue holds a lock, which is
+         nearly always. */
+      const live = snapshot
+        ? { sessions: snapshot.sessions, workflows: snapshot.workflows,
+            subtasks: snapshot.subtasks }
+        : null;
+      /* ?project=<name> answers with just that project's task list, and
+         nothing else. Its own response rather than a block in the overview:
+         the five real queues hold 210 tasks and 297KB, of which 295KB is prose
+         no 840x344 slot can show; trimmed they are still 49KB against the
+         overview's 2.4KB, and the widget only ever looks at one project at a
+         time. So the overview stays small and this is fetched on demand.
+         Percent-decoded inside the same try as everything else - a malformed
+         escape is the caller's mistake, answered 4xx below, never a throw that
+         takes the process down. */
+      const q = req.url.indexOf('?') >= 0 ? req.url.slice(req.url.indexOf('?') + 1) : '';
+      const projectMatch = /(?:^|&)project=([^&]*)/.exec(q);
+      if (projectMatch) {
+        let name;
+        try {
+          name = decodeURIComponent(projectMatch[1]);
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'project= is not valid percent-encoding' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(tasks.projectTasks(name)));
+        return;
+      }
+
+      const raw = /(?:\?|&)raw=1(?:&|$)/.test(req.url);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(tasks.build(live, { raw: raw })));
       return;
     }
 

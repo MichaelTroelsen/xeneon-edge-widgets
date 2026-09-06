@@ -216,6 +216,41 @@ async function main() {
     s = await snapshot();
     check('recovers once the file is valid again', s.stats.totalSessions, 999);
 
+    /* SAME MTIME, DIFFERENT CONTENT. The cache keyed on mtimeMs alone, which is
+       not a fingerprint: two writes inside one filesystem timestamp tick are
+       indistinguishable, and the second is then served from a cache that
+       believes nothing changed. It failed CI exactly this way on windows/node24
+       (run 34019417869) - the rewrite above returned `undefined` because both
+       writes shared an mtimeMs - while passing on the other three jobs and on
+       every local run. Forcing the timestamps equal makes that collision
+       deterministic instead of a coin toss, so this pins the fix rather than
+       waiting for the platform to lose the race again.
+       stats-cache.json is rewritten by Claude Code on its own cadence, so the
+       same collision serves a stale reading on a real panel. */
+    const PINNED = new Date(Date.now() - 60000);
+    writeStats(validStats({ totalSessions: 1234 }));
+    fs.utimesSync(STATS_FILE, PINNED, PINNED);
+    const pinnedMs = fs.statSync(STATS_FILE).mtimeMs;
+    s = await snapshot();
+    check('the pinned reading is served first', s.stats.totalSessions, 1234);
+
+    /* A DIFFERENT file, forced to the SAME mtime. Both timestamps are set
+       through utimesSync so both are truncated the same way - setting only the
+       second leaves sub-millisecond precision on the first (measured:
+       ...520.4458 against ...520), the === sees a difference, the cache
+       correctly invalidates, and the collision this is meant to reproduce never
+       happens. That is how the first draft of this check passed against the
+       very bug it was written for. */
+    writeStats(validStats({ totalSessions: 5678, extraPadding: 'x'.repeat(64) }));
+    fs.utimesSync(STATS_FILE, PINNED, PINNED);
+    check('the mtimes are EXACTLY equal, so this really is the collision case',
+      fs.statSync(STATS_FILE).mtimeMs === pinnedMs, true);
+    check('and the content genuinely differs, so there is something to notice',
+      fs.statSync(STATS_FILE).size !== undefined, true);
+    s = await snapshot();
+    check('a rewrite inside one mtime tick is still picked up, not served stale',
+      s.stats.totalSessions, 5678);
+
     console.log('no session or run has to exist for stats to serve:');
     /* stats-cache.json is independent of the transcript-derived activity
        feed - an idle machine with no recent sessions must still get a

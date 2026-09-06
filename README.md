@@ -1,14 +1,16 @@
 # iCUE widgets for the CORSAIR Xeneon Edge
 
-Two HTML widgets for the Xeneon Edge dashboard display, plus the local feed one
-of them needs. Both target `dashboard_lcd` and adapt across every Edge slot
-size in both orientations.
+Three HTML widgets for the Xeneon Edge dashboard display, plus the local feed
+two of them need. All target `dashboard_lcd` and lay out from one CSS
+baseline meant to flex with the slot — how much of that is actually verified,
+per widget and slot size, is stated in that widget's own section below.
 
 ## Deploying
 
 ```powershell
-pwsh tools/deploy.ps1                      # both widgets, patch bump
+pwsh tools/deploy.ps1                      # all three widgets, patch bump
 pwsh tools/deploy.ps1 -Widget C64Weather -Bump minor
+pwsh tools/deploy.ps1 -Widget TaskQueue    # or ClaudeUsage
 pwsh tools/deploy.ps1 -DryRun              # print every step, change nothing
 ```
 
@@ -264,6 +266,282 @@ paging by a flat box-height step would cut one in half at every boundary.
 > column at 840×344 and the other 33 were unreachable by any means. **Do not
 > design anything for this device that depends on a scrollable region being
 > reachable by hand.**
+
+## Task Queue
+
+How much `/whattask` work is left across every repo on this machine, what is
+holding a lock right now, and what has been finished. Same feed process as the
+usage widget, on its own endpoint:
+
+```bash
+node usage-server/server.js   # http://127.0.0.1:41777/tasks
+```
+
+`/usage` is untouched by it — that contract is what the usage widget reads and
+is deliberately frozen — and `/tasks?raw=1` adds the underlying run records for
+debugging.
+
+| Setting | Type | Default |
+|---|---|---|
+| `feedUrl` | text | `http://127.0.0.1:41777/tasks` |
+| `colorTheme` | tabs | `dark` / `light` |
+| `refreshSeconds` | slider 5–120 | 15 |
+
+**Layout is verified at four slots**, not only the device one:
+840×344 (S-H, the physical slot), 696×416 (S-V), 840×696 (M-H) and 696×840
+(portrait) — `test/layout.test.js` renders all five views at each and asserts
+nothing overflows `.widget-root`. Other Edge slot sizes are untested.
+
+**This widget has no clock**, unlike the other two. It sat in the bottom-right
+corner drawn over the views, so every region ending in rows that carry a figure
+had to reserve a strip for it — about 50px at the device slot. Giving that back
+takes the project list from **four visible rows to six**, measured, which
+matters more here than the time does: the panel sits beside two other widgets
+that both show it.
+
+**Tap the widget** to cycle five views: the queue, what is running, the run
+history, the state of the task files, and one project's task list.
+
+### Which repos it finds
+
+Discovery reads the `projects` map in `~/.claude.json`, which carries real,
+unmangled project paths. The per-project directory names under
+`~/.claude/projects/` are **not** usable for this: the mangling replaces every
+path separator with `-`, which is lossy against directory names that themselves
+contain one, so `C--Users-mit-claude-c64server-tdz-c64-knowledge` cannot be
+demangled back to a path unambiguously.
+
+This replaced a one-level `readdirSync` of `~/claude` that `collectQueuedTasks()`
+in the usage feed had been using. Measured: it found 3 of the 5 repos that have
+queues and 88 of 210 open tasks, because two of them sit a level deeper under
+`c64server/`. Both now read the same registry, so the two feeds cannot disagree
+about which repos exist.
+
+### Queue
+
+Total open against closed with a completion meter, then a row per repo sorted by
+open count. `requires-user` is called out on its own in the header — it is the
+one figure on the view that asks something of whoever is reading the glass.
+
+A repo whose `whattask.json` cannot be read is **listed with its reason**, not
+dropped and not shown as zero, which would read as an empty queue rather than an
+unreadable one.
+
+### Running now
+
+Two columns, counted separately and worded differently — `Holding a lock · 2
+held` against `Claude activity · 3 active`. A `serial.lock` holder record and an
+open Claude session are different claims about the machine, and a single summed
+figure would assert something untrue.
+
+The second column is why the view is worth having. `serial.lock` is the
+*registry* of holder records, not the lock itself (that is the directory
+`serial.lock.d/`, held for milliseconds around each update — see the mit-setup
+`LOCKING.md`), and its resting state is `[]`. It is empty in all five repos
+except while a `/runqueue` is mid-flight, so a view backed by holders alone
+would be blank almost every time anyone looked at it. The sessions, workflows
+and subtasks the usage feed already computes fill it the rest of the time.
+
+### Runs
+
+**No run record carries a timestamp.** Measured across four repos and 605 lines:
+the key union is `id, head, model, effort, mode, lane, outcome, evidence,
+verify_output, notes, opened, decision, runner` — and no date field anywhere.
+`head` is a commit SHA, so each run is dated from the commit it names, and the
+heading says **"Runs, by commit time"** rather than presenting it as when the run
+happened. All 605 real records date cleanly, spanning 2026-08-08 to 2026-09-05.
+
+One batched `git cat-file --batch` per repo, not one process per record: 62
+lines in this repo name only 23 distinct commits. Heads are recorded
+abbreviated while git echoes the full objectname, so requested names are matched
+by prefix. A record whose SHA git no longer has is dropped **with a stated
+count**, never dated wrongly.
+
+The heatmap is laid out **by calendar date, not by array position** — the same
+rule the usage widget's All time view carries, for the same reason: runs are
+sparse in time (20 active days across a 29-day span here), and packing them side
+by side would draw a solid block with every date in the wrong column.
+
+**Two things the real corpus settled that one repo had not.** Outcomes are
+**five** — `done` 453, `partial` 111, `blocked` 22, `failed` 10, `inconclusive`
+9 — so the tally enumerates what it finds rather than a fixed pair. They are
+drawn as one strip rather than five headline figures because nine `.fig` blocks
+overflow the 840×344 slot by 46.6px; trimming to the two that fit would have
+hidden 41 runs, so the layout changed instead of the data. And `model` is free
+text, not an enumeration: 16 distinct values, 12 of them one-off sentences, one
+reading `opus (recorded) / ran on Fable 5, which sits above Opus — substitution
+stated before work began, not a downgrade`. Each is reduced to the family it
+names, which collapses to sonnet 314, opus 283, fable 8.
+
+### Task files
+
+The state of the files `/whattask` and the run commands keep in
+`.claude/tasks/` — `whattask.json`, `runs.jsonl`, `serial.lock`,
+`decisions.jsonl` and `interview.json` — per repo, with sizes. **Absence is
+real state**, drawn as a dash rather than a zero: `h2g` has no `serial.lock`
+and `claude-setup` no `runs.jsonl`, and a zero would read as a file that exists
+and is empty.
+
+The point of the view is the alarm strip above the table, which carries two
+faults the machine does not otherwise surface. Both tests come from the
+mit-setup `LOCKING.md` rather than being invented here:
+
+**An orphaned holder record.** A registry record in `serial.lock` outlives the
+mutex by design — minutes or hours, while its task runs — so the common crash
+is a session dying while holding one and no mutex at all. Nothing on the mutex
+path ever notices, and every path that record names is refused for every later
+run until someone reaps it. A record is an orphan when its `host` is this
+machine **and** its `pid` is not running. **Age is deliberately not part of the
+test**: a long task legitimately holds a record for hours, and the pid is the
+only evidence that matters. A record from another host is reported as
+*unknowable*, never as healthy — it cannot be checked from here.
+
+This was not hypothetical. The first time the view ran against real data it
+found `SIDM2` holding `sdi-control-rerun-at-j8` under a pid that was not
+running, with eight paths refused behind it.
+
+The orphan test rests entirely on that pid liveness check, and Windows reuses
+pids aggressively enough that this is a real blind spot, not a theoretical
+one: if a dead runner's pid gets handed to some unrelated process before the
+next check, `pidAlive` reports it running, `isOrphan` returns false, and the
+alarm stays quiet while the Files view looks clean and the paths behind that
+record stay refused. This is accepted rather than fixed — `LOCKING.md` chose
+it deliberately, because the alternatives are reaping on age or on a weaker
+liveness test, and a false reap that kills a record whose task is still
+running is worse than a missed one that just leaves the alarm silent.
+
+**A stale mutex.** `serial.lock.d/` is the actual lock — a directory, because
+`mkdir` fails atomically if it exists. It is held for *milliseconds* around a
+single registry update, so a feed polling every ten seconds will essentially
+never catch it legitimately held; in practice this reports a stuck one. It is
+stale only on proof: the `pid` is not running on this host **and** the recorded
+`at` is more than **15 minutes** old. Neither alone is enough, and a live pid is
+never called stale at any age — that is a hung run, which the view says instead.
+A directory with no `owner` file in it is *held by someone still starting up*,
+not stale, and is reported as exactly that.
+
+### Projects
+
+One project at a time, chosen by tapping its tab. The tabs run across the top,
+one per repo with a queue, **each carrying its open count** so which project has
+work is answerable without pressing through all five. The selected one is filled rather than merely
+outlined, because a border-only treatment is the first thing to disappear at
+the distance this display is read from. More projects narrow the tabs rather
+than pushing one off the edge — five fit at 840px today and that is not a
+property worth depending on.
+
+Underneath, that project's tasks — **open and closed alike**, ordered running,
+queued, blocked, waiting, then done, so the top of the list is what is happening
+now and the bottom is history. Blocked sits below queued because it is not actionable
+by the runner — it is waiting on a person — which keeps the actionable half of
+the list unbroken at the top. The heading counts open work only; folding the done rows
+into one total would make the queue look larger than it is.
+
+| State | Colour | Marker |
+|---|---|---|
+| running | green, at full weight — the one row saying what the machine is doing this second | `▶` |
+| queued | body text | none |
+| blocked | amber — waiting on a person | `⚠` |
+| waiting | blue — waiting on another task, which clears itself | `⋯` |
+| done | receded to muted, its figures dimmer still | `✓` |
+
+**Every state carries a marker as well as a colour.** This panel is read from
+across a room and at an angle, where a hue difference is the first thing to go,
+and colour on its own says nothing to a reader who cannot separate red from
+green.
+
+`running` is derived from `serial.lock`: a holder record names its task by the
+same id the queue uses, verified against a real lock. A holder naming a task
+the queue does not have adds no row — the lock is a claim about work, not a
+source of it.
+
+**`waiting` is the state that changes what "open" means.** Measured across the
+real queues: 25 of 210 open tasks carry a `depends_on`, and **20 of those name a
+task that is still open**. Those twenty are not pickable however ready they
+look, and before this state existed they rendered identically to the 88 that
+are — the difference between a queue of 108 and a queue of 88. Blue rather than
+amber because nothing is wrong: a dependency clears itself when the other task
+lands, where a human blocker does not. A task that is both reports as
+`blocked`, for the same reason.
+
+**The queued block is ordered most-startable first**, because the device slot
+shows four rows and four arbitrary rows out of 147 is a worse answer than the
+four you could start now. Two keys, both from the contention model rather than
+from taste: **delegable before main-only**, since picking up a main-only task
+costs the main session; **parallel before serial**, since a serial task waits
+on the lane while a parallel one can start beside whatever is running; and then
+**cheapest first**, on the same reading of least friction.
+
+**Unrecorded effort sorts last**, and not because it is the largest bucket (65
+of the 147 queued tasks record none): a cost that was never measured cannot
+claim a cheap slot on the strength of not having been measured. Worth knowing
+what this key does *not* change — every one of the 24 delegable-and-parallel
+tasks is `medium`, so it reorders nothing the device slot shows. It orders the
+remainder, which is what the desktop dashboard scrolls through.
+Measured over the 147 genuinely queued tasks: 24 are delegable *and* parallel,
+83 delegable and serial, 40 main-only and serial — so the 24 that can start
+immediately come first instead of being scattered through the list. The sort is
+stable, so file order survives as the tiebreak, and it applies **only within
+the queued block**: reordering blocked work by how startable or how cheap it
+would have been is meaningless for work that cannot be started at all.
+
+**`main only`** rides alongside the model and effort on a queued row. 52 of 210
+tasks seize a stateful singleton and cannot be delegated to a subagent; it
+decides *how* a task can be run, not whether, so it joins the run attributes
+rather than displacing them.
+
+A queued row carries its mode, model and effort. Whatever decides what happens
+to the task **next** displaces those, because the row has one line for it: the
+blocking reason for a blocked one, and why it closed — or the commit that
+closed it — for a done one.
+
+**This list does not page itself**, unlike every other list here. The others
+are short enough that a page or two covers them, so advancing them strands
+nothing; this one runs to 162 rows and is meant to be read at the reader's own
+pace. It keeps its `overflow-y`, so a wheel or trackpad reaches the rest in the
+iCUE desktop dashboard. Note the measurement in the box above, though: **the
+Edge webview forwards taps but not drags**, so on the panel itself this list
+shows what fits and no more.
+
+**A tap on a tab selects; a tap anywhere else still cycles the views.** The hit
+is resolved with `elementFromPoint` rather than by trusting the event target —
+the `pointerup` can be delivered on a different element from the `pointerdown`,
+and a tab's text node is not the button.
+
+**The task list is fetched separately**, at `/tasks?project=<name>`, and only
+while this view is on screen — **including on every refresh while it stays on
+screen**. That second half is not a detail: because the list is its own
+request, a poll that refreshed the overview originally left it untouched, so it
+froze at whatever it held when the view was opened and a task that started
+running afterwards never turned green. The five real queues hold 210 tasks across 297KB,
+of which about 295KB is prose — `verify`, `why_model`, `why_lane`, `evidence` —
+that no 840×344 slot can show at any size. Trimmed to what a row draws they are
+still 49KB against the overview's 2.4KB, and the widget only ever looks at one
+project at a time, so the overview stays small and this is pulled on demand.
+Blocking reasons are capped at 110 characters — they are paragraphs in these
+files and a row has one line for them. Titles are capped at 140, which is the
+real maximum. The earlier cap of 90 was arrived at by capping titles at 90 and
+reading back the longest — the cap measuring itself — and it silently truncated
+about a third of real titles (median 79, p90 109, max 140). A row has 609px at
+the device slot, so CSS ellipsis does the visible trimming; cutting in the feed
+throws away text the desktop dashboard has the width to show.
+
+**Only the ten most recently closed tasks travel**, with the total alongside so
+the list can say `32 older done tasks not shown` rather than simply ending. The
+device slot renders **four rows** — measured — so all 42 of SIDM2's done rows
+sitting under 120 open ones would be unreachable there.
+
+### What the feed sends
+
+The run history is **aggregated in the feed**, not shipped whole: the widget only
+ever buckets it into daily counts and three tallies, so doing that once takes the
+payload from 79KB to 2.4KB and stops the Edge's webview re-deriving the same
+buckets every refresh.
+
+Every unavailability is stated rather than rendered as absence — no repo with a
+queue, a repo that cannot be read, history that cannot be dated. An empty grid
+reads as months of silence rather than as a missing file, which is the one
+failure these views must not have.
 
 ## Verifying a layout
 

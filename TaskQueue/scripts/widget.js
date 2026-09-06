@@ -1,0 +1,1411 @@
+/* Task Queue — how much whattask work is left across every repo on this
+ * machine, what is holding a lock right now, and what has been finished.
+ *
+ * The shell (property readers, clock, theme, tap-to-cycle, the pager, the
+ * heatmap builder) is the Claude Code Usage widget's, so the two read as a
+ * pair on the dashboard. The pager in particular is not optional: the iCUE
+ * webview forwards taps but NOT touch drags, so a list that does not page
+ * itself has rows nobody can reach by any means.
+ *
+ * Everything it draws comes from http://127.0.0.1:41777/tasks. A widget is a
+ * sandboxed page and cannot read files, which is why the feed exists.
+ */
+(function () {
+  'use strict';
+
+  var WIDGET_VERSION = '1.4.0';
+  var DEFAULT_FEED = 'http://127.0.0.1:41777/tasks';
+  var REQUEST_TIMEOUT_MS = 6000;
+  var TAP_SLOP_PX = 12;       /* movement beyond this is a scroll, not a tap */
+  var TAP_MAX_MS = 700;
+  var PAGE_MS = 5000;         /* dwell on each page of an overflowing region */
+
+  var els = {};
+  var timer = null;
+  var data = null;
+  var lastError = '';
+  var VIEWS = ['queue', 'live', 'history', 'files', 'projects'];
+  var view = 'queue';   /* tapping the widget cycles through VIEWS */
+
+  var TITLES = { queue: 'Task queue', live: 'Running now', history: 'Runs',
+                 files: 'Task files', projects: 'Projects' };
+  function getIcueProperty(name) {
+    if (typeof window !== 'undefined' && Object.prototype.hasOwnProperty.call(window, name)) {
+      var value = window[name];
+      if (value !== undefined && value !== null && value !== '') return value;
+    }
+    try {
+      var sandboxed = Function('return typeof ' + name + ' !== "undefined" ? ' + name + ' : undefined')();
+      if (sandboxed !== undefined && sandboxed !== null && sandboxed !== '') return sandboxed;
+    } catch (e) { /* not injected in this context */ }
+    return undefined;
+  }
+
+  function clampRange(v, min, max, d) {
+    v = Number(v);
+    if (!Number.isFinite(v)) return d;
+    return Math.max(min, Math.min(max, v));
+  }
+
+  function readFeedUrl() {
+    var raw = getIcueProperty('feedUrl');
+    return (typeof raw === 'string' && raw.trim()) ? raw.trim() : DEFAULT_FEED;
+  }
+
+  function readTheme() {
+    return getIcueProperty('colorTheme') === 'light' ? 'light' : 'dark';
+  }
+
+  /* 15s: matches index.html's data-default and the README table, and keeps
+     the staleness mark (3 missed refreshes) at 45s rather than 30s, trading
+     a little freshness for less load on a feed that also serves a physical
+     device. */
+  function readRefreshSeconds() {
+    return clampRange(getIcueProperty('refreshSeconds'), 5, 120, 15);
+  }
+
+  /* ---------- formatting ---------- */
+
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  /* Built from parts rather than toLocaleString: the widget runs in an embedded
+     webview whose locale is not the one the user picked in iCUE. */
+  function formatStamp(ms) {
+    if (!ms) return '';
+    var d = new Date(ms);
+    var h = d.getHours();
+    var suffix = h >= 12 ? 'PM' : 'AM';
+    var hour12 = h % 12;
+    if (hour12 === 0) hour12 = 12;
+    var mins = d.getMinutes();
+    return 'Updated ' + d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' +
+      hour12 + ':' + (mins < 10 ? '0' + mins : mins) + ' ' + suffix;
+  }
+
+  function num(n) {
+    return (n == null) ? '—' : Math.round(n).toLocaleString('en-US');
+  }
+
+  function compact(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return Math.round(n / 1000) + 'k';
+    return String(n);
+  }
+
+  /* ---------- rendering ---------- */
+
+  /* No amber/red thresholds here, unlike the usage widget this shell was
+     ported from: there the meter shows PLAN UTILISATION, where a high
+     percentage means you are running out, so amber-at-80/red-at-95 is right.
+     This meter shows FINISHED - closed / (open + closed) - where a high
+     percentage is the best state, so a danger colour would say the opposite
+     of what it means. The fill stays the plain accent colour at every
+     percentage; only its width (still run through clampRange) changes. */
+  function setBar(meterEl, fillEl, percent) {
+    var p = clampRange(percent, 0, 100, 0);
+    fillEl.style.width = p + '%';
+  }
+  function cell(tag, text, cls) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    el.textContent = text;
+    return el;
+  }
+
+  /* ---------- all-time stats ---------- */
+  /* The heading carries the count, so an empty column reads as the real state
+     rather than as a feed that failed. The suffix differs per column because
+     a held lock and an open session are different things: "2 held" and
+     "3 active" must not be mistakable for two halves of one number. */
+  function setHeading(ul, total, suffix, base) {
+    var h = ul.parentNode && ul.parentNode.querySelector('h2');
+    if (!h) return;
+    /* The base is cached because most headings are fixed words in the markup
+       and re-reading them after the first render would compound the count into
+       itself. A caller whose heading CHANGES - the projects view, whose
+       heading is the selected project's name - passes the new base explicitly;
+       without that the cache pinned the first project's name to every other
+       project's count. */
+    if (base != null) h.setAttribute('data-base', base);
+    else if (!h.getAttribute('data-base')) h.setAttribute('data-base', h.textContent);
+    h.classList.remove('is-pending');
+    var word = suffix || 'active';
+    h.textContent = h.getAttribute('data-base') + ' · ' +
+      (total ? total + ' ' + word : 'none ' + word);
+  }
+
+  /* The gap before an answer exists at all - a fetch still in flight, or one
+     never even started yet - is not "zero of them": feeding it through
+     setHeading as a count of 0 reads as "checked, and it is empty", which is
+     a claim about the queue the widget cannot back up yet. This is its own
+     path with its own wording and its own class, not a suffix trick layered
+     on the real one. */
+  function setHeadingPending(ul, base) {
+    var h = ul.parentNode && ul.parentNode.querySelector('h2');
+    if (!h) return;
+    h.setAttribute('data-base', base);
+    h.classList.add('is-pending');
+    h.textContent = base + ' · checking…';
+  }
+
+  /* The note's own box fills the view so its text can be centred in it, which
+     means the BOX overlaps the clock even when the text does not. The text goes
+     in a child, so what is padded away from the clock and what is measured
+     against it are the same thing. */
+  function setNote(el, text) {
+    el.textContent = '';
+    var span = document.createElement('span');
+    span.className = 'note-text';
+    span.textContent = text;
+    el.appendChild(span);
+    el.style.display = 'flex';
+  }
+
+  /* ---------- the queue view ---------- */
+
+  /* The single source of "which repo comes before which", shared by the
+     Queue list and the Projects tab strip below. Busiest first: the device
+     slot shows FOUR rows, so putting the repo with the most open work at the
+     top of the Queue view IS the interface, the same reasoning
+     projectTasks()'s own within-block ordering already applies one level
+     down. Ties (equal open counts, or a fixture with none) fall back to
+     array order, which is discover()'s case-insensitive alphabetical order
+     by the time it reaches here - Array#sort is stable, so that tiebreak
+     survives the sort rather than being shuffled.
+     Built ONCE and read by both renderers, rather than each calling its own
+     `.sort()` on `data.repos`: two independent sorts, however similar, are
+     exactly how the tab strip and the Queue list drifted apart before - one
+     order computed here cannot silently diverge from itself. */
+  function orderedRepos() {
+    return (data.repos || []).slice().sort(function (a, b) { return (b.open || 0) - (a.open || 0); });
+  }
+
+  function renderQueue() {
+    var t = data.totals || {};
+    if (data.unavailable) {
+      /* Say why there is nothing rather than drawing a meter at zero, which
+         would read as a queue that is empty rather than as no queue at all. */
+      setNote(els.queueNote, data.unavailable);
+      els.meters.style.display = 'none';
+      els.listRepos.style.display = 'none';
+      return;
+    }
+    els.queueNote.style.display = 'none';
+    els.meters.style.display = '';
+    els.listRepos.style.display = '';
+
+    var total = (t.open || 0) + (t.closed || 0);
+    var percent = total ? Math.round((t.closed / total) * 100) : 0;
+    els.doneValue.textContent = percent + '%';
+    setBar(els.mDone, els.doneFill, percent);
+    els.doneSub.textContent = num(t.closed || 0) + ' closed · ' + num(t.open || 0) + ' open';
+
+    /* requires-user is called out on its own: it is the one count on this
+       view that asks something of whoever is reading the glass. */
+    var waiting = (t.byMode && t.byMode['requires-user']) || 0;
+    els.repos.textContent = (t.repos || 0) + ((t.repos === 1) ? ' repo' : ' repos') +
+      (waiting ? ' · ' + waiting + ' waiting on you' : '');
+
+    renderRepoRows(els.repoRows, orderedRepos());
+  }
+
+  /* lastRunAt, as the feed actually serves it: epoch milliseconds (a float -
+     Date.now() math on the server side), or null for a repo whose
+     .claude/tasks/runs.jsonl has never been written. null is a real case,
+     not a missing field to paper over with "0m ago" - that would claim a
+     repo was touched moments ago when it has never run at all. */
+  function formatLastRun(lastRunAt) {
+    if (lastRunAt == null) return 'never run';
+    var diff = Date.now() - lastRunAt;
+    if (diff < 0) diff = 0;
+    var secs = Math.round(diff / 1000);
+    if (secs < 60) return secs + 's ago';
+    var mins = Math.floor(secs / 60);
+    if (mins < 60) return mins + 'm ago';
+    var hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    var days = Math.floor(hrs / 24);
+    if (days < 7) return days + 'd ago';
+    return Math.floor(days / 7) + 'w ago';
+  }
+
+  /* Same shape as buildTaskRow/brokenRow below: build the whole li before
+     anything is appended, so a throw partway through leaves nothing half-built
+     in the DOM. */
+  function buildRepoRow(r) {
+    var li = document.createElement('li');
+
+    var name = document.createElement('span');
+    name.className = 'row-name';
+    name.textContent = r.name;
+    li.appendChild(name);
+
+    var figure = document.createElement('span');
+    figure.className = 'row-figure';
+    /* A repo that could not be read says so in place of its counts, rather
+       than showing a zero that would read as an empty queue. */
+    if (r.error) {
+      figure.classList.add('row-error');
+      figure.textContent = r.error;
+    } else {
+      figure.textContent = num(r.open) + ' open · ' + num(r.closed) + ' closed' +
+        (r.blocked ? ' · ' + r.blocked + ' blocked' : '') + ' · ';
+      var age = document.createElement('span');
+      age.className = 'row-age';
+      age.textContent = formatLastRun(r.lastRunAt);
+      figure.appendChild(age);
+    }
+    li.appendChild(figure);
+    return li;
+  }
+
+  /* Same marker shape as brokenRow: the classes the stylesheet already
+     styles amber for a row inside a .list (#list-repos carries that class),
+     so no CSS change is needed here either. */
+  function brokenRepoRow(err) {
+    var li = document.createElement('li');
+    li.className = 'st-broken';
+    li.appendChild(cell('span', '⚠ a repo row could not be drawn', 'row-name'));
+    li.appendChild(cell('span', (err && err.message) ? err.message : String(err),
+      'row-figure row-error'));
+    return li;
+  }
+
+  function renderRepoRows(ul, rows) {
+    ul.textContent = '';
+    for (var i = 0; i < rows.length; i++) {
+      /* See the comment on the task-row loop in renderProjects: a throw here
+         must not silently shorten the list or unwind into fetchQueue's own
+         .catch(), which would blame the feed for a rendering bug. */
+      try {
+        ul.appendChild(buildRepoRow(rows[i]));
+      } catch (rowErr) {
+        ul.appendChild(brokenRepoRow(rowErr));
+        setTimeout(function (e) {
+          return function () { throw e; };
+        }(rowErr), 0);
+      }
+    }
+    setHeading(ul, rows.length, 'with queues');
+  }
+
+  /* ---------- the live view ---------- */
+
+  function elapsed(since) {
+    if (since == null) return '';
+    var secs = Math.max(0, Math.round((Date.now() - since) / 1000));
+    if (secs < 60) return secs + 's';
+    var mins = Math.floor(secs / 60);
+    if (mins < 60) return mins + 'm' + (secs % 60) + 's';
+    return Math.floor(mins / 60) + 'h' + (mins % 60) + 'm';
+  }
+
+  /* A held lock and an open Claude session are DIFFERENT CLAIMS about the
+     machine - one says a runner owns some paths, the other says an agent is
+     talking to the API - so they get separate columns and separate counts and
+     are never added together. */
+  function renderLive() {
+    var running = data.running || [];
+    var holders = [], activity = [];
+    for (var i = 0; i < running.length; i++) {
+      (running[i].kind === 'holder' ? holders : activity).push(running[i]);
+    }
+    renderRunning(els.holders, holders, true, 'held');
+    renderRunning(els.activity, activity, false, 'active');
+  }
+
+  /* Same shape as buildTaskRow/buildRepoRow: the whole li is built before
+     anything is appended. */
+  function buildRunningRow(r, showPaths) {
+    var li = document.createElement('li');
+    li.setAttribute('data-kind', r.kind);
+
+    var name = document.createElement('span');
+    name.className = 'row-name';
+    name.textContent = r.label;
+    li.appendChild(name);
+
+    var meta = document.createElement('span');
+    meta.className = 'row-figure';
+    var parts = [];
+    if (r.kind !== 'holder') parts.push(r.kind);
+    if (r.repo) parts.push(r.repo);
+    var age = elapsed(r.since);
+    if (age) parts.push(age);
+    if (showPaths && r.detail) parts.push(r.detail);
+    meta.textContent = parts.join(' · ');
+    li.appendChild(meta);
+
+    return li;
+  }
+
+  /* Same marker shape as brokenRow/brokenRepoRow: #holders and #activity
+     each sit inside their own .list div, so .row-figure.row-error is already
+     styled here too - no CSS change needed. */
+  function brokenRunningRow(err) {
+    var li = document.createElement('li');
+    li.className = 'st-broken';
+    li.appendChild(cell('span', '⚠ a row could not be drawn', 'row-name'));
+    li.appendChild(cell('span', (err && err.message) ? err.message : String(err),
+      'row-figure row-error'));
+    return li;
+  }
+
+  function renderRunning(ul, rows, showPaths, word) {
+    ul.textContent = '';
+    for (var i = 0; i < rows.length; i++) {
+      /* See the comment on the task-row loop in renderProjects: a throw here
+         must not silently shorten the list or unwind into fetchQueue's own
+         .catch(), which would blame the feed for a rendering bug. */
+      try {
+        ul.appendChild(buildRunningRow(rows[i], showPaths));
+      } catch (rowErr) {
+        ul.appendChild(brokenRunningRow(rowErr));
+        setTimeout(function (e) {
+          return function () { throw e; };
+        }(rowErr), 0);
+      }
+    }
+    setHeading(ul, rows.length, word);
+  }
+
+  /* ---------- the history view ---------- */
+
+  /* buildHeatmap wants an array in calendar order; the feed sends a map keyed
+     by date, because that is the shape that survives being aggregated. */
+  function dayArray(days) {
+    return Object.keys(days || {}).sort().map(function (k) {
+      return { date: k, count: days[k] };
+    });
+  }
+
+  function topKey(counts) {
+    var best = '', bestN = -1;
+    for (var k in counts) {
+      if (counts[k] > bestN) { best = k; bestN = counts[k]; }
+    }
+    return best || '—';
+  }
+
+  function renderHistory() {
+    var h = data.history || {};
+    var reasons = [];
+    var repos = data.repos || [];
+    for (var i = 0; i < repos.length; i++) {
+      if (repos[i].historyError) reasons.push(repos[i].historyError);
+    }
+
+    if (!h.runs) {
+      /* An empty grid would read as months of silence rather than as history
+         that could not be dated, which is the one failure this view must not
+         have. */
+      setNote(els.historyNote, reasons.length ? reasons.join(' · ')
+        : 'no run has been recorded in any queue yet');
+      els.history.style.display = 'none';
+      return;
+    }
+    els.historyNote.style.display = 'none';
+    els.history.style.display = '';
+
+    var days = dayArray(h.days);
+    var max = 0;
+    for (var d = 0; d < days.length; d++) max = Math.max(max, days[d].count);
+
+    /* Says which clock this is. The records carry no time of their own - the
+       date is the commit each record's `head` names - and a view that showed
+       it as when the run happened would be claiming something the data cannot
+       support. */
+    els.heatHead.textContent = 'Runs, by commit time';
+    els.heat.textContent = '';
+    els.heat.appendChild(buildHeatmap(days, max));
+
+    els.figs.textContent = '';
+    els.figs.appendChild(fig('runs', big(h.runs)));
+    els.figs.appendChild(fig('days', big(days.length)));
+    els.figs.appendChild(fig('top model', topKey(h.model)));
+    els.figs.appendChild(fig('top effort', topKey(h.effort)));
+
+    /* The outcome split is drawn from whatever the records name, not from a
+       fixed pair: the corpus has FIVE (done, partial, blocked, failed,
+       inconclusive), and hardcoding two would silently hide 41 runs.
+       A strip of chips rather than one headline figure each, MEASURED: nine
+       .fig blocks overflow the 840x344 slot by 46.6px, and the outcomes are a
+       related set that reads better on one line than as five headlines
+       competing with the run and day totals. */
+    els.outcomes.textContent = '';
+    var names = Object.keys(h.outcome || {}).sort(function (a, b) {
+      return h.outcome[b] - h.outcome[a];
+    });
+    for (var o = 0; o < names.length; o++) {
+      var chip = document.createElement('span');
+      chip.className = 'oc oc-' + names[o].replace(/[^a-z]/gi, '');
+      chip.setAttribute('data-outcome', names[o]);
+      chip.appendChild(cell('span', big(h.outcome[names[o]]), 'n'));
+      chip.appendChild(cell('span', names[o], 'k'));
+      els.outcomes.appendChild(chip);
+    }
+  }
+
+  /* ---------- the task files view ---------- */
+
+  var FILE_COLUMNS = [
+    { key: 'whattask.json',   head: 'queue' },
+    { key: 'runs.jsonl',      head: 'runs' },
+    { key: 'serial.lock',     head: 'lock' },
+    { key: 'decisions.jsonl', head: 'decis' },
+    { key: 'interview.json',  head: 'interv' }
+  ];
+
+  function kb(bytes) {
+    if (bytes == null) return '–';          /* absent, not zero */
+    if (bytes < 1024) return bytes + 'b';
+    var k = bytes / 1024;
+    return (k >= 1000 ? Math.round(k / 1024) + 'm' : Math.round(k) + 'k');
+  }
+
+  function buildFileRow(r) {
+    var tr = document.createElement('tr');
+    tr.appendChild(cell('td', r.name, 'name'));
+    for (var j = 0; j < FILE_COLUMNS.length; j++) {
+      var f = (r.files || {})[FILE_COLUMNS[j].key] || {};
+      var td = cell('td', kb(f.present ? f.bytes : null), 'n');
+      if (!f.present) td.classList.add('absent');
+      tr.appendChild(td);
+    }
+    var mx = r.mutex || {};
+    var mtd = cell('td', mx.held ? '●' : '○', 'n mx');
+    if (mx.stale) mtd.classList.add('mx-stale');
+    else if (mx.held) mtd.classList.add('mx-held');
+    tr.appendChild(mtd);
+    return tr;
+  }
+
+  /* The marker for a row that failed to build - but a TABLE row, not an li:
+     appending an <li> into a <tbody> is invalid markup and renders nothing
+     (or breaks the table), so this is a <tr> with one cell spanning every
+     column instead. .row-figure.row-error is scoped to ".list li" in the
+     stylesheet and does not reach into .filetable, so .filetable td.row-error
+     carries the same var(--warn) amber for this table. */
+  function brokenFileRow(err) {
+    var tr = document.createElement('tr');
+    tr.className = 'st-broken';
+    var td = cell('td', '⚠ a file row could not be drawn — ' +
+      ((err && err.message) ? err.message : String(err)), 'name row-error');
+    td.setAttribute('colspan', String(FILE_COLUMNS.length + 2));
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function renderFiles() {
+    var repos = data.repos || [];
+    var alarms = data.alarms || [];
+
+    /* The alarms are the reason this view exists, so they go ABOVE the table
+       and are never a column in it - a red cell in a grid of sizes is exactly
+       the thing an eye skates past. */
+    els.alarms.textContent = '';
+    for (var a = 0; a < alarms.length; a++) {
+      var al = alarms[a];
+      var row = document.createElement('div');
+      row.className = 'alarm alarm-' + al.kind;
+      row.appendChild(cell('span', '⚠', 'sign'));
+      row.appendChild(cell('span', al.repo + ' · ' + al.task, 'who'));
+      row.appendChild(cell('span', al.message, 'what'));
+      els.alarms.appendChild(row);
+    }
+    els.alarms.style.display = alarms.length ? '' : 'none';
+
+    /* The header says the machine is clean when it is, rather than leaving the
+       absence of an alarm to be inferred from an empty strip. */
+    var stuck = 0;
+    for (var m = 0; m < repos.length; m++) if (repos[m].mutex && repos[m].mutex.held) stuck++;
+    els.repos.textContent = repos.length + (repos.length === 1 ? ' repo' : ' repos') +
+      ' · ' + (alarms.length
+        ? alarms.length + (alarms.length === 1 ? ' alarm' : ' alarms')
+        : (stuck ? stuck + ' mutex held' : 'all clear'));
+
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var hr = document.createElement('tr');
+    hr.appendChild(cell('th', '', 'name'));
+    for (var c = 0; c < FILE_COLUMNS.length; c++) {
+      hr.appendChild(cell('th', FILE_COLUMNS[c].head, 'n'));
+    }
+    hr.appendChild(cell('th', 'mutex', 'n'));
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    for (var i = 0; i < repos.length; i++) {
+      /* See the comment on the task-row loop in renderProjects: a throw here
+         must not silently shorten the table or unwind into fetchFeed's own
+         .catch(), which would blame the feed for a rendering bug. buildFileRow
+         builds the whole <tr> before anything is appended, same shape as
+         buildTaskRow/buildRepoRow/buildRunningRow. */
+      try {
+        tbody.appendChild(buildFileRow(repos[i]));
+      } catch (rowErr) {
+        tbody.appendChild(brokenFileRow(rowErr));
+        setTimeout(function (e) {
+          return function () { throw e; };
+        }(rowErr), 0);
+      }
+    }
+    table.appendChild(tbody);
+
+    els.filetable.textContent = '';
+    els.filetable.appendChild(table);
+  }
+
+  /* ---------- the projects view ---------- */
+
+  /* A marker as well as a colour. The panel is read from across a room and at
+     an angle, where a hue difference is the first thing to go. */
+  var STATE_MARK = { running: '▶ ', blocked: '⚠ ', waiting: '⋯ ', done: '✓ ', queued: '' };
+
+  var selectedProject = null;   /* survives a refresh; falls back if it vanishes */
+  var projectData = null;
+  var projectError = '';
+  var projectPending = null;
+
+  /* The overview's repo list is the source of truth for which tabs exist, so a
+     project that disappears from the feed cannot stay selected.
+     Ordered by orderedRepos(), the same busiest-first order the Queue view's
+     rows use - not the feed's own order - so the tab strip and the Queue
+     list can never present the same repos in two different sequences. */
+  function projectNames() {
+    if (!data || !data.repos) return [];
+    return orderedRepos().map(function (r) { return r.name; });
+  }
+
+  function currentProject() {
+    var names = projectNames();
+    if (!names.length) return null;
+    if (selectedProject && names.indexOf(selectedProject) >= 0) return selectedProject;
+    return names[0];
+  }
+
+  function selectProject(name) {
+    if (name === selectedProject) return;
+    selectedProject = name;
+    projectData = null;      /* do not show one project's tasks under another's tab */
+    projectError = '';
+    /* fetchProject() FIRST: it sets projectPending synchronously, before any
+       fetch actually settles. Rendering before that call painted the gap with
+       whatever projectPending held from the tab the reader just left - never
+       this one - so renderProjects had no way to tell "fetching h2g" from
+       "nothing was ever asked for h2g" and fell through to the empty-project
+       wording. Same order applyView() already used for the first-entry case. */
+    fetchProject();
+    render();
+  }
+
+  /* Its own request, on the same cadence as the overview but only while this
+     view is showing. The response is ~24KB for the largest queue against the
+     overview's 2.4KB, which is exactly why it is not folded into it. */
+  function fetchProject() {
+    var name = currentProject();
+    if (!name) return;
+    var url = readFeedUrl() + (readFeedUrl().indexOf('?') >= 0 ? '&' : '?') +
+      'project=' + encodeURIComponent(name);
+    if (projectPending === name) return;
+    projectPending = name;
+
+    /* Only the request that is still the pending one may report itself
+       finished. An answer for a tab the reader has left arrives while the
+       CURRENT tab's request is in flight; clearing the marker on it says that
+       one is done, and the next poll then fires a second request on top of it
+       - two in flight for one tab, and whichever lands last wins. */
+    function settle(who) {
+      if (projectPending === who) projectPending = null;
+    }
+
+    var controller = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timeout = setTimeout(function () { if (controller) controller.abort(); }, REQUEST_TIMEOUT_MS);
+
+    fetch(url, controller ? { signal: controller.signal, cache: 'no-store' } : { cache: 'no-store' })
+      .then(function (res) {
+        clearTimeout(timeout);
+        if (!res.ok) {
+          /* Same three-state contract as the overview: a non-2xx carries the
+             real cause in a JSON body. Read it before throwing - a status
+             code alone tells the reader nothing about which project could
+             not be served, or why. */
+          return res.json().catch(function () { return null; }).then(function (body) {
+            var err = new Error('HTTP ' + res.status);
+            if (body && typeof body.error === 'string' && body.error) err.message = body.error;
+            throw err;
+          });
+        }
+        return res.json();
+      })
+      .then(function (json) {
+        settle(name);
+        /* A late answer for a tab the reader has already left must not
+           overwrite the one they are looking at now. */
+        if (name !== currentProject()) return;
+        /* An answer with no task list in it is not this project's. Dropping it
+           in silence leaves the PREVIOUS project's rows standing under this
+           tab, which reads as a live list rather than as a failure. */
+        if (!json || json.project !== name) {
+          projectData = null;
+          projectError = 'the feed answered without a task list for ' + name;
+          if (view === 'projects') render();
+          return;
+        }
+        projectData = json;
+        projectError = json.error || '';
+        if (view === 'projects') render();
+      })
+      .catch(function (err) {
+        clearTimeout(timeout);
+        settle(name);
+        if (name !== currentProject()) return;
+        projectData = null;
+        projectError = (err && err.message) ? err.message : 'request failed';
+        if (view === 'projects') render();
+      });
+  }
+
+  function renderProjects() {
+    var names = projectNames();
+    var current = currentProject();
+
+    var counts = {};
+    for (var c = 0; c < (data.repos || []).length; c++) {
+      counts[data.repos[c].name] = data.repos[c].open;
+    }
+
+    els.tabs.textContent = '';
+    for (var i = 0; i < names.length; i++) {
+      var tab = document.createElement('button');
+      tab.className = 'tab' + (names[i] === current ? ' is-active' : '');
+      tab.setAttribute('data-project', names[i]);
+      /* The count on the tab, so which project has work is answerable without
+         pressing through all five. The name can ellipsis; the count must not,
+         so it is its own element rather than appended text. */
+      tab.appendChild(cell('span', names[i], 'tab-name'));
+      var n = counts[names[i]];
+      if (n != null) tab.appendChild(cell('span', String(n), 'tab-count'));
+      els.tabs.appendChild(tab);
+    }
+
+    if (!names.length) {
+      setNote(els.projectsNote, (data && data.unavailable) ||
+        'no repo on this machine has a queue to show');
+      els.listTasks.style.display = 'none';
+      return;
+    }
+    els.projectsNote.style.display = 'none';
+    els.listTasks.style.display = '';
+
+    if (projectError) {
+      /* The feed's own words, not a guess at what went wrong. */
+      setNote(els.projectsNote, projectError);
+      els.listTasks.style.display = 'none';
+      return;
+    }
+
+    /* No answer for the tab on screen yet - either it was just pressed, or
+       this is the first time the view has ever been opened - and one really
+       is on its way (projectPending says so). Rendering the empty-tasks
+       branch below in this gap would print "<project> · none open", which is
+       a claim about the queue: it says checked-and-empty when the truth is
+       not-checked-yet. Once the fetch settles projectData or projectError is
+       set and this branch stops matching, real data included. */
+    var pending = !projectData && !projectError && projectPending === current;
+    if (pending) {
+      setHeadingPending(els.taskRows, current);
+      els.taskRows.textContent = '';
+      var waitLi = document.createElement('li');
+      waitLi.className = 'st-pending';
+      waitLi.appendChild(cell('span', 'checking ' + current + '…', 'row-name'));
+      els.taskRows.appendChild(waitLi);
+      return;
+    }
+
+    var tasks = (projectData && projectData.tasks) || [];
+    var open = 0, blocked = 0, running = 0, waiting = 0;
+    for (var b = 0; b < tasks.length; b++) {
+      if (tasks[b].state === 'done') continue;
+      open++;
+      if (tasks[b].state === 'blocked') blocked++;
+      if (tasks[b].state === 'running') running++;
+      if (tasks[b].state === 'waiting') waiting++;
+    }
+    /* The count is of OPEN work: the done rows are history underneath it, and
+       folding them into one total would make the queue look larger than it is.
+       Waiting is called out because it is the count that changes what "open"
+       means - a fifth of it may not be pickable at all. */
+    setHeading(els.taskRows, open, 'open' +
+      (running ? ' · ' + running + ' running' : '') +
+      (waiting ? ' · ' + waiting + ' waiting' : '') +
+      (blocked ? ' · ' + blocked + ' blocked' : ''), current);
+
+    els.taskRows.textContent = '';
+    for (var t = 0; t < tasks.length; t++) {
+      /* A ROW THAT THROWS MUST NOT LEAVE A GAP. buildTaskRow() appends nothing
+         until it has finished, so before this guard a throw partway through one
+         row simply produced no row - and the throw then unwound out of
+         renderProjects, out of render(), into fetchProject()'s own .catch(),
+         which read it as "the feed failed" and hid the whole list behind a note
+         quoting an internal TypeError as if the server had said it. Both halves
+         were lies the panel could not support: a list one row short with the
+         heading still counting it, then a feed error that never happened.
+         Caught here instead, per row: the rest of the list still draws, the row
+         that failed says so where it would have been, and the failure is
+         re-thrown asynchronously so it reaches window.onerror - the channel a
+         test harness (and the console) watches - instead of being absorbed by a
+         fetch handler that has no idea it is looking at a render bug. */
+      try {
+        els.taskRows.appendChild(buildTaskRow(tasks[t]));
+      } catch (rowErr) {
+        els.taskRows.appendChild(brokenRow(rowErr));
+        /* Out of this call stack, so it cannot be caught by whatever is
+           awaiting the render, and lands as a real page error. */
+        setTimeout(function (e) {
+          return function () { throw e; };
+        }(rowErr), 0);
+      }
+    }
+
+    /* Say what is NOT on screen rather than let the list end and imply there
+       is no more of it. */
+    var total = projectData && projectData.doneTotal;
+    var shown = projectData && projectData.doneShown;
+    if (total && shown < total) {
+      var more = document.createElement('li');
+      more.className = 'st-more';
+      more.appendChild(cell('span', (total - shown) + ' older done tasks not shown', 'row-name'));
+      els.taskRows.appendChild(more);
+    }
+  }
+
+  /* The row that stands where a task row could not be built. It uses only
+     classes the stylesheet already carries: .row-figure.row-error is the amber
+     "this reading is broken, not the thing it describes" treatment the Queue
+     view's unreadable-repo rows already use. A silently missing row is the one
+     failure this widget must never produce - the reader sees a shorter list and
+     has nothing to tell them it is wrong. */
+  function brokenRow(err) {
+    var li = document.createElement('li');
+    li.className = 'st-broken';
+    li.appendChild(cell('span', '⚠ a task row could not be drawn', 'row-name'));
+    li.appendChild(cell('span', (err && err.message) ? err.message : String(err),
+      'row-figure row-error'));
+    return li;
+  }
+
+  function buildTaskRow(task) {
+    var li = document.createElement('li');
+    li.className = 'st-' + (task.state || 'queued');
+    li.setAttribute('data-state', task.state || 'queued');
+
+    var top = document.createElement('span');
+    top.className = 'row-name';
+    /* A state this widget has never seen must not draw as a plain queued row
+       (STATE_MARK's own fallback for 'queued' is '') - that would silently
+       claim a task is ready to run when it might be anything. Falling back to
+       '' or to STATE_MARK[task.state] undefined (which prints the literal
+       word "undefined" on the panel) are both worse than being visibly
+       unrecognised, so an unmapped state gets its own mark. */
+    top.textContent = (STATE_MARK[task.state] || '? ') + (task.title || task.id);
+    li.appendChild(top);
+
+    var meta = document.createElement('span');
+    meta.className = 'row-figure';
+    /* Whatever decides what happens to this task NEXT displaces the model and
+       effort rather than joining them, because the row has one line: the
+       blocking reason for a blocked one, and why it closed for a done one. */
+    if (task.blocked) {
+      meta.textContent = task.blocked;
+    } else if (task.state === 'done') {
+      meta.textContent = task.reason || 'closed';
+    } else if (task.state === 'waiting') {
+      /* Which task it is waiting on, not merely that it is: the whole value
+         of the state is knowing what has to land first. The feed today only
+         ever sets state 'waiting' alongside a non-empty waitingOn array, but
+         that pairing is not enforced here - a null waitingOn would throw on
+         .join and blank the whole widget, so it is guarded rather than
+         trusted. */
+      meta.textContent = (task.waitingOn && task.waitingOn.length)
+        ? 'waiting on ' + task.waitingOn.join(', ')
+        : 'waiting';
+    } else {
+      var parts = [task.mode, task.model + '/' + task.effort];
+      /* Decides HOW it can be run, not whether - so it rides with the other
+         run attributes rather than displacing them. */
+      if (task.needsMain) parts.push('main only');
+      meta.textContent = parts.join(' · ');
+    }
+    li.appendChild(meta);
+
+    return li;
+  }
+
+  /* ---------- the dispatcher ---------- */
+
+  /* THE SUBTITLE RULE, for #repos under the header: the dispatcher clears it
+     before handing off to a view, and a view fills it in only when it has its
+     own true statement to make about itself (renderQueue and renderFiles do;
+     renderLive, renderHistory and renderProjects say nothing here because
+     their own headings already carry their counts). Clearing centrally rather
+     than requiring every view to write something - even an empty string - is
+     the point: a sixth view added later that never touches #repos inherits an
+     empty line for free, instead of silently inheriting whatever the view
+     before it left behind. That inheriting-the-previous-view's-sentence bug
+     is exactly what shipped: #repos held the queue or files text underneath
+     live/history/projects until they were next drawn. */
+  function render() {
+    if (!data) return;
+    showState('content');
+
+    els.updated.textContent = data.generatedAt ? formatStamp(data.generatedAt) : '';
+    /* Same rule as the usage widget's .updated.is-stale (2fe3364's sibling):
+       three missed refresh cycles, not one. A single failed poll on a flaky
+       connection keeps rendering the last good reading unmarked - the feed
+       could still be alive and merely slow - but once three cycles have gone
+       by with no successful fetch, generatedAt is that old and the panel says
+       so instead of quietly showing a dead queue as a live one. */
+    var staleAfter = readRefreshSeconds() * 3000;
+    els.updated.classList.toggle('is-stale',
+      !!data.generatedAt && (Date.now() - data.generatedAt) > staleAfter);
+    els.repos.textContent = '';
+
+    if (view === 'queue') renderQueue();
+    else if (view === 'live') renderLive();
+    else if (view === 'history') renderHistory();
+    else if (view === 'files') renderFiles();
+    else renderProjects();
+
+    refreshPaging();
+  }
+
+  function applyView() {
+    els.title.textContent = TITLES[view];
+    els.viewQueue.classList.toggle('is-active', view === 'queue');
+    els.viewLive.classList.toggle('is-active', view === 'live');
+    els.viewHistory.classList.toggle('is-active', view === 'history');
+    els.viewFiles.classList.toggle('is-active', view === 'files');
+    els.viewProjects.classList.toggle('is-active', view === 'projects');
+    /* The project detail is only fetched while its view is on screen. */
+    if (view === 'projects') fetchProject();
+    Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
+      d.classList.toggle('is-active', d.getAttribute('data-view') === view);
+    });
+    /* Which regions overflow depends on the box each one actually got, which
+       only exists once the view is displayed. Page positions are cleared
+       rather than kept, so a view always opens at the top of its lists. */
+    if (data) { pageIndex = {}; render(); }
+  }
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  /* Days since the epoch, from the YYYY-MM-DD the rollup writes. Parsed by
+     hand rather than through Date(string): the widget's webview is not
+     guaranteed to read a bare date as UTC, and an hour of drift would split
+     a streak. */
+  function dayNumber(iso) {
+    var p = String(iso).split('-');
+    if (p.length !== 3) return NaN;
+    var n = Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return Number.isFinite(n) ? Math.floor(n / 86400000) : NaN;
+  }
+
+  function svg(name, attrs) {
+    var el = document.createElementNS(SVG_NS, name);
+    Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    return el;
+  }
+
+  /* Four filled levels plus an empty one, keyed off the busiest day. The
+     square root pulls the middle of the range apart: message counts are
+     heavily skewed, and a linear scale leaves almost every day on level 1. */
+  function heatLevel(count, max) {
+    if (!count || !max) return 0;
+    return Math.max(1, Math.min(4, Math.ceil(4 * Math.sqrt(count / max))));
+  }
+
+  var HEAT_CELL = 12, HEAT_GAP = 2.4, HEAT_LABEL = 16;
+  var WEEKDAY_LABEL = { 1: 'M', 3: 'W', 5: 'F' };
+
+  /* A column per week, a row per weekday, drawn as SVG so the whole grid
+     scales to whatever width the slot gives it rather than being clipped or
+     wrapped.
+     Laid out by CALENDAR position, not by array position: a run is recorded only on a day
+     that had one, so `days` is sparse. Packing the
+     entries side by side would draw a solid block with no quiet days in it and
+     put every date in the wrong column. */
+  function buildHeatmap(days, max) {
+    var step = HEAT_CELL + HEAT_GAP;
+    var first = dayNumber(days[0].date);
+    var span = dayNumber(days[days.length - 1].date) - first + 1;
+    var counts = {};
+    days.forEach(function (d) { counts[dayNumber(d.date) - first] = d.count; });
+    /* 1970-01-01 was a Thursday, so +4 lands day 0 on a Sunday column. */
+    var offset = (first + 4) % 7;
+    var cols = Math.ceil((offset + span) / 7);
+    var w = HEAT_LABEL + cols * step;
+    var h = 7 * step;
+    var root = svg('svg', {
+      viewBox: '0 0 ' + w.toFixed(1) + ' ' + h.toFixed(1),
+      preserveAspectRatio: 'xMidYMid meet',
+      role: 'img'
+    });
+
+    Object.keys(WEEKDAY_LABEL).forEach(function (row) {
+      var t = svg('text', {
+        x: 0, y: (Number(row) * step + HEAT_CELL * 0.8).toFixed(1),
+        class: 'heat-day', 'font-size': HEAT_CELL * 0.8
+      });
+      t.textContent = WEEKDAY_LABEL[row];
+      root.appendChild(t);
+    });
+
+    for (var i = 0; i < span; i++) {
+      var slot = offset + i;
+      root.appendChild(svg('rect', {
+        x: (HEAT_LABEL + Math.floor(slot / 7) * step).toFixed(1),
+        y: ((slot % 7) * step).toFixed(1),
+        width: HEAT_CELL, height: HEAT_CELL, rx: 2,
+        'data-day': i,
+        'data-level': heatLevel(counts[i], max),
+        class: 'cell l' + heatLevel(counts[i], max)
+      }));
+    }
+    return root;
+  }
+  function fig(key, value) {
+    var d = document.createElement('div');
+    d.className = 'fig';
+    d.appendChild(cell('span', key, 'k'));
+    d.appendChild(cell('span', value, 'v'));
+    return d;
+  }
+
+  /* Streaks are counted over calendar dates rather than array positions: the
+     rollup only writes a row for a day that had activity, so consecutive
+     entries are not necessarily consecutive days. */
+  function big(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    return compact(n);
+  }
+  /* The pager's state. An overflowing region advances ITSELF, one page every
+     PAGE_MS, wrapping at the end, because the iCUE webview forwards taps but
+     NOT touch drags - measured on the device - so a region that relies on
+     being scrolled by hand strands every row below the fold. A region that
+     fits never moves. Driven off computed overflow rather than off a list of
+     known selectors. */
+  var paged = [];          /* the overflowing regions of the active view */
+  var pageIndex = {};      /* page per region, kept ACROSS a re-render */
+  var pageTimer = null;
+
+  function pageOffsets(el) {
+    var kids = el.children;
+    if (!kids.length) return [0];
+    var max = el.scrollHeight - el.clientHeight;
+    var savedScrollTop = el.scrollTop;
+    el.scrollTop = 0;
+    var elTop = el.getBoundingClientRect().top;
+    var boundaries = [];
+    function collect(node) {
+      var kidsN = node.children;
+      if (node.offsetHeight <= el.clientHeight + 0.5 || !kidsN.length) {
+        var r = node.getBoundingClientRect();
+        boundaries.push({ top: r.top - elTop, height: r.height });
+        return;
+      }
+      for (var i = 0; i < kidsN.length; i++) collect(kidsN[i]);
+    }
+    for (var i = 0; i < kids.length; i++) collect(kids[i]);
+    el.scrollTop = savedScrollTop;
+    /* A line of inline content can render with its rect starting a hair
+       above el's own padding-box top (font-metric overshoot, MEASURED at a
+       consistent -1px here) - normalizing every boundary against the first
+       one, rather than against el's rect directly, cancels that constant
+       exactly the way the old base-from-kids[0] subtraction did. */
+    if (boundaries.length) {
+      var base = boundaries[0].top;
+      for (var b = 0; b < boundaries.length; b++) boundaries[b].top -= base;
+    }
+
+    var offsets = [0];
+    var top = 0;
+    for (var i = 0; i < boundaries.length; i++) {
+      var t = boundaries[i].top;
+      var bottom = t + boundaries[i].height;
+      if (bottom > top + el.clientHeight + 0.5) {
+        top = t;
+        offsets.push(Math.min(top, max));
+        while (bottom > top + el.clientHeight + 0.5) {
+          top += el.clientHeight;
+          offsets.push(Math.min(top, max));
+        }
+      }
+    }
+    /* Clamping can collapse the last two boundaries onto the same offset. */
+    var out = [offsets[0]];
+    for (var j = 1; j < offsets.length; j++) {
+      if (offsets[j] > out[out.length - 1] + 0.5) out.push(offsets[j]);
+    }
+    return out;
+  }
+
+  /* The fade now means "there is content BELOW WHERE YOU ARE", not "this box
+     overflows somewhere" - on the last page there is nothing more to come and
+     drawing it would be the same false promise in a smaller form. */
+  function markFade(el) {
+    var box = el.classList.contains('col') ? el : el.parentNode;
+    if (!box) return;
+    var more = el.scrollHeight - el.clientHeight - el.scrollTop > 1; /* +1 absorbs sub-pixel rounding */
+    box.classList.toggle('can-scroll', more);
+  }
+
+  /* One dot per page in the region's own heading, which costs no vertical
+     space - the box is 232px and a row is 32px, so an indicator on its own
+     line would have cost a row of the very content it describes. Same idiom
+     as the view dots in the header. */
+  /* The heading's own text has to become a real element before the dots go
+     beside it. Left as a loose text node it is an anonymous flex item that
+     will not shrink, so the heading wrapped to a second line and took 22px
+     off the list below it - MEASURED: d-workflows' box fell from 232px to
+     210px, one whole row, the first time the dots were added. */
+  function headingBody(h) {
+    var body = h.querySelector('.htext');
+    if (body) return body;
+    body = document.createElement('span');
+    body.className = 'htext';
+    while (h.firstChild) body.appendChild(h.firstChild);
+    h.appendChild(body);
+    return body;
+  }
+
+  function setPageDots(el, i, pages) {
+    var h = (el.classList.contains('col') ? el : el.parentNode);
+    h = h && h.querySelector('h2');
+    if (!h) return;
+    var old = h.querySelector('.pages');
+    if (old) h.removeChild(old);
+    headingBody(h);
+    if (pages < 2) return;
+    var wrap = document.createElement('span');
+    wrap.className = 'pages';
+    for (var p = 0; p < pages; p++) {
+      var d = document.createElement('i');
+      if (p === i) d.className = 'is-active';
+      wrap.appendChild(d);
+    }
+    h.appendChild(wrap);
+  }
+
+  /* Rebuilt whenever the data or the view changes, because both change which
+     regions overflow and by how much. Driven off getComputedStyle rather than
+     a list of ids so a future view is covered without being named here. */
+  /* The projects view does not page itself. Every other list here is short
+     enough that a page or two covers it, so nothing is stranded by advancing
+     them; the project task list is up to 162 rows and is meant to be read at
+     the reader's own pace rather than moved out from under them. It keeps its
+     overflow-y so a wheel or trackpad still reaches the rest - and note the
+     measurement in README.md: the Edge webview forwards taps but NOT drags, so
+     on the panel itself a reader cannot drag this list open by hand. That is
+     exactly why the fade below still applies to it: with no scrolling and no
+     page dots, the fade is the only thing that says rows exist under the
+     fold, so refreshPaging still marks it - it just never pages it. */
+  var NO_PAGING = { projects: true };
+
+  function refreshPaging() {
+    paged = [];
+    var av = document.querySelector('.view.is-active');
+    if (!av) return;
+    var skipPaging = !!NO_PAGING[view];
+    if (skipPaging) {
+      /* Clear any dots a previous view left behind. This view must not grow
+         its own - see NO_PAGING - but that is not licence to skip the fade
+         below: with no scrolling and no dots, the fade is the ONLY thing
+         that says rows exist under the fold, so it still gets computed for
+         whichever element here actually overflows. */
+      var stale = av.querySelectorAll('.pages');
+      for (var p = 0; p < stale.length; p++) stale[p].parentNode.removeChild(stale[p]);
+    }
+    var all = av.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (el.clientHeight === 0) continue;
+      var oy = window.getComputedStyle(el).overflowY;
+      if (oy !== 'auto' && oy !== 'scroll') continue;
+      if (skipPaging) {
+        /* No scrollTop reset and no page key/dots: this list scrolls only by
+           wheel or trackpad, never by the pager, so its position is the
+           reader's to keep. Only the fade is this function's business here,
+           and markFade reads scrollTop as it stands rather than one this
+           function chose.
+           A scroll listener too, bound once per element: refreshPaging only
+           runs again on the next poll (up to readRefreshSeconds() later) or a
+           view change, and updating the fade only that rarely would leave it
+           lit for a reader who has already scrolled to the bottom by hand. */
+        markFade(el);
+        if (!el.__fadeBound) {
+          el.__fadeBound = true;
+          /* Wrapped in an IIFE rather than closing over the loop's own `el`
+             directly: `el` is a `var`, so every listener bound across every
+             iteration of this loop would otherwise share ONE variable and
+             fire against whichever element the loop visited LAST, not the
+             one each was bound to. */
+          (function (target) {
+            target.addEventListener('scroll', function () { markFade(target); }, { passive: true });
+          })(el);
+        }
+        continue;
+      }
+      /* DOM order is stable, so a positional key survives a re-render and
+         keeps a list on the page it was showing. */
+      if (!el.id && !el.getAttribute('data-page-key')) {
+        el.setAttribute('data-page-key', view + ':' + i);
+      }
+      var key = el.id || el.getAttribute('data-page-key');
+      var offsets = pageOffsets(el);
+      var at = Math.min(pageIndex[key] || 0, offsets.length - 1);
+      pageIndex[key] = at;
+      el.scrollTop = offsets[at];
+      setPageDots(el, at, offsets.length);
+      markFade(el);
+      if (offsets.length > 1) paged.push({ el: el, key: key, offsets: offsets });
+    }
+  }
+
+  function advancePages() {
+    for (var i = 0; i < paged.length; i++) {
+      var p = paged[i];
+      /* A region that has since been re-rendered smaller is left to the next
+         refreshPaging() rather than scrolled to a stale offset. */
+      if (!p.el.isConnected || p.el.clientHeight === 0) continue;
+      var at = (pageIndex[p.key] + 1) % p.offsets.length;
+      pageIndex[p.key] = at;
+      p.el.scrollTop = p.offsets[at];
+      setPageDots(p.el, at, p.offsets.length);
+      markFade(p.el);
+    }
+  }
+
+  function startPaging() {
+    if (pageTimer) clearInterval(pageTimer);
+    pageTimer = setInterval(advancePages, PAGE_MS);
+  }
+  function toggleView() {
+    view = VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length];
+    applyView();
+  }
+
+  function showState(state) {
+    ['loading-state', 'error-state', 'content'].forEach(function (name) {
+      var el = document.querySelector('.' + name);
+      if (el) el.style.display = (name === state) ? '' : 'none';
+    });
+  }
+
+  function applyTheme() {
+    document.documentElement.setAttribute('data-theme', readTheme());
+  }
+
+  /* ---------- fetching ---------- */
+
+  function fetchFeed() {
+    var url = readFeedUrl();
+    var controller = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timeout = setTimeout(function () { if (controller) controller.abort(); }, REQUEST_TIMEOUT_MS);
+
+    fetch(url, controller ? { signal: controller.signal, cache: 'no-store' } : { cache: 'no-store' })
+      .then(function (res) {
+        clearTimeout(timeout);
+        if (!res.ok) {
+          /* The feed answers a non-2xx with a JSON body carrying the real
+             cause (the three-state /health contract) - read it before
+             throwing, rather than discarding the body and falling back to
+             a fixed "start the server" hint that is wrong when the server
+             IS running but has no snapshot yet, or every rebuild failed. */
+          return res.json().catch(function () { return null; }).then(function (body) {
+            var err = new Error('HTTP ' + res.status);
+            if (body && typeof body.error === 'string' && body.error) {
+              err.message = body.error;
+              err.fromResponseBody = true;
+            }
+            throw err;
+          });
+        }
+        return res.json();
+      })
+      .then(function (json) {
+        data = json;
+        lastError = '';
+        render();
+        /* The project task list is its own request, so a poll that refreshes
+           the overview leaves it untouched. Without this the list freezes at
+           whatever it held when the view was opened: a task that starts
+           running afterwards never turns green, and one that closes never
+           moves down. fetchProject() no-ops if a request for the same project
+           is already in flight. */
+        if (view === 'projects') fetchProject();
+      })
+      .catch(function (err) {
+        clearTimeout(timeout);
+        lastError = err && err.message ? err.message : 'request failed';
+        /* Keep the last good reading on screen rather than blanking it. */
+        if (data) {
+          render();
+        } else {
+          els.errorHint.textContent = (err && err.fromResponseBody)
+            ? lastError
+            : 'Start it with: node usage-server/server.js — ' + url + ' (' + lastError + ')';
+          showState('error-state');
+        }
+      });
+  }
+
+  function schedule() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(fetchFeed, readRefreshSeconds() * 1000);
+  }
+
+  /* ---------- iCUE lifecycle ---------- */
+
+  function onIcueDataUpdated() {
+    applyTheme();
+    if (data) render();
+    schedule();
+    fetchFeed();
+  }
+
+  function onIcueInitialized() {
+    onIcueDataUpdated();
+  }
+
+  window.TaskQueue = {
+    onDataUpdated: onIcueDataUpdated,
+    onICUEInitialized: onIcueInitialized
+  };
+
+  /* The elapsed times in the live view are relative, so tick them between
+     polls - otherwise a held lock reads as the same age for a whole refresh
+     interval. Only the live view has them, so nothing else is touched. */
+  function startLiveTicker() {
+    setInterval(function () {
+      if (data && view === 'live') renderLive();
+    }, 5000);
+  }
+
+  /* Every els.* name used anywhere in this file is assigned here. One that is
+     not becomes `undefined` at render time, and the failure is a silent blank
+     rather than an error. */
+  function cacheElements() {
+    els.title = document.getElementById('title');
+    els.repos = document.getElementById('repos');
+    els.updated = document.getElementById('updated');
+    els.version = document.getElementById('version');
+    els.errorHint = document.getElementById('error-hint');
+
+    els.viewQueue = document.querySelector('.view-queue');
+    els.meters = document.querySelector('.view-queue .meters');
+    els.listRepos = document.getElementById('list-repos');
+    els.repoRows = document.getElementById('repo-rows');
+    els.mDone = document.getElementById('m-done');
+    els.doneFill = document.getElementById('done-fill');
+    els.doneValue = document.getElementById('done-value');
+    els.doneSub = document.getElementById('done-sub');
+    els.queueNote = document.getElementById('queue-note');
+
+    els.viewLive = document.querySelector('.view-live');
+    els.holders = document.getElementById('holders');
+    els.activity = document.getElementById('activity');
+
+    els.viewHistory = document.querySelector('.view-history');
+    els.history = document.querySelector('.view-history .history');
+    els.heat = document.getElementById('heat');
+    els.heatHead = document.getElementById('heat-head');
+    els.figs = document.getElementById('figs');
+    els.outcomes = document.getElementById('outcomes');
+    els.historyNote = document.getElementById('history-note');
+
+    els.viewFiles = document.querySelector('.view-files');
+    els.alarms = document.getElementById('alarms');
+    els.filetable = document.getElementById('filetable');
+
+    els.viewProjects = document.querySelector('.view-projects');
+    els.tabs = document.getElementById('tabs');
+    els.listTasks = document.getElementById('list-tasks');
+    els.taskRows = document.getElementById('task-rows');
+    els.tasksHead = document.getElementById('tasks-head');
+    els.projectsNote = document.getElementById('projects-note');
+
+    if (els.version) els.version.textContent = 'v' + WIDGET_VERSION;
+  }
+  /* A single false read of iCUE_initialized is a race, not proof of a browser. */
+  var bootAttempts = 0, BOOT_RETRY_MS = 100, BOOT_RETRY_MAX = 15;
+  function bootCheck() {
+    if (typeof iCUE_initialized !== 'undefined' && iCUE_initialized) {
+      onIcueInitialized();
+      return;
+    }
+    if (bootAttempts < BOOT_RETRY_MAX) {
+      bootAttempts++;
+      setTimeout(bootCheck, BOOT_RETRY_MS);
+      return;
+    }
+    onIcueDataUpdated();
+  }
+
+  cacheElements();
+  applyTheme();
+  applyView();
+
+  /* Tap anywhere to swap views. Needs "interactive": true in manifest.json,
+     without which iCUE never forwards touches to the page.
+     A plain click listener would also fire at the end of a scroll drag, so a
+     gesture only counts as a tap if the pointer barely moved and was not held.
+     Pointer events cover mouse and touch alike; the click fallback is for any
+     context that does not deliver them. */
+  (function bindTap() {
+    var startX = 0, startY = 0, startT = 0, tracking = false;
+
+    function down(e) {
+      tracking = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startT = Date.now();
+    }
+
+    function up(e) {
+      if (!tracking) return;
+      tracking = false;
+      var moved = Math.abs(e.clientX - startX) > TAP_SLOP_PX ||
+                  Math.abs(e.clientY - startY) > TAP_SLOP_PX;
+      if (moved || (Date.now() - startT) > TAP_MAX_MS) return;
+
+      /* A tap that lands on a project tab selects it; anything else still
+         cycles the views. Resolved by elementFromPoint rather than by trusting
+         e.target: the pointerup can be delivered on a different element from
+         the pointerdown, and the tab's own text node is not the button. */
+      var hit = document.elementFromPoint(e.clientX, e.clientY);
+      var tab = hit && hit.closest ? hit.closest('.tab') : null;
+      if (tab && view === 'projects') {
+        selectProject(tab.getAttribute('data-project'));
+        return;
+      }
+      toggleView();
+    }
+
+    if (typeof window.PointerEvent === 'function') {
+      document.addEventListener('pointerdown', down);
+      document.addEventListener('pointerup', up);
+      document.addEventListener('pointercancel', function () { tracking = false; });
+    } else {
+      document.addEventListener('click', toggleView);
+    }
+  })();
+
+  showState('loading-state');
+  startLiveTicker();
+  startPaging();
+  fetchFeed();
+  bootCheck();
+})();

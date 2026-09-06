@@ -1,6 +1,6 @@
 # iCUE widgets — TODO
 
-## C64 Weather — 1.5.3
+## C64 Weather — 1.6.0
 
 ### Done
 
@@ -121,7 +121,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       TabButtonsEditorSetting.qml:33 calls `rowCount()` on a QVariantList, which
       throws for every possible payload — Corsair's bundled widgets included.
 
-## Claude Code Usage — 1.11.0
+## Claude Code Usage — 1.15.0
 
 ### Done
 
@@ -391,12 +391,175 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       back down to fit `.meter-top` alongside `.meter .value`. Adding
       `flex-shrink: 0 !important` to the injected style makes the mutation
       actually widen the box, and the check now fires.
-- [ ] **If the real formula is ever wanted**, it needs several panel readings at
-      known times across one block, then candidate models tested against them —
-      cache reads free, per-request cost, non-linear curve, reporting lag. Two
-      readings cannot separate those.
+- [x] **The real per-request cost formula: DECIDED AGAINST, 2026-09-06.** This
+      item asked for several panel readings at known times across one block, then
+      candidate models tested against them — cache reads free, per-request cost,
+      non-linear curve, reporting lag, since two readings cannot separate four
+      candidates. It is not being done, because its premise had quietly expired.
 
-## Both widgets
+      The meters no longer show a locally-derived estimate. `widget.js:683-706`
+      reads `live.fiveHour.percent` and `live.sevenDay.percent` straight from
+      Anthropic's own OAuth utilisation endpoint, and the header says `LIVE`. The
+      local token fraction drives the bar ONLY when that endpoint cannot be
+      reached, where the header says `LOCAL` (`widget.js:696`). So the number on
+      the glass is already the authority's own figure rather than anything
+      modelled, and a fitted formula would improve the degraded reading and
+      nothing else.
+
+      **What would reopen it:** the OAuth endpoint is undocumented and internal —
+      `official.js`'s own header says it can change or disappear without notice.
+      If it goes, `LOCAL` becomes the only reading and this returns on different
+      grounds: not "is the approximation good enough" but "it is now the only
+      number we have".
+
+      The tooling for it already exists and should not be rediscovered:
+      `/usage?at=<epoch|ISO>` rebuilds the snapshot as of a past moment
+      specifically to calibrate against a timestamped screenshot
+      (`server.js:1394`, `usagehtml.js:278`).
+
+## Task Queue — 1.4.0
+
+### Done
+
+- [x] **The "Finished" meter turns amber at 80% and red at 95%** (high, fixed
+      2026-09-05). Removed the `HIGH_WATER`/`CRITICAL_WATER` thresholds and the
+      `.meter.is-high`/`.is-critical` fill rules rather than inverting them — a
+      completion bar has no danger state. 107 → 108 layout checks.
+      `taskqueue-finished-meter-thresholds-inverted` in `runs.jsonl`.
+- [x] **The header subtitle goes stale across views** (high, fixed 2026-09-05).
+      The dispatcher now clears `#repos` before each view renders, and a view
+      fills it in only when it has its own true statement — so a sixth view
+      that never touches it gets an empty line for free instead of the
+      previous view's stale text. 123 → 127 checks.
+      `taskqueue-header-subtitle-stale-across-views` in `runs.jsonl`.
+- [x] **Every tab press flashes a false heading** (high, fixed 2026-09-05).
+      `selectProject()` now fetches before it renders, matching
+      `applyView()`'s existing order, and a pending heading ("checking…")
+      covers the request window instead of "none open" — a claim about the
+      queue, not a loading state. 117 → 123 checks.
+      `taskqueue-tab-switch-flashes-none-open` in `runs.jsonl`.
+- [x] **Refresh default is 10 in code, 15 everywhere else** (low, fixed
+      2026-09-05). The manifest never stated a value at all — the mismatch was
+      one file (`widget.js`'s fallback) against two (`index.html`, README),
+      not a three-way split. Fallback changed 10 → 15 to match. 147 → 150
+      checks. `taskqueue-refresh-default-mismatch` in `runs.jsonl`.
+- [x] **Tabs and the repo list are in different orders, and neither is
+      alphabetical to a human** (medium, fixed 2026-09-05). The Queue's
+      busiest-first order was deliberate and kept; the tab strip's raw feed
+      order was the actual defect. One shared `orderedRepos()` (case-insensitive,
+      busiest-first with alphabetical tiebreak) now backs both, inside
+      `discover()` so every future caller inherits it. tasks.test.js 160 → 161,
+      layout.test.js 139 → 142. `taskqueue-consistent-repo-order` in
+      `runs.jsonl`.
+- [x] **The Live view will snap to page 0 every five seconds — FALSIFICATION,
+      no code change** (2026-09-05). The finding was false. Instrumenting
+      inside the pager showed `noffsets` is 2 per column, not 4: the earlier
+      probe counted page dots with a selector spanning BOTH columns of the
+      view, so a correct 1→0 wrap read as a 4-page reset. `refreshPaging` does
+      not clobber `pageIndex` and `renderLive`'s rebuild does not strand the
+      element — both independently checked and ruled out. `widget.js` and
+      `layout.test.js` are unmodified for this item. Reasoning kept because it
+      cost two attempts: a page-dot count taken across a whole view is not a
+      page count once a view has more than one paging column.
+      `taskqueue-live-tick-resets-scroll` in `runs.jsonl`.
+- [x] **`fetchProject` swallows some errors and can double-fetch** (medium,
+      fixed 2026-09-05). All three defects were real: no `res.ok` check (now
+      surfaces the feed's own error), a shapeless 200 leaving stale rows
+      standing under a new tab (now cleared and named), and a late answer for
+      an abandoned tab clearing `projectPending` while the current tab's
+      request was still in flight (now scoped per-request via `settle(who)`).
+      108 → 117 checks. `taskqueue-fetchproject-error-handling` in
+      `runs.jsonl`.
+- [x] **Two unguarded lookups that would kill a render** (low, fixed
+      2026-09-05). `STATE_MARK[task.state]` now falls back to a visible `? `
+      mark instead of `undefined`, and a null `waitingOn` renders the bare
+      word "waiting" instead of throwing on `.join()`. Confirmed from
+      `usage-server/tasks.js` that neither case is reachable from the live
+      feed today — genuine insurance, not a live bug. 150 → 157 checks.
+      `taskqueue-guard-state-mark-and-waitingon` in `runs.jsonl`. (Opened
+      `taskqueue-row-render-errors-are-invisible` as a follow-on: a thrown
+      exception inside a row's construction is currently invisible to the
+      suite's page-error check.)
+- [x] **Nothing verifies any slot but 840×344, while README.md claims every
+      slot size in both orientations** (test debt, medium, fixed 2026-09-05).
+      The suite now renders all five views at four slots (840×344, 696×416,
+      840×696, 696×840) — 108 renders per run. All four measured clean (0
+      overflow, 0 clock-overlap), but the README claim was narrowed anyway to
+      name only the four verified slots rather than "every" slot, since
+      nothing enumerates a closed set. Three dead `.body`/`#list-subtasks`
+      rules (inherited from ClaudeUsage, matching no element here) were
+      deleted. 157 → 187 checks.
+      `taskqueue-verify-other-slots-or-drop-claim` in `runs.jsonl`.
+- [x] **Show how stale each queue is** (improvement, fixed 2026-09-05). Each
+      Queue row now carries a relative age after its counts, from the feed's
+      `lastRunAt`; a repo that has never run says so instead of getting a
+      fabricated age. Confirmed against the live feed on 41777 (read-only).
+      133 → 139 checks. `taskqueue-show-queue-staleness` in `runs.jsonl`.
+- [x] **Cache commit times in the feed** (improvement, fixed 2026-09-05). A
+      module-level `Map` keyed on repo path + SHA now backs `commitTimes()`;
+      an unresolved SHA is deliberately NOT cached, so it is retried every
+      rebuild rather than staying permanently dated. 143 → 150 checks.
+      Verified only in the suite — the live feed on 41777 is still running
+      the pre-cache build and was not restarted (read-only per this run's
+      constraints). `taskqueue-cache-commit-times` in `runs.jsonl`.
+- [x] **`whattask.json` is parsed three times per rebuild** (improvement,
+      fixed 2026-09-05). `readRepo`, `projectTasks` and `collectQueuedTasks`
+      now share a per-call cache `Map` threaded through `readPlan`/`readRuns`;
+      nothing module-level holds it, so a plan edited between builds is
+      picked up on the very next one at the cost of one re-read. Also
+      corrected the task's own premise: `projectTasks()` is a different,
+      mutually-exclusive route, so the real duplication was 2× whattask in
+      `collectQueuedTasks` and 2× runs in `build()`, not the three-way overlap
+      implied. `taskqueue-read-whattask-once` in `runs.jsonl`.
+- [x] **Mark the feed stale when a poll fails** (improvement, fixed
+      2026-09-05). The `Updated` stamp gets `.is-stale` after three missed
+      refresh cycles (`readRefreshSeconds() * 3000`), mirroring the sibling
+      usage widget's indicator. 127 → 133 checks.
+      `taskqueue-stale-indicator-on-poll-failure` in `runs.jsonl`.
+- [x] **The unpaged projects list has no "more below" hint** (improvement,
+      fixed 2026-09-05). `refreshPaging()` now always reaches the
+      overflow-scanning loop; a `skipPaging` branch calls `markFade()` without
+      joining the auto-advance array, so `NO_PAGING` views get the fade hint
+      without gaining page dots. 142 → 147 checks.
+      `taskqueue-fade-hint-on-unpaged-list` in `runs.jsonl`.
+- [x] **Dead weight** (improvement, fixed 2026-09-05). Eleven deletions, each
+      verified individually: `MAX_ROWS`, `formatCountdown`, `DAYS` +
+      `formatWeekday`, `shortDate`, an orphaned AM/PM comment, the `.why` CSS
+      cluster and `--why-lines`, plus dead harness scraping code. Also found
+      and removed three clusters the item never named: an inherited
+      `.head .live`/`is-stale`/`is-local`/`is-partial` badge with no element
+      in this markup, an unreachable `.view-history.is-unavailable` override,
+      and an unused `--radius` custom property. `startClock` renamed to
+      `startLiveTicker` to match what it does. widget.js 1322→1285,
+      TaskQueue.css 1223→1145, layout.test.js 2128→2078; 187 checks before and
+      after (no assertion added or lost — the right signature for a deletion
+      pass; greenness proves nothing else depends on the removed code, not
+      that it was ever exercised — proof is the zero-hit grep for every
+      deleted symbol). `taskqueue-remove-dead-code` in `runs.jsonl`.
+- [x] **Five views on one page** (2026-09-05): queue, running now, run history,
+      task files, and one project's task list behind a tab strip. Fed by
+      `/tasks` and `/tasks?project=<name>` on the usage server. Every view says
+      why when it has nothing honest to draw, rather than drawing an empty one.
+- [x] **Two faults nothing else on the machine reports**, per `LOCKING.md`'s
+      own tests: an orphaned `serial.lock` holder (host is this machine, pid
+      not running — age deliberately not a factor) and a stale mutex (dead pid
+      AND `at` over 15 minutes). Found a real orphan in SIDM2 on first run.
+- [x] **Task states with a marker each**: running, queued, blocked, waiting on
+      another open task, done. Queued block sorted delegable → parallel →
+      cheapest; done capped at ten with the omitted count stated.
+- [x] **Layout suite** at 840×344, 107 checks, including visible-row counts
+      (not DOM counts), resolved colours for the states that carry meaning, and
+      a refresh driven through `onDataUpdated()` with a different second body.
+- [x] **The overlap check is vacuous** — repointed at computed `position`
+      instead of an inline-style selector nothing sets. Independently
+      re-verified with a second, different overlay: it caught eight elements
+      across seven renders, confirming the fixed probe actually fails.
+- [x] **Orphan detection has a documented blind spot** — one README paragraph
+      says Windows PID reuse can make a dead runner read as alive and silence
+      the orphan alarm, and that this is deliberate per `LOCKING.md` (a false
+      reap is worse than a missed one).
+
+## All three widgets
 
 - [x] **tab-buttons throws in iCUE's settings panel** (fixed in `c1f7644` by
       moving off the control; the underlying bug is iCUE's):

@@ -37,7 +37,7 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('C64Weather', 'ClaudeUsage', 'all')]
+  [ValidateSet('C64Weather', 'ClaudeUsage', 'TaskQueue', 'all')]
   [string] $Widget = 'all',
 
   # Explicit version, e.g. 1.6.0. Applied to every selected widget and wins
@@ -80,6 +80,7 @@ function Fail { param([string] $Text) Write-Host "`nFAILED: $Text" -ForegroundCo
 $All = @(
   [pscustomobject]@{ Name = 'C64Weather';  Id = 'com.thordanielz.c64weather';  Package = 'c64-weather.icuewidget' }
   [pscustomobject]@{ Name = 'ClaudeUsage'; Id = 'com.thordanielz.claudeusage'; Package = 'claude-code-usage.icuewidget' }
+  [pscustomobject]@{ Name = 'TaskQueue';   Id = 'com.thordanielz.taskqueue';   Package = 'task-queue.icuewidget' }
 )
 $Selected = if ($Widget -eq 'all') { $All } else { $All | Where-Object Name -eq $Widget }
 
@@ -199,12 +200,14 @@ if ($SkipTests) {
   $suites = @()
   foreach ($w in $Selected) {
     $suites += Get-ChildItem (Join-Path $w.Dir 'test') -Filter '*.test.js' -ErrorAction SilentlyContinue
-    # The usage widget renders what the feed serves, so the feed's suites are
-    # part of its gate, not a separate concern.
-    if ($w.Name -eq 'ClaudeUsage') {
+    # Both of these render what the feed serves, so the feed's suites are part
+    # of their gate, not a separate concern. Deduplicated below: selecting both
+    # would otherwise queue the usage-server suites twice and run them twice.
+    if ($w.Name -eq 'ClaudeUsage' -or $w.Name -eq 'TaskQueue') {
       $suites += Get-ChildItem (Join-Path $RepoRoot 'usage-server\test') -Filter '*.test.js' -ErrorAction SilentlyContinue
     }
   }
+  $suites = $suites | Sort-Object FullName -Unique
   foreach ($s in $suites) {
     $rel = $s.FullName.Substring($RepoRoot.Length + 1)
     Write-Host ("   {0,-46} " -f $rel) -NoNewline
@@ -222,10 +225,22 @@ if ($SkipTests) {
 # ----------------------------------------------------------- bump and package
 
 Write-Step 'Version'
+# -SkipTests means "deploy exactly what is on disk now", so it must NOT bump:
+# that is what the flag's own description promises, and until this gate existed
+# it was false. The Version step ran unconditionally, so `-SkipTests` alone
+# rewrote two files per widget - and a recorded decision that said "the versions
+# are already bumped, so the bump must not run" would have done the opposite of
+# what it said. An explicit -Version still wins, because pinning to a stated
+# value is the caller saying what the version IS, not asking for a step.
+$bumping = -not $SkipTests -or $Version
 foreach ($w in $Selected) {
   $current = Get-WidgetVersion $w.Dir
-  $next = if ($Version) { $Version } else { Step-Version $current $Bump }
-  Write-Info "$($w.Name) $current -> $next$(if ($DryRun) { ' (dry run)' })"
+  $next = if ($Version) { $Version } elseif ($bumping) { Step-Version $current $Bump } else { $current }
+  if ($next -eq $current) {
+    Write-Info "$($w.Name) $current (unchanged)$(if ($DryRun) { ' (dry run)' })"
+  } else {
+    Write-Info "$($w.Name) $current -> $next$(if ($DryRun) { ' (dry run)' })"
+  }
   Set-WidgetVersion $w.Dir $next
   $w | Add-Member -NotePropertyName NewVersion -NotePropertyValue $next
 }

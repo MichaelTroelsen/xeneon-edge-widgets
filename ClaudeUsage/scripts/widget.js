@@ -5,7 +5,7 @@
   'use strict';
 
   /* Keep in step with manifest.json - shown in the header on the device. */
-  var WIDGET_VERSION = '1.14.1';
+  var WIDGET_VERSION = '1.15.0';
   var DEFAULT_FEED = 'http://127.0.0.1:41777/usage';
   var REQUEST_TIMEOUT_MS = 6000;
   var MAX_ROWS = 40;          /* lists page themselves, so render everything the feed sends */
@@ -590,6 +590,7 @@
   function setWhy(text) {
     if (!els.why || !els.viewUsage) return;
     els.viewUsage.classList.toggle('has-why', !!text);
+    syncClock();
     if (els.why.getAttribute('data-why') === (text || '')) return;
     els.why.setAttribute('data-why', text || '');
     while (els.why.firstChild) els.why.removeChild(els.why.firstChild);
@@ -606,6 +607,82 @@
         els.why.appendChild(piece);
       }
     }
+  }
+
+  /* The static lead-in ("Anthropic figures unavailable:") used to be baked
+     into the same string handed to setWhy(), so it sat on page one of the
+     reason and was gone by page two - a later page then read as a bare
+     error/path with no context. This puts it in a sibling of #why that the
+     pager in refreshPaging() never sees (it walks for computed
+     overflow-y:auto/scroll, and this element has neither), so it is
+     unaffected by scrollTop and stays on screen for every page.
+
+     Reserving it as a LINE of #why's own height was tried and rejected: on
+     the actual device (840x344) the short-slot media query sets
+     --why-lines:1, so #why is already exactly one line tall and taking a
+     whole line from it leaves nothing for the reason at all - unreachable,
+     which is worse than the bug - and giving the label its own extra line
+     reintroduces the vertical reservation decision:claudeusage-why-strip-
+     vertical-budget already closed. Eating into #why's WIDTH instead costs
+     nothing in height at any --why-lines value: #why keeps its full line
+     count and the reason keeps paging exactly as before, just wrapping a
+     little sooner because the box is narrower. */
+  function setWhyLabel(text) {
+    if (!els.why || !els.whyWrap) return;
+    var label = els.whyLabel;
+    if (!text) {
+      if (label) label.hidden = true;
+      els.why.style.paddingLeft = '';
+      return;
+    }
+    if (!label) {
+      label = document.createElement('div');
+      label.id = 'why-prefix';
+      label.style.position = 'absolute';
+      label.style.left = '0';
+      label.style.top = '0';
+      label.style.color = 'var(--warn)';
+      label.style.fontSize = 'var(--font-badge)';
+      label.style.lineHeight = '1.25';
+      label.style.whiteSpace = 'nowrap';
+      els.whyWrap.insertBefore(label, els.why);
+      els.whyLabel = label;
+    }
+    label.hidden = false;
+    if (label.textContent !== text) label.textContent = text;
+    syncWhyPad();
+  }
+
+  /* The lead-in is painted over .why-wrap, so the reason only stays readable
+     because #why is indented past it. That indent is the label's RENDERED
+     width, and a hidden element renders at zero - measuring while the usage
+     view is still display:none silently yields a 6px indent and paints the
+     label over the first words of every line. Measured 840x344: label right
+     195.9, first word left 27.5. So this re-measures whenever a box exists,
+     and refuses to write a width it could not measure rather than collapsing
+     to the bare gutter. */
+  function syncWhyPad() {
+    var label = els.whyLabel;
+    if (!els.why || !label || label.hidden) return;
+    var w = label.getBoundingClientRect().width;
+    if (w <= 0) {
+      /* Not rendered yet - the usage view may not be the active one, and a
+         view that is display:none gives every descendant zero width. Measure a
+         clone parked off-screen on the body instead, which is always rendered,
+         so the indent does not depend on WHEN this happens to be called. */
+      var probe = label.cloneNode(true);
+      probe.hidden = false;
+      probe.style.position = 'absolute';
+      probe.style.visibility = 'hidden';
+      probe.style.left = '-9999px';
+      probe.style.top = '0';
+      document.body.appendChild(probe);
+      w = probe.getBoundingClientRect().width;
+      document.body.removeChild(probe);
+    }
+    if (w <= 0) return;
+    var pad = Math.ceil(w) + 6 + 'px';
+    if (els.why.style.paddingLeft !== pad) els.why.style.paddingLeft = pad;
   }
 
   function render() {
@@ -647,19 +724,28 @@
        Empty string means "fully live": nothing to explain, and the strip below
        stays out of the layout entirely. The title is still set - it costs
        nothing and a desktop reader can still hover it. */
-    var reason = live
-      ? (official.stale
-          ? ('Anthropic figures from ' + formatStamp(official.staleSince).replace('Updated ', '') +
-             ', not refreshed since: ' + (official.error || 'unknown'))
-          : (partial
-              ? ('Only one of the two windows has an Anthropic figure right now (via ' +
-                 (official.source || 'OAuth') + '); the other meter shows measured tokens')
-              : ''))
-      : ('Anthropic figures unavailable: ' + (official.error || 'unknown') +
-         ' — showing locally measured tokens');
+    /* whyPrefix is the one piece of this that is the same every time it
+       appears at all - see setWhyLabel(), which is what actually keeps it on
+       screen across every page of the reason below it. */
+    var whyPrefix = '';
+    var reason;
+    if (live) {
+      reason = official.stale
+        ? ('Anthropic figures from ' + formatStamp(official.staleSince).replace('Updated ', '') +
+           ', not refreshed since: ' + (official.error || 'unknown'))
+        : (partial
+            ? ('Only one of the two windows has an Anthropic figure right now (via ' +
+               (official.source || 'OAuth') + '); the other meter shows measured tokens')
+            : '');
+    } else {
+      whyPrefix = 'Anthropic figures unavailable:';
+      reason = (official.error || 'unknown') + ' — showing locally measured tokens';
+    }
 
-    els.live.title = reason ||
+    var titleText = whyPrefix ? (whyPrefix + ' ' + reason) : reason;
+    els.live.title = titleText ||
       ('Utilisation read from Anthropic via ' + (official.source || 'OAuth'));
+    setWhyLabel(whyPrefix);
     setWhy(reason);
 
     /* A live reading can be missing one window: Claude Code drops a window from
@@ -954,6 +1040,28 @@
     pageTimer = setInterval(advancePages, PAGE_MS);
   }
 
+  /* The clock is not drawn while the fallback-reason strip is on screen. That
+     is the human's answer to a measured trade-off: this view has no slack to
+     reserve a clock-height strip out of - reserving one shrinks .meters until
+     the weekly note overflows it - so the clock gives way instead and the
+     meters keep their full box.
+
+     It is driven from here rather than from CSS because the state is "the
+     usage view is ACTIVE and carries has-why", and CSS cannot see the first
+     half. Views are hidden with display:none rather than removed, so
+     .view-usage keeps has-why while some other view is showing; a rule
+     testing the class alone therefore hides the clock on EVERY view. That is
+     not hypothetical - it is what the `.widget-root:has(.view-usage.has-why)`
+     rule this replaces actually did, while its own comment claimed the
+     opposite. That rule was also the only :has() in this repo, against a
+     webview whose Chrome version nobody has recorded, where an unsupported
+     selector fails silently and the headless suite still passes. */
+  function syncClock() {
+    if (!els.clock || !els.viewUsage) return;
+    els.clock.classList.toggle('is-hidden',
+      view === 'usage' && els.viewUsage.classList.contains('has-why'));
+  }
+
   function applyView() {
     els.title.textContent = TITLES[view];
     els.viewUsage.classList.toggle('is-active', view === 'usage');
@@ -961,6 +1069,8 @@
     els.viewTokens.classList.toggle('is-active', view === 'tokens');
     els.viewStats.classList.toggle('is-active', view === 'stats');
     els.viewModels.classList.toggle('is-active', view === 'models');
+    syncClock();
+    syncWhyPad();
     Array.prototype.forEach.call(document.querySelectorAll('.dots .dot'), function (d) {
       d.classList.toggle('is-active', d.getAttribute('data-view') === view);
     });

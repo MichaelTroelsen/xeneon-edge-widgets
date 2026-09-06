@@ -123,9 +123,28 @@ function extractString(src, varName) {
 const VIEWS = extractArray(widgetSrc, 'VIEWS');
 const START_VIEW = extractString(widgetSrc, 'view');
 
+/* The header renders WIDGET_VERSION, not manifest.json's version - and this
+   repo's device-verification discipline is "confirm the running version from
+   the RENDERED PAGE, never the installed folder", because iCUE caches the
+   page it loaded at startup. So WIDGET_VERSION is the one number a human
+   trusts, and nothing else here ever compared it to the manifest. Read both
+   AT TEST TIME - hard-coding today's versions would just be a third place to
+   drift. */
+const WIDGET_VERSION_VALUE = extractString(widgetSrc, 'WIDGET_VERSION');
+const VERSION_SHAPE = /^\d+\.\d+\.\d+$/;
+const manifestSrc = fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8');
+const MANIFEST_VERSION = JSON.parse(manifestSrc).version;
+
 console.log('metrics:');
 check('VIEWS was read out of widget.js', VIEWS, ['usage', 'detail', 'tokens', 'stats', 'models']);
 check('the widget starts on the "usage" view', START_VIEW, 'usage');
+/* Extraction-succeeded is its own check, before any comparison - a regex that
+   silently matches nothing yields null, and null === null would otherwise
+   pass this vacuously the day that line gets reformatted. */
+check('widget.js\'s WIDGET_VERSION was extracted and looks like a version',
+  typeof WIDGET_VERSION_VALUE === 'string' && VERSION_SHAPE.test(WIDGET_VERSION_VALUE), true);
+check(`manifest.json's version agrees with widget.js's WIDGET_VERSION (manifest ${MANIFEST_VERSION}, script ${WIDGET_VERSION_VALUE})`,
+  MANIFEST_VERSION, WIDGET_VERSION_VALUE);
 if (failures) {
   console.log('\nthe source constants could not be read; every tap count below would be aimed at the wrong view');
   console.log(`${failures} FAILED`);
@@ -348,6 +367,11 @@ const LONG_ERROR =
   ' · a Claude Code session is active but statusline-tee.json does not exist -' +
   ' statusline-tee.js is probably not wired into statusLine.command';
 
+/* The static lead-in widget.js's render() pins outside the pager - see
+   claudeusage-why-strip-pages-as-fragments. Kept as one constant so the
+   EXPECT table and the paging-persistence check below cannot drift apart. */
+const WHY_PREFIX_TEXT = 'Anthropic figures unavailable:';
+
 function localFixture() {
   const f = fullStatsFixture();
   f.official = { ok: false, error: LONG_ERROR };
@@ -489,6 +513,97 @@ window.__FIXTURE__ = __PAYLOAD__;
       }
     }
 
+    /* THE CLOCK COVERS NOTHING. An overlap is not an overflow: the clock is
+       absolutely positioned over the views (see .clock in ClaudeUsage.css), so
+       when it lands on a row both boxes are still legitimately inside
+       .widget-root and the overflow loop above sees nothing wrong - that is
+       exactly how the why-strip collision reached hardware on 2026-09-05.
+       Ported from TaskQueue/test/layout.test.js. Collect any visible leaf that
+       carries text and intersects the clock's box. */
+    var clockEl = document.getElementById('clock');
+    out.clockPresent = !!clockEl;
+    /* Whether the clock is genuinely ABSENT (not merely non-overlapping)
+       matters on its own: with the clock gone entirely, "does not overlap
+       the strip" is trivially true and proves nothing. This is what lets a
+       check tell "dropped while has-why" apart from "dropped everywhere". */
+    out.clockDisplay = clockEl ? window.getComputedStyle(clockEl).display : null;
+    var viewUsageEl = document.querySelector('.view-usage');
+    out.hasWhy = viewUsageEl ? viewUsageEl.classList.contains('has-why') : false;
+    /* An inline style attribute is not how anything here gets positioned - the
+       stylesheet does that - so probing for one always misses. What actually
+       takes an element out of flow and over its siblings is a COMPUTED
+       position of absolute or fixed; that is what must be probed for. */
+    var overlay = clockEl;
+    if (!overlay) {
+      var overlayCandidates = root.querySelectorAll('*');
+      for (var oi = 0; oi < overlayCandidates.length; oi++) {
+        var candidatePos = window.getComputedStyle(overlayCandidates[oi]).position;
+        if (candidatePos === 'absolute' || candidatePos === 'fixed') {
+          overlay = overlayCandidates[oi];
+          break;
+        }
+      }
+    }
+    out.clockOverlaps = [];
+    if (overlay && window.getComputedStyle(overlay).display !== 'none') {
+      var c = overlay.getBoundingClientRect();
+      if (c.width > 0 && c.height > 0) {
+        var allLeaves = root.querySelectorAll('*');
+        for (var li = 0; li < allLeaves.length; li++) {
+          var lel = allLeaves[li];
+          if (lel === overlay || lel.children.length) continue;
+          if (!(lel.textContent || '').trim()) continue;
+          if (lel.offsetParent === null) continue;
+          var lbb = lel.getBoundingClientRect();
+          if (lbb.width <= 0 || lbb.height <= 0) continue;
+          var lsc = scrollingAncestor(lel);
+          var lsr = lsc ? lsc.getBoundingClientRect() : null;
+
+          /* Many labels here (.note, .fig .v, table cells) are block/flex
+             children stretched to their container's full width with
+             white-space:nowrap + text-overflow:ellipsis, so the ELEMENT's box
+             routinely reaches past where its short, left-aligned text
+             actually ends - measuring the box would flag the clock as
+             "covered" by empty space nowhere near the glyphs. A Range over
+             the element's text gives the actual painted glyph rects (one per
+             line), which is what "a leaf that carries text ... intersects the
+             clock's box" means. */
+          var rects;
+          try {
+            var range = document.createRange();
+            range.selectNodeContents(lel);
+            rects = Array.prototype.slice.call(range.getClientRects());
+          } catch (e) { rects = null; }
+          if (!rects || !rects.length) rects = [lbb];
+
+          for (var ri = 0; ri < rects.length; ri++) {
+            var lr = rects[ri];
+            if (lr.width <= 0 || lr.height <= 0) continue;
+            var rTop = lr.top, rBottom = lr.bottom, rLeft = lr.left, rRight = lr.right;
+            /* A row scrolled out of view inside a paging list still reports
+               its unclipped layout rect, which can sit anywhere - including
+               over the clock. It is not PAINTED there, so it is not an
+               overlap. Clip to what the scrolling ancestor actually shows,
+               rather than a binary in/out test - a row straddling the
+               scroller's own bottom edge is genuinely painted only above that
+               edge, and the clipped-away remainder must not count. */
+            if (lsr) {
+              rTop = Math.max(rTop, lsr.top);
+              rBottom = Math.min(rBottom, lsr.bottom);
+              if (rBottom <= rTop + 0.5) continue;
+            }
+            var lover = rLeft < c.right && rRight > c.left &&
+                        rTop < c.bottom && rBottom > c.top;
+            if (lover) {
+              out.clockOverlaps.push(pathOf(lel, root) +
+                ' ("' + (lel.textContent || '').trim().slice(0, 32) + '")');
+              break;
+            }
+          }
+        }
+      }
+    }
+
     /* Why-this-is-not-live. Captured as three separate things on purpose:
        what the badge SAYS (the state, which was never the problem), what the
        badge's title holds (the desktop-only affordance, which must not be
@@ -521,6 +636,33 @@ window.__FIXTURE__ = __PAYLOAD__;
       out.why = null;
     }
 
+    /* The pinned lead-in, captured separately from #why itself: text is what
+       a reader actually sees, insideWhy proves pageOffsets(el) (keyed off
+       #why's OWN children) was not handed a wrapper that now contains the
+       label - it must stay a plain sibling for the pager's existing DOM walk
+       to still find only the words. */
+    var whyPrefixEl = document.getElementById('why-prefix');
+    /* Geometry as well as presence. The lead-in is absolutely positioned over
+       .why-wrap, so it only stays READABLE because #why carries a padding-left
+       measured from the label. Presence alone cannot see that: with the padding
+       gone the label is still on screen, still a sibling, still on every page -
+       and painted straight over the first word of every line. */
+    var whyWords = why ? why.querySelectorAll('span') : [];
+    var whyMinLeft = null;
+    for (var wi = 0; wi < whyWords.length; wi++) {
+      var wb = whyWords[wi].getBoundingClientRect();
+      if (wb.width <= 0) continue;
+      if (whyMinLeft === null || wb.left < whyMinLeft) whyMinLeft = wb.left;
+    }
+    out.whyPrefix = whyPrefixEl ? {
+      text: whyPrefixEl.textContent,
+      displayed: window.getComputedStyle(whyPrefixEl).display !== 'none' &&
+        window.getComputedStyle(whyPrefixEl).visibility !== 'hidden' && !whyPrefixEl.hidden,
+      insideWhy: !!(why && why.contains(whyPrefixEl)),
+      right: +whyPrefixEl.getBoundingClientRect().right.toFixed(1),
+      firstWordLeft: whyMinLeft === null ? null : +whyMinLeft.toFixed(1)
+    } : null;
+
     /* The strip is not free: it takes its line out of the usage view's body,
        and the meters are what is left. .widget-root has 21.5px of padding, so
        a meter squeezed out of its own box does NOT reach outside the widget
@@ -540,6 +682,18 @@ window.__FIXTURE__ = __PAYLOAD__;
       weeklyNote: edgesOf('#weekly-note'),
       whyWrap: edgesOf('#why-wrap')
     };
+
+    /* The clock-overlap fix reserves space by shrinking ul#d-subtasks (and its
+       sibling scrollers) - a fix that instead made the rows vanish, or made
+       the whole list come up empty, would ALSO satisfy "nothing overlaps the
+       clock" and be worse than the bug it replaced. Row count and text come
+       from the DOM, not from the fixture, so a fix that renders nothing here
+       cannot pass by coincidence. */
+    var dSubtasksEl = document.getElementById('d-subtasks');
+    out.dSubtasks = dSubtasksEl ? {
+      rowCount: dSubtasksEl.children.length,
+      text: dSubtasksEl.textContent
+    } : null;
 
     var errorHintEl = document.getElementById('error-hint');
     var errorStateEl = document.querySelector('.error-state');
@@ -739,6 +893,19 @@ const WHY_STATES = [
   { name: 'why-stale', fixture: staleFixture() },
   { name: 'why-partial', fixture: partialFixture() }
 ];
+/* has-why set AND a different view active. Nothing else renders this: the
+   four why states are all drawn at 0 taps, and the view-detail render uses a
+   fixture with no reason at all, so `has-why while inactive` had no coverage.
+   It is the case that separates a rule keyed on the CLASS from one keyed on
+   the class AND the active view - .view-usage keeps has-why while hidden
+   (views are display:none, not removed), so a class-only rule hides the clock
+   here too, on a view whose layout still reserves space for it. */
+const whyOnDetail = render(writePage('why-local-on-detail',
+  VIEWS.indexOf('detail'), localFixture()));
+whyOnDetail.name = 'why-local-on-detail';
+whyOnDetail.wantView = 'detail';
+results.push(whyOnDetail);
+
 WHY_STATES.forEach(({ name, fixture }) => {
   const page = writePage(name, VIEWS.indexOf('usage'), fixture);
   const r = render(page);
@@ -833,6 +1000,125 @@ console.log('overflow — nothing reaches outside .widget-root:');
   }
 }
 
+/* ------------------------------------------------------------- clock overlap */
+
+console.log('clock overlap — nothing the clock is drawn over:');
+{
+  let bad = 0;
+  for (const r of ok) {
+    for (const o of (r.clockOverlaps || [])) {
+      bad++;
+      fail(`${r.name}: ${o} sits under the clock`);
+    }
+  }
+  if (!bad) console.log(`  pass  the clock overlaps nothing in any of ${ok.length} renders`);
+}
+
+/* This check must not be able to pass by finding nothing to test: prove the
+   clock and the why-strip are both actually present and on screen in at
+   least one render, so an absent strip or a hidden clock could not be why
+   the loop above stayed clean. */
+check('the clock element is present and visible in at least one render',
+  ok.some(r => r.clockPresent), true);
+const whyOnScreenRender = ok.find(r => r.why && r.why.onScreen);
+check('the why-strip is present and on screen in at least one render (proves the overlap probe had a real strip to check)',
+  !!whyOnScreenRender, true);
+
+/* ------------------------------------------------------- the clock is dropped,
+   exactly and only, while the reason strip is on screen */
+
+console.log('the clock is dropped exactly while the fallback-reason strip is on screen:');
+{
+  /* The strip is ON SCREEN only when the usage view is the ACTIVE one AND it
+     carries has-why - the class alone is not the state, because .view-usage
+     keeps it while hidden. Scoping the drop to that pair is what the rule is
+     actually supposed to say; the complementary case (has-why set, another
+     view showing, clock still drawn) is asserted separately below, so the two
+     together pin more than a single `r.hasWhy` filter ever did. */
+  const stripOnScreen = ok.filter(r => r.hasWhy && r.wantView === 'usage');
+  const hasWhyRenders = stripOnScreen;
+  const noWhyRenders = ok.filter(r => !r.hasWhy);
+
+  /* Neither half of this check can pass vacuously: there has to be a real
+     has-why render and a real non-has-why render to tell apart, or "the
+     clock is absent exactly there" and "the clock is absent nowhere" would
+     both pass by finding nothing of one kind to look at. */
+  check('at least one render actually carries has-why (a real "strip on screen" case exists)',
+    hasWhyRenders.length > 0, true);
+  check('at least one render does not carry has-why (a real "other view" case exists)',
+    noWhyRenders.length > 0, true);
+
+  /* Assertion 1: not "does not overlap" (trivially true once it is gone) but
+     genuinely ABSENT - computed display:none, not merely positioned clear of
+     the strip. */
+  const stillDrawnWithWhy = hasWhyRenders
+    .filter(r => r.clockDisplay !== 'none')
+    .map(r => `${r.name}: clock display is "${r.clockDisplay}"`);
+  check('assertion 1: with has-why set, the clock is genuinely absent (display:none)',
+    stillDrawnWithWhy, []);
+
+  /* Assertion 2: dropped ONLY there - every other view, view-detail included,
+     still draws it. A change that hid the clock everywhere would pass
+     assertion 1 and be wrong; this is what catches that. */
+  const droppedElsewhere = noWhyRenders
+    .filter(r => r.clockDisplay === 'none')
+    .map(r => `${r.name}: clock display is "none"`);
+  check('assertion 2: the clock is still drawn on every other view',
+    droppedElsewhere, []);
+
+  const detailRender = ok.find(r => r.name === 'view-detail');
+  check('assertion 2, named: view-detail specifically still draws the clock',
+    detailRender ? detailRender.clockDisplay !== 'none' : false, true);
+
+  /* The case the :has() rule got wrong, and the reason this assertion exists:
+     with a reason present the class sits on .view-usage even while the detail
+     view is the one on screen, so a selector that tests the class alone drops
+     the clock here. Fails against `.widget-root:has(.view-usage.has-why)`,
+     passes against syncClock()'s view-aware toggle. */
+  const whyElsewhere = ok.find(r => r.name === 'why-local-on-detail');
+  check('the reason is set but another view is showing, so has-why really is on the hidden view',
+    whyElsewhere ? whyElsewhere.hasWhy : null, true);
+  check('and the clock is still drawn there - the drop follows the ACTIVE view, not just the class',
+    whyElsewhere ? whyElsewhere.clockDisplay !== 'none' : false, true);
+
+  /* The opposite failure mode: the clock-overlap fix reserves space by
+     shrinking ul#d-subtasks, and a fix that instead emptied the list, or
+     dropped the very rows the overlap probe used to catch, would ALSO read
+     as "nothing overlaps the clock" - and be worse than the collision it
+     replaced. Checked against real content (the row count MAX_ROWS caps at,
+     and the two project names the overlap probe named by text) rather than
+     "something is there", so a fix that renders the right NUMBER of rows but
+     empty ones, or the wrong rows, still fails this. */
+  const dSubtasks = detailRender && detailRender.dSubtasks;
+  check('view-detail: #d-subtasks still renders all 18 rows the FULL fixture sends (baseFixture: buildRows(18, ...))',
+    dSubtasks ? dSubtasks.rowCount : -1, 18);
+  check('view-detail: #d-subtasks still carries the text of both rows the clock used to cover',
+    dSubtasks ? ['claude-code-internal-tooling', 'xeneon-edge-firmware-bridge']
+      .filter(name => !dSubtasks.text.includes(name)) : ['(no #d-subtasks in the render)'],
+    []);
+}
+
+/* Mutation check, forward direction: reintroduce the exact collision the
+   has-why rule prevents (force the clock back on while the strip is
+   showing) and prove the ported overlap probe actually catches it, by name,
+   rather than the fix simply never having been tested against a real
+   overlap. */
+console.log('mutation check: forcing the clock back on over the strip is caught by the overlap probe:');
+{
+  const page = writePage('mutation-clock-back-on', VIEWS.indexOf('usage'), localFixture(), html =>
+    html.replace('</head>',
+      '<style>.widget-root:has(.view-usage.has-why) .clock { display: block !important; }</style></head>'));
+  const r = render(page);
+  if (r.error) {
+    fail(`mutation-clock-back-on: ${r.error}`);
+  } else {
+    console.log(`        clockDisplay=${r.clockDisplay} hasWhy=${r.hasWhy} ` +
+      `clockOverlaps=${JSON.stringify(r.clockOverlaps)}`);
+    check('mutation check: with the clock forced back on, the probe reports at least one named overlap',
+      Array.isArray(r.clockOverlaps) && r.clockOverlaps.length > 0, true);
+  }
+}
+
 /* -------------------------------------------------------------------- ellipsis */
 
 function ellipsisedFigsIn(r) {
@@ -893,11 +1179,16 @@ console.log('the reason a reading is not live is on screen, not in a tooltip:');
   const byName = {};
   ok.forEach(r => { byName[r.name] = r; });
 
+  /* prefix is set only for the state the OAuth endpoint is actually
+     unreachable in - the other two fallback states explain something ELSE
+     (a stale-but-present reading, a partially-covered one) and never carried
+     this lead-in even before the fix, so pinning it there would be new
+     wording this task was never asked to add. */
   const EXPECT = {
-    'why-live': { badge: 'LIVE', shown: false, must: null },
-    'why-local': { badge: 'LOCAL', shown: true, must: LONG_ERROR },
-    'why-stale': { badge: 'LIVE·', shown: true, must: LONG_ERROR },
-    'why-partial': { badge: 'LIVE¹', shown: true, must: 'the other meter shows measured tokens' }
+    'why-live': { badge: 'LIVE', shown: false, must: null, prefix: null },
+    'why-local': { badge: 'LOCAL', shown: true, must: LONG_ERROR, prefix: WHY_PREFIX_TEXT },
+    'why-stale': { badge: 'LIVE·', shown: true, must: LONG_ERROR, prefix: null },
+    'why-partial': { badge: 'LIVE¹', shown: true, must: 'the other meter shows measured tokens', prefix: null }
   };
 
   Object.keys(EXPECT).forEach(name => {
@@ -914,6 +1205,8 @@ console.log('the reason a reading is not live is on screen, not in a tooltip:');
         { display: 'none', height: 0, text: '' });
       check(`${name}: the badge still carries a title for a desktop reader`,
         typeof r.badgeTitle === 'string' && r.badgeTitle.length > 0, true);
+      check(`${name}: no pinned lead-in either - there is nothing to explain`,
+        r.whyPrefix ? r.whyPrefix.displayed : false, false);
       return;
     }
 
@@ -927,6 +1220,29 @@ console.log('the reason a reading is not live is on screen, not in a tooltip:');
       !!(r.why && r.why.clientHeight > 0 && r.why.scrollHeight >= r.why.clientHeight), true);
     check(`${name}: the badge's title still holds the same reason for a desktop reader`,
       typeof r.badgeTitle === 'string' && r.badgeTitle.indexOf(e.must) !== -1, true);
+
+    /* The lead-in that made a later page read as a bare error/path with no
+       context - claudeusage-why-strip-pages-as-fragments. Checked on its own
+       element, never as a substring of r.why.text: that text is #why's OWN
+       content only (why.textContent), so if this ever passed it would mean
+       the label went back to being baked into the same string the pager
+       scrolls, exactly the bug this task exists to remove. */
+    if (e.prefix) {
+      check(`${name}: the pinned lead-in is on screen`,
+        r.whyPrefix ? { text: r.whyPrefix.text, displayed: r.whyPrefix.displayed } : null,
+        { text: e.prefix, displayed: true });
+      check(`${name}: the lead-in is #why's sibling, not a wrapper - pageOffsets() still keys off #why's own children`,
+        r.whyPrefix ? r.whyPrefix.insideWhy : null, false);
+      check(`${name}: the reason text handed to the pager no longer carries the lead-in itself`,
+        r.why ? r.why.text.indexOf(e.prefix) === -1 : null, true);
+      check(`${name}: and every line of the reason is indented clear of the lead-in, not painted under it`,
+        r.whyPrefix && r.whyPrefix.firstWordLeft !== null
+          ? r.whyPrefix.firstWordLeft >= r.whyPrefix.right - 0.5
+          : null, true);
+    } else {
+      check(`${name}: this fallback state never carried the lead-in, and still does not`,
+        r.whyPrefix ? r.whyPrefix.displayed : false, false);
+    }
     if (r.why) {
       console.log(`        ${name}: ${r.why.clientHeight}px box, ${r.why.scrollHeight}px of text, ` +
         `${r.why.spans} spans — "${r.why.text.slice(0, 64)}${r.why.text.length > 64 ? '…' : ''}"`);
@@ -955,6 +1271,26 @@ console.log('the reason a reading is not live is on screen, not in a tooltip:');
       `.meters ends ${shownLocal.usage.meters.bottom}, ` +
       `the strip runs ${shownLocal.usage.whyWrap.top}–${shownLocal.usage.whyWrap.bottom}`);
   }
+}
+
+/* decision:claudeusage-why-strip-pages-as-fragments explicitly forbids
+   reintroducing the vertical reservation decision:claudeusage-why-strip-
+   vertical-budget already closed. #why itself must therefore be exactly as
+   tall whether or not the pinned lead-in is showing beside it - proof that
+   the lead-in was paid for out of WIDTH (padding-left on #why, undone by
+   setWhyLabel() the moment there is no prefix) rather than a line of
+   height taken from it. why-stale/why-partial never show the lead-in
+   (EXPECT above) and share the same --why-lines budget as why-local, so
+   any difference here can only come from the lead-in's own cost. */
+console.log('the pinned lead-in costs no vertical space:');
+{
+  const withPrefix = ok.find(r => r.name === 'why-local');
+  const withoutPrefix = ok.find(r => r.name === 'why-stale') || ok.find(r => r.name === 'why-partial');
+  check('#why is exactly as tall with the lead-in pinned beside it as without one',
+    withPrefix && withoutPrefix && withPrefix.why && withoutPrefix.why
+      ? withPrefix.why.clientHeight : 'a why-state did not render',
+    withPrefix && withoutPrefix && withPrefix.why && withoutPrefix.why
+      ? withoutPrefix.why.clientHeight : 'a why-state did not render');
 }
 
 /* ----------------------------------------------------- the assertions can fail */
@@ -1129,6 +1465,21 @@ const SAMPLER = `<script>
         fade: box ? box.classList.contains('can-scroll') : null
       });
     }
+    /* The pinned lead-in lives outside every scroller (it has no
+       overflow-y:auto/scroll of its own), so the loop above never sees it -
+       it is captured here, once per tick, as a synthetic non-scroller entry
+       so the persistence check below can see whether it survives the SAME
+       page turns that move #why underneath it. */
+    var wp = document.getElementById('why-prefix');
+    if (wp) {
+      out.push({
+        id: 'why-prefix', rows: 0, clientHeight: 0, scrollTop: 0, maxScroll: 0,
+        dots: 0, activeDot: -1, visible: [], deep: [], deepTotal: {}, fade: null,
+        text: wp.textContent,
+        displayed: window.getComputedStyle(wp).display !== 'none' &&
+          window.getComputedStyle(wp).visibility !== 'hidden' && !wp.hidden
+      });
+    }
     return out;
   }
   var samples = [], n = 0;
@@ -1202,6 +1553,17 @@ function byScroller(samples) {
     }
   }));
   return out;
+}
+
+/* Reads the synthetic 'why-prefix' entry snap() pushes each tick (see the
+   SAMPLER above) into one array, oldest first, so a persistence check can
+   walk it across every page turn rather than a single sample. */
+function whyPrefixSamples(samples) {
+  return samples.map(snap => {
+    if (!snap) return null;
+    const e = snap.find(s => s.id === 'why-prefix');
+    return e ? { text: e.text, displayed: e.displayed } : null;
+  });
 }
 
 const DETAIL_TAPS = VIEWS.indexOf('detail');
@@ -1368,13 +1730,24 @@ console.log('the paging checks are not vacuous:');
 {
   /* Restores the pre-fix heading: a loose text node beside the dots is an
      anonymous flex item that will not shrink, so the longest heading wraps and
-     its column loses a row. This is the regression itself, re-created. */
+     its column loses a row. This is the regression itself, re-created.
+     Scoped to the Workflows column alone (":has(#d-workflows)", valid only in
+     this injected test stylesheet, never in production CSS) rather than every
+     `.list h2 .htext` - with the clock's reservation now taking a row out of
+     all three lists, 40 rows needs one more page than before, and at that
+     wider dot cluster ALL THREE labels clear the wrap threshold when the fix
+     is lifted everywhere, which proves nothing (three equal, shorter boxes is
+     still "equal box heights", vacuously passing the height-INEQUALITY this
+     check exists to catch). Lifting the fix on the longest label only, while
+     Sessions and Subtasks keep the real nowrap/ellipsis CSS, reproduces the
+     original regression deterministically regardless of page count: one
+     column wraps, the other two provably cannot. */
   const page = writePagingPage('mutation-wrapping-heading', DETAIL_TAPS, pagingFixture(), html =>
     html.replace('</head>',
       /* flex: 0 1 auto, NOT 0 0 auto - an item that cannot shrink sizes to
          max-content and never wraps, so the mutation would not fire at all.
          This is the loose-text-node behaviour the fix replaced. */
-      '<style>.list h2 .htext { white-space: normal !important; overflow: visible !important; ' +
+      '<style>.list:has(#d-workflows) h2 .htext { white-space: normal !important; overflow: visible !important; ' +
       'text-overflow: clip !important; flex: 0 1 auto !important; }</style></head>'));
   const r = renderPaging(page);
   const lists = r.error ? {} : byScroller(r.samples);
@@ -1416,6 +1789,21 @@ console.log('paging — the whole reason becomes readable without a drag:');
       console.log(`        ${w.clientHeight}px box, ${w.maxScroll}px of scroll, ` +
         `${Array.from(w.offsets).sort((a, b) => a - b).join('/')} page offsets`);
     }
+
+    /* The actual reported symptom: on the ORIGINAL code the lead-in sat on
+       page one of the same string #why pages, so it was gone by page two.
+       This walks every sample the pager produced (not just the first or the
+       last) and requires the pinned lead-in to be showing, with the SAME
+       text, on every single one of them - while w above already proved the
+       reason itself keeps paging to its end underneath it. Neither check
+       alone is the fix; both have to hold at once. */
+    const prefixSamples = whyPrefixSamples(r.samples).filter(Boolean);
+    check('the pinned lead-in was captured on every sampled page turn',
+      prefixSamples.length, r.samples.length);
+    const everyPageShowsIt = prefixSamples.every(s => s.displayed && s.text === WHY_PREFIX_TEXT);
+    check('the pinned lead-in reads the same thing on every page, not just the first',
+      everyPageShowsIt ? true : prefixSamples.map(s => s.text),
+      true);
   }
 }
 
@@ -1459,13 +1847,32 @@ console.log('the reason checks are not vacuous:');
      lines the meters still fit (weekly note ends 282.2, .meters 286.6); at
      three they do not (273.5 against 269.9), which is the smallest value that
      makes this fire. */
-  const page = writePage('mutation-why-three-lines', VIEWS.indexOf('usage'), localFixture(), html =>
-    html.replace('</head>', '<style>:root { --why-lines: 3 !important; }</style></head>'));
-  const r = render(page);
-  const u = r.error ? null : r.usage;
-  const squeezed = !!(u && u.meters && u.weeklyNote && u.weeklyNote.bottom > u.meters.bottom + 0.5);
-  check('giving the strip three lines at 840x344 trips the squeezed-meter check',
-    r.error ? `render failed: ${r.error}` : squeezed, true);
+  /* ESCALATE rather than hard-code the threshold. Three was recorded above as
+     "the smallest value that makes this fire" - measured on Windows, where the
+     margin is 3.6px. On ubuntu the fonts are different, the reason wraps
+     differently, and three lines no longer squeeze anything: CI failed here on
+     both ubuntu jobs while windows passed. A mutation tuned to the minimum is
+     tuned to one machine's font metrics, and when it stops firing it does not
+     report "this platform needs more lines" - it reports that the check it
+     exists to validate is broken.
+     More lines is monotonically more vertical pressure, so trying larger values
+     until one fires is platform-independent by construction. The count that
+     actually fired is printed, because a sudden jump in it is worth seeing. */
+  const LINE_STEPS = [3, 4, 6, 8];
+  let r = null, u = null, squeezed = false, firedAt = null;
+  for (const lines of LINE_STEPS) {
+    const page = writePage(`mutation-why-${lines}-lines`, VIEWS.indexOf('usage'), localFixture(), html =>
+      html.replace('</head>', `<style>:root { --why-lines: ${lines} !important; }</style></head>`));
+    r = render(page);
+    u = r.error ? null : r.usage;
+    squeezed = !!(u && u.meters && u.weeklyNote && u.weeklyNote.bottom > u.meters.bottom + 0.5);
+    if (squeezed) { firedAt = lines; break; }
+  }
+  check('giving the strip more lines at 840x344 trips the squeezed-meter check',
+    r && r.error ? `render failed: ${r.error}` : squeezed, true);
+  if (firedAt !== null) {
+    console.log(`        fired at --why-lines: ${firedAt} (tried ${LINE_STEPS.join(', ')})`);
+  }
   if (u && u.meters) {
     console.log(`        weekly note ends ${u.weeklyNote.bottom}, .meters ends ${u.meters.bottom}` +
       `, the strip starts ${u.whyWrap ? u.whyWrap.top : '?'}` +
@@ -1493,6 +1900,44 @@ console.log('the reason checks are not vacuous:');
     console.log(`        ${w.rows} child(ren), ${missing.length} never fully visible, ` +
       `${Array.from(w.offsets).join('/')} page offsets (a box that never moves)`);
   }
+}
+{
+  /* The EXACT pre-fix behaviour this task exists to remove: the lead-in baked
+     back into the one string handed to setWhy(), nothing pinned outside the
+     pager. Mutates the CALL SITES in render(), not setWhyLabel() itself -
+     the persistence check above measures what render() DOES, so the mutation
+     has to hit the same seam or it would collapse onto the very code it is
+     meant to be independent of. */
+  const page = writePagingPage('mutation-why-prefix-not-pinned', VIEWS.indexOf('usage'), localFixture(),
+    null, src => src.replace('setWhyLabel(whyPrefix);\n    setWhy(reason);',
+      'setWhyLabel(\'\');\n    setWhy(titleText);'));
+  const r = renderPaging(page);
+  const prefixSamples = r.error ? [] : whyPrefixSamples(r.samples).filter(Boolean);
+  check('reverting to the baked-in lead-in trips the every-page-shows-it check',
+    r.error ? `render failed: ${r.error}` : prefixSamples.length > 0, false);
+  if (!r.error) console.log(`        ${prefixSamples.length} of ${r.samples.length} sampled pages showed a pinned lead-in (want 0)`);
+}
+{
+  /* The rejected design, reintroduced on purpose: give the label its own
+     line by shrinking #why's height instead of its width. This is exactly
+     the reservation decision:claudeusage-why-strip-vertical-budget already
+     closed, reborn one line at a time - the height check above exists to
+     catch it. why-stale is the "without" side: same viewport, same
+     --why-lines budget, no lead-in. */
+  const mutateHeight = src => src.replace(
+    'els.why.style.paddingLeft !== pad) els.why.style.paddingLeft = pad;',
+    "els.why.style.paddingLeft !== pad) els.why.style.paddingLeft = pad;\n" +
+    "    els.why.style.height = 'calc(var(--font-badge) * 1.25 * (var(--why-lines, 3) - 1))';");
+  const rWith = render(writePageWithMutatedScript('mutation-why-prefix-vertical-reservation-with',
+    VIEWS.indexOf('usage'), localFixture(), mutateHeight));
+  const rWithout = render(writePageWithMutatedScript('mutation-why-prefix-vertical-reservation-without',
+    VIEWS.indexOf('usage'), staleFixture(), mutateHeight));
+  const heights = (!rWith.error && !rWithout.error && rWith.why && rWithout.why)
+    ? { withPrefix: rWith.why.clientHeight, withoutPrefix: rWithout.why.clientHeight } : null;
+  check('reintroducing a per-line reservation trips the no-vertical-cost check',
+    heights ? heights.withPrefix !== heights.withoutPrefix : `render failed (with: ${rWith.error}, without: ${rWithout.error})`,
+    true);
+  if (heights) console.log(`        with the lead-in: ${heights.withPrefix}px, without: ${heights.withoutPrefix}px`);
 }
 
 /* ------------------------------------------------------------------- teardown */

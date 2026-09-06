@@ -1847,13 +1847,32 @@ console.log('the reason checks are not vacuous:');
      lines the meters still fit (weekly note ends 282.2, .meters 286.6); at
      three they do not (273.5 against 269.9), which is the smallest value that
      makes this fire. */
-  const page = writePage('mutation-why-three-lines', VIEWS.indexOf('usage'), localFixture(), html =>
-    html.replace('</head>', '<style>:root { --why-lines: 3 !important; }</style></head>'));
-  const r = render(page);
-  const u = r.error ? null : r.usage;
-  const squeezed = !!(u && u.meters && u.weeklyNote && u.weeklyNote.bottom > u.meters.bottom + 0.5);
-  check('giving the strip three lines at 840x344 trips the squeezed-meter check',
-    r.error ? `render failed: ${r.error}` : squeezed, true);
+  /* ESCALATE rather than hard-code the threshold. Three was recorded above as
+     "the smallest value that makes this fire" - measured on Windows, where the
+     margin is 3.6px. On ubuntu the fonts are different, the reason wraps
+     differently, and three lines no longer squeeze anything: CI failed here on
+     both ubuntu jobs while windows passed. A mutation tuned to the minimum is
+     tuned to one machine's font metrics, and when it stops firing it does not
+     report "this platform needs more lines" - it reports that the check it
+     exists to validate is broken.
+     More lines is monotonically more vertical pressure, so trying larger values
+     until one fires is platform-independent by construction. The count that
+     actually fired is printed, because a sudden jump in it is worth seeing. */
+  const LINE_STEPS = [3, 4, 6, 8];
+  let r = null, u = null, squeezed = false, firedAt = null;
+  for (const lines of LINE_STEPS) {
+    const page = writePage(`mutation-why-${lines}-lines`, VIEWS.indexOf('usage'), localFixture(), html =>
+      html.replace('</head>', `<style>:root { --why-lines: ${lines} !important; }</style></head>`));
+    r = render(page);
+    u = r.error ? null : r.usage;
+    squeezed = !!(u && u.meters && u.weeklyNote && u.weeklyNote.bottom > u.meters.bottom + 0.5);
+    if (squeezed) { firedAt = lines; break; }
+  }
+  check('giving the strip more lines at 840x344 trips the squeezed-meter check',
+    r && r.error ? `render failed: ${r.error}` : squeezed, true);
+  if (firedAt !== null) {
+    console.log(`        fired at --why-lines: ${firedAt} (tried ${LINE_STEPS.join(', ')})`);
+  }
   if (u && u.meters) {
     console.log(`        weekly note ends ${u.weeklyNote.bottom}, .meters ends ${u.meters.bottom}` +
       `, the strip starts ${u.whyWrap ? u.whyWrap.top : '?'}` +

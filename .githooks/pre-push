@@ -1,0 +1,89 @@
+#!/bin/sh
+# Run what CI runs, before the push rather than after it.
+#
+# Why this exists: CI was red for a week and nobody knew. Two faults compounded
+# - the workflow only triggered on `main`, so nine commits on a branch never met
+# it at all; and `main` itself was failing on a bug that had already been fixed
+# on that branch. The badge said "broken", the tree said "fine", and neither was
+# telling you anything.
+#
+# The workflow trigger is fixed now. This hook is the other half: it means a
+# push cannot be the first time these suites run, whatever branch you are on and
+# whatever the runner is doing.
+#
+# It runs the LAYOUT suites too, which is the expensive choice and the correct
+# one - the failure that sat unnoticed for a week was in ClaudeUsage's layout
+# suite. A hook that skipped the slow suites would have skipped exactly the one
+# that mattered. Measured: ~70s for the whole set, on an idle machine.
+#
+# Bypass with `git push --no-verify` when you genuinely mean to.
+
+set -u
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root" || exit 1
+
+status=0
+say() { printf '%s\n' "$*" >&2; }
+
+say "pre-push: running the suites CI runs…"
+
+if ! command -v node >/dev/null 2>&1; then
+  say ""
+  say "  ✘ 'node' is not on PATH, so nothing can be verified."
+  say ""
+  say "    This fails closed on purpose: a check that skips itself when its"
+  say "    tool is missing is indistinguishable from a check that passed."
+  say ""
+  say "    Push anyway with:  git push --no-verify"
+  exit 1
+fi
+
+# Same files CI syntax-checks, for the same reason: a parse error in a browser
+# script is invisible to the suites, which never require() it.
+for f in \
+  usage-server/server.js usage-server/official.js usage-server/statusline.js \
+  usage-server/statusline-tee.js usage-server/usagehtml.js \
+  ClaudeUsage/scripts/widget.js C64Weather/scripts/widget.js \
+  C64Weather/scripts/petscii.js TaskQueue/scripts/widget.js
+do
+  [ -f "$f" ] || continue
+  if ! out=$(node --check "$f" 2>&1); then
+    say "  ✘ syntax: $f"
+    say "$out" | sed 's/^/      /'
+    status=1
+  fi
+done
+[ "$status" -eq 0 ] && say "  ✔ syntax"
+
+# Ordered cheapest first, so an ordinary mistake fails in seconds rather than
+# after the browser suites have run.
+for suite in \
+  C64Weather/test/font.test.js \
+  C64Weather/test/theme.test.js \
+  usage-server/test/live-detection.test.js \
+  usage-server/test/statusline.test.js \
+  usage-server/test/stats.test.js \
+  usage-server/test/http.test.js \
+  usage-server/test/tasks.test.js \
+  usage-server/test/tasks-http.test.js \
+  C64Weather/test/layout.test.js \
+  ClaudeUsage/test/layout.test.js \
+  TaskQueue/test/layout.test.js
+do
+  [ -f "$suite" ] || continue
+  if out=$(node "$suite" 2>&1); then
+    say "  ✔ $suite"
+  else
+    say "  ✘ $suite"
+    # The tail carries the FAILED lines and the count; the whole log is noise.
+    printf '%s\n' "$out" | grep -E '^ *FAIL|FAILED|^Error|^ *at ' | head -12 | sed 's/^/      /' >&2
+    status=1
+  fi
+done
+
+if [ "$status" -ne 0 ]; then
+  say ""
+  say "pre-push: REFUSED. Fix the above, or push with --no-verify."
+fi
+
+exit "$status"

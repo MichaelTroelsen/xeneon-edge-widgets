@@ -288,8 +288,23 @@ let lastCredentialsMtime = null;
    without it a single rotation would run this handler, and any immediate
    refetch it triggers, twice. */
 function watchCredentials() {
-  const dir = path.dirname(CREDENTIALS_FILE);
+  let dir = path.dirname(CREDENTIALS_FILE);
   const base = path.basename(CREDENTIALS_FILE);
+  /* Resolve 8.3 short names before watching. libuv compares the path it was
+     given against the long path Windows reports back for each event, and when
+     they disagree it does not fail the call - it ABORTS the process:
+       Assertion failed: !_wcsnicmp(filename, dir, dirlen), src\win\fs-event.c:72
+     That is not catchable, so the try/catch below cannot save us; the whole
+     server dies. Seen on a GitHub windows runner, where os.tmpdir() is
+     C:\Users\RUNNER~1\... - but a real user reaches it too, since %USERPROFILE%
+     gets a short name whenever the account name is long enough, and this file
+     lives under it. realpathSync.native expands the short form to the true one. */
+  try {
+    dir = fs.realpathSync.native(dir);
+  } catch (err) {
+    /* Not there yet, or no permission to resolve it; fs.watch below will just
+       fail its own way, which IS catchable. */
+  }
   try {
     fs.watch(dir, (event, filename) => {
       if (filename !== base) return;

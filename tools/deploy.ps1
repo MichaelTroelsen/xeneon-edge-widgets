@@ -225,10 +225,22 @@ if ($SkipTests) {
 # ----------------------------------------------------------- bump and package
 
 Write-Step 'Version'
+# -SkipTests means "deploy exactly what is on disk now", so it must NOT bump:
+# that is what the flag's own description promises, and until this gate existed
+# it was false. The Version step ran unconditionally, so `-SkipTests` alone
+# rewrote two files per widget - and a recorded decision that said "the versions
+# are already bumped, so the bump must not run" would have done the opposite of
+# what it said. An explicit -Version still wins, because pinning to a stated
+# value is the caller saying what the version IS, not asking for a step.
+$bumping = -not $SkipTests -or $Version
 foreach ($w in $Selected) {
   $current = Get-WidgetVersion $w.Dir
-  $next = if ($Version) { $Version } else { Step-Version $current $Bump }
-  Write-Info "$($w.Name) $current -> $next$(if ($DryRun) { ' (dry run)' })"
+  $next = if ($Version) { $Version } elseif ($bumping) { Step-Version $current $Bump } else { $current }
+  if ($next -eq $current) {
+    Write-Info "$($w.Name) $current (unchanged)$(if ($DryRun) { ' (dry run)' })"
+  } else {
+    Write-Info "$($w.Name) $current -> $next$(if ($DryRun) { ' (dry run)' })"
+  }
   Set-WidgetVersion $w.Dir $next
   $w | Add-Member -NotePropertyName NewVersion -NotePropertyValue $next
 }

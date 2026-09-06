@@ -391,10 +391,31 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       back down to fit `.meter-top` alongside `.meter .value`. Adding
       `flex-shrink: 0 !important` to the injected style makes the mutation
       actually widen the box, and the check now fires.
-- [ ] **If the real formula is ever wanted**, it needs several panel readings at
-      known times across one block, then candidate models tested against them —
-      cache reads free, per-request cost, non-linear curve, reporting lag. Two
-      readings cannot separate those.
+- [x] **The real per-request cost formula: DECIDED AGAINST, 2026-09-06.** This
+      item asked for several panel readings at known times across one block, then
+      candidate models tested against them — cache reads free, per-request cost,
+      non-linear curve, reporting lag, since two readings cannot separate four
+      candidates. It is not being done, because its premise had quietly expired.
+
+      The meters no longer show a locally-derived estimate. `widget.js:683-706`
+      reads `live.fiveHour.percent` and `live.sevenDay.percent` straight from
+      Anthropic's own OAuth utilisation endpoint, and the header says `LIVE`. The
+      local token fraction drives the bar ONLY when that endpoint cannot be
+      reached, where the header says `LOCAL` (`widget.js:696`). So the number on
+      the glass is already the authority's own figure rather than anything
+      modelled, and a fitted formula would improve the degraded reading and
+      nothing else.
+
+      **What would reopen it:** the OAuth endpoint is undocumented and internal —
+      `official.js`'s own header says it can change or disappear without notice.
+      If it goes, `LOCAL` becomes the only reading and this returns on different
+      grounds: not "is the approximation good enough" but "it is now the only
+      number we have".
+
+      The tooling for it already exists and should not be rediscovered:
+      `/usage?at=<epoch|ISO>` rebuilds the snapshot as of a past moment
+      specifically to calibrate against a timestamped screenshot
+      (`server.js:1394`, `usagehtml.js:278`).
 
 ## Task Queue — 1.4.0
 

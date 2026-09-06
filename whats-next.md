@@ -154,22 +154,29 @@ so they are the slow ones and the ones that catch what no DOM assertion can.
 current answer; a list written here is wrong within about two commits, which is
 the whole reason this file was restructured.
 
-One durable caution that belongs with the work rather than with the status,
-because it is a technical trap rather than a state of play:
+Nothing is pending here. Both device questions this section used to carry are
+ANSWERED, and the answers are recorded so they are not re-asked:
 
-**`verify-paging-on-device` cannot be answered by watching the dots.** The pager
-moves `scrollTop` PROGRAMMATICALLY. Touch drags are known not to be forwarded
-(see the finding above); nothing yet proves the webview honours a programmatic
-scroll on an `overflow-y: auto` element either. If it does not, the lists sit
-frozen on page one while the dot indicator advances underneath them - which
-looks like working software from across the room. **Check that the ROWS change.**
-The recorded fallback, if they do not, is to page by translating the list
-content rather than by `scrollTop`.
+- **The webview does NOT forward touch drags** (`verify-touch-drag`, settled on
+  the device 2026-08-30). Taps are forwarded; drags are not. Do not design
+  anything that depends on reaching a scrollable region by hand.
+- **It DOES honour a programmatic `scrollTop`** (`verify-paging-on-device`,
+  settled 2026-09-05). Those two were never guaranteed to go together, and the
+  whole pager rested on the second being true while the first was known false.
+  The recorded fallback - paging by translating the list content instead - is
+  **not needed**.
 
-It also cannot be observed on an idle machine BY DESIGN: a region that fits
-never pages, and the Activity lists only overflow when work is actually in
-flight. It wants doing during a `/runqueue` or `/runbatch` fan-out - which is
-the same command that would otherwise be draining the plan.
+The method that settled the second one is the part worth keeping, because the
+obvious check would have lied: **the dots are not evidence.** A frozen list under
+an advancing dot indicator looks like working software from across the room. It
+was answered by pixel-diffing the ROW REGION between screen captures, with the
+dot indicator excluded from the measured area. Any future "does the panel really
+do X" question wants that shape of proof rather than a glance.
+
+It also could not be observed on an idle machine BY DESIGN - a region that fits
+never pages - so the load was manufactured by running a real fan-out, which put
+enough rows on screen to overflow. The command that would otherwise drain the
+plan is the one that creates the conditions to test it.
 
 </work_remaining>
 
@@ -177,8 +184,14 @@ the same command that would otherwise be draining the plan.
 
 ## Traps that cost real time - do not repeat these
 
-**The heredoc / `python -c` trap - EIGHT sightings and still live.** A backslash
+**The heredoc / `python -c` trap - NINE sightings and still live.** A backslash
 escape or Windows path inside a heredoc'd or `python -c` string gets mangled.
+The ninth was 2026-09-06, generating the very plan that lists this file for
+rewrite: a `grep -c '^- \[ \]'` inside a heredoc'd Python string ended the
+heredoc early and bash died with `unexpected EOF while looking for matching`.
+THE FIX IS ALREADY WRITTEN DOWN and works every time: write the script to a file
+in the scratchpad with the Write tool, then run `python <file>`. Reach for that
+first rather than after the first failure.
 It bit again this session inside a `sed` expression: a `|` delimiter collided
 with the `||` in the JavaScript being matched, the command errored, and the
 chained `grep` short-circuited so **no test ran while the output still looked

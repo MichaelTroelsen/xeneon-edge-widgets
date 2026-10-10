@@ -543,6 +543,39 @@ queue, a repo that cannot be read, history that cannot be dated. An empty grid
 reads as months of silence rather than as a missing file, which is the one
 failure these views must not have.
 
+## Perf Overlay
+
+A strip showing **FPS | GPU | CPU | LAT**, reading a local feed on
+`127.0.0.1`. Nothing leaves the machine.
+
+```
+node usage-server/server.js   # http://127.0.0.1:41777/perf
+```
+
+### `GET /perf`
+
+JSON `{fps, gpu, cpu, lat, process, source, at}`. A field nobody could read is
+`null`, never `0` — 0 % GPU is a real reading. Today:
+
+- `gpu` comes from a long-running `nvidia-smi` sampler; `cpu` from `os.cpus()`
+  deltas.
+- `fps`, `lat` and `process` are always `null` — no FvSDK bridge exists yet.
+- `source` is `"fallback"` until that bridge exists.
+
+The sampler starts at boot, spawning `nvidia-smi`. It is skipped when
+`CLAUDE_USAGE_NO_REMOTE` is set.
+
+### `GET /perfhtml`
+
+A human-readable diagnostic page of the same snapshot, with the source and the
+age of the sample beside each value. Unread fields render as `N/A`.
+
+### The PerfOverlay widget
+
+`PerfOverlay/` reads `/perf`. FPS comes from the same feed when it has one, and
+otherwise from iCUE's own Fps plugin (`widgetbuilder.fpsdataprovider:Fps:1.0`,
+a required plugin in its manifest). A field nobody could read shows `N/A`.
+
 ## Verifying a layout
 
 Headless Chrome's `--window-size` does not mean the same thing in its two modes,

@@ -603,7 +603,7 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       array, where the plan had a boolean and a string. Every one of those would
       have passed its own checks while rendering nonsense.
 
-- [ ] **The `taskshtml` suite runs in neither gate** (low). `usage-server/test/
+- [x] **The `taskshtml` suite runs in neither gate** (low). `usage-server/test/
       taskshtml.test.js` exists and passes 53 checks, but it is not in
       `.github/workflows/tests.yml` and not in `.githooks/pre-push`, so it runs
       only when somebody runs it by hand. That is precisely the condition that
@@ -622,6 +622,25 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       Task 5 of `docs/superpowers/plans/2026-09-06-taskshtml-diagnostic-view.md`
       carries the exact lines to add, and it is queued as
       `taskshtml-wire-into-gates-and-docs`.
+
+## Perf Overlay — 1.0.0
+
+### Done
+
+- `usage-server/perf.js` sampler and `GET /perf`; `usage-server/perfhtml.js` and
+  `GET /perfhtml`. Both suites are in `.github/workflows/tests.yml` and
+  `.githooks/pre-push`, as is `PerfOverlay/test/layout.test.js`.
+- `PerfOverlay/` widget: FPS | GPU | CPU | LAT, unread fields as `N/A`.
+
+### Open
+
+- **Not in `tools/deploy.ps1`.** PerfOverlay has never been imported into iCUE, and
+  `deploy.ps1` stops with "has never been imported" for any selected widget with
+  no registration. Adding it to the `ValidateSet` and widget table would make the
+  default `-Widget all` run fail before anything changes. Import it once through
+  iCUE's UI, then decide how it joins the deploy set.
+- **No FvSDK bridge.** `fps`, `lat` and `process` are `null`; `source` is
+  `"fallback"`. Until a bridge exists, FPS on the strip comes from iCUE's Fps plugin.
 
 ## All three widgets
 

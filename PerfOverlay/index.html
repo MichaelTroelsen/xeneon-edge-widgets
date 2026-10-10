@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tr('Perf Overlay')</title>
+  <link rel="icon" type="image/svg+xml" href="resources/icon.svg" />
+
+  <meta name="x-icue-property" content="feedUrl" data-label="tr('Feed URL')" data-type="textfield" data-default="'http://127.0.0.1:41777/perf'" />
+  <meta name="x-icue-property" content="colorTheme" data-label="tr('Theme')" data-type="combobox" data-default="'dark'" data-values="[{'key':'dark','value':tr('Dark')},{'key':'light','value':tr('Light')}]" />
+
+  <script type="application/json" id="x-icue-groups">
+  [
+    {
+      "title": "tr('Perf Overlay')",
+      "properties": ["feedUrl", "colorTheme"],
+      "info": "tr('Requires the local usage feed to be running. FPS falls back to the iCUE FPS plugin when the feed has none; nothing leaves the machine.')"
+    }
+  ]
+  </script>
+
+  <link rel="stylesheet" type="text/css" href="styles/PerfOverlay.css" />
+</head>
+<body>
+  <div class="widget-root">
+    <div class="strip">
+      <div class="cell" id="c-fps"><span class="label">FPS</span><span class="value" id="v-fps">N/A</span></div>
+      <div class="cell" id="c-gpu"><span class="label">GPU</span><span class="value" id="v-gpu">N/A</span></div>
+      <div class="cell" id="c-cpu"><span class="label">CPU</span><span class="value" id="v-cpu">N/A</span></div>
+      <div class="cell" id="c-lat"><span class="label">LAT</span><span class="value" id="v-lat">N/A</span></div>
+    </div>
+  </div>
+
+  <script type="text/javascript" src="scripts/widget.js"></script>
+  <script>
+    // Bare assignment is intentional: see TaskQueue/index.html.
+    icueEvents = {
+      onDataUpdated: function () { if (window.PerfOverlay) window.PerfOverlay.onDataUpdated(); },
+      onICUEInitialized: function () { if (window.PerfOverlay) window.PerfOverlay.onICUEInitialized(); }
+    };
+    pluginFpsdataproviderEvents = {
+      onInitialized: function () { if (window.PerfOverlay) window.PerfOverlay.onFpsPluginInitialized(); }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "en": {
+    "translation": {
+      "Perf Overlay": "Perf Overlay",
+      "Feed URL": "Feed URL",
+      "Theme": "Theme",
+      "Dark": "Dark",
+      "Light": "Light",
+      "Requires the local usage feed to be running. FPS falls back to the iCUE FPS plugin when the feed has none; nothing leaves the machine.": "Requires the local usage feed to be running. FPS falls back to the iCUE FPS plugin when the feed has none; nothing leaves the machine."
+    }
+  }
+}

@@ -47,7 +47,11 @@ jobs:
           node --check usage-server/statusline.js
           node --check usage-server/statusline-tee.js
           node --check usage-server/usagehtml.js
+          node --check usage-server/taskshtml.js
+          node --check usage-server/perf.js
+          node --check usage-server/perfhtml.js
           node --check ClaudeUsage/scripts/widget.js
+          node --check PerfOverlay/scripts/widget.js
           node --check C64Weather/scripts/widget.js
           node --check C64Weather/scripts/petscii.js
       - name: live detection
@@ -65,6 +69,15 @@ jobs:
         run: node usage-server/test/tasks.test.js
       - name: task feed over http
         run: node usage-server/test/tasks-http.test.js
+      - name: task feed html
+        run: node usage-server/test/taskshtml.test.js
+      # The perf sampler behind /perf and /perfhtml. perf.test.js checks the
+      # JSON shape and that an unread field is null, never 0; perfhtml.test.js
+      # checks the diagnostic page renders the same snapshot as N/A.
+      - name: perf feed
+        run: node usage-server/test/perf.test.js
+      - name: perf html
+        run: node usage-server/test/perfhtml.test.js
       - name: c64 font and art
         run: node C64Weather/test/font.test.js
       - name: c64 theme cycling
@@ -91,3 +104,7 @@ jobs:
       # check reads as twenty separate layout failures instead of one fault.
       - name: task widget layout
         run: node TaskQueue/test/layout.test.js
+      # The perf strip, rendered headless at its real size with FPS, GPU, CPU
+      # and LAT each shown and each unread (N/A). Same method as the widgets above.
+      - name: perf overlay layout
+        run: node PerfOverlay/test/layout.test.js

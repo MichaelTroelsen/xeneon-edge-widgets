@@ -351,6 +351,42 @@ async function runMalformedRequestSuite() {
     r = await get('/does-not-exist');
     check('an unknown path still 404s', r.status, 404);
 
+    console.log('/perf and /perfhtml:');
+    r = await get('/perf');
+    check('/perf answers 200', r.status, 200);
+    {
+      let pj = null;
+      try { pj = JSON.parse(r.body); } catch (e) { /* asserted below */ }
+      check('/perf is JSON with all seven keys',
+        pj && Object.keys(pj).sort(), ['at', 'cpu', 'fps', 'gpu', 'lat', 'process', 'source']);
+    }
+    r = await get('/perfhtml');
+    check('/perfhtml answers 200', r.status, 200);
+    r = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: PORT, path: '/perfhtml' }, res => {
+        res.resume(); resolve(res.headers['content-type']);
+      }).on('error', reject);
+    });
+    checkTrue('/perfhtml is text/html', /^text\/html/.test(r));
+    r = await get('/usage');
+    check('/usage still answers 200', r.status, 200);
+    checkTrue('/usage keeps its contract (generatedAt, not the perf shape)',
+      JSON.parse(r.body).generatedAt != null && !('fps' in JSON.parse(r.body)));
+
+    {
+      /* Behaviourally /perf cannot be shadowed by the /usage prefix today, so
+         a request test cannot see a reordering; the order is pinned against the
+         source instead, so a future broader prefix handler cannot swallow it. */
+      const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      const usageAt = src.indexOf("req.url.startsWith('/usage')");
+      const perfAt = src.indexOf("req.url === '/perf'");
+      const perfhtmlAt = src.indexOf("req.url === '/perfhtml'");
+      checkTrue('the /perf route is declared before the /usage prefix handler',
+        perfAt >= 0 && usageAt >= 0 && perfAt < usageAt);
+      checkTrue('the /perfhtml route is declared before the /usage prefix handler',
+        perfhtmlAt >= 0 && perfhtmlAt < usageAt);
+    }
+
     console.log('final health check - the server survived the whole run:');
     r = await get('/health');
     check('/health still 200 at the end', r.status, 200);

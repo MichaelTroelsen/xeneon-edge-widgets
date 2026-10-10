@@ -1,0 +1,24 @@
+{
+  "author": "Thordanielz",
+  "id": "com.thordanielz.perfoverlay",
+  "name": "Perf Overlay",
+  "description": "FPS, GPU, CPU and latency in one strip, like the NVIDIA overlay's Basic view. Reads a local feed on 127.0.0.1; FPS falls back to iCUE's own FPS plugin. Nothing leaves the machine.",
+  "version": "1.0.0",
+  "interactive": false,
+  "preview_icon": "resources/icon.svg",
+  "min_app_version": "5.47",
+  "min_framework_version": "1.0.0",
+  "os": [
+    {
+      "platform": "windows"
+    }
+  ],
+  "supported_devices": [
+    {
+      "type": "dashboard_lcd"
+    }
+  ],
+  "required_plugins": [
+    "widgetbuilder.fpsdataprovider:Fps:1.0"
+  ]
+}

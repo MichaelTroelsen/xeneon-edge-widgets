@@ -24,3 +24,13 @@ test-*.html
 
 # Audit snapshot - regenerate with /audit-docs, git holds no history of it
 DOC-AUDIT.md
+
+# tools/fvbridge: built helper and compiler/linker intermediates. The NVIDIA
+# FrameView SDK is read from its install path and must never be copied here.
+/tools/fvbridge/*.exe
+/tools/fvbridge/*.obj
+/tools/fvbridge/*.pdb
+/tools/fvbridge/*.ilk
+/tools/fvbridge/*.exp
+/tools/fvbridge/*.lib
+/tools/fvbridge/FvSDK*

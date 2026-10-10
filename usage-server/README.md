@@ -565,6 +565,26 @@ that workflow's steps alongside them.
   full token breakdown and per-model split, every session, workflow and subtask
   as a table, and the config actually in force. An addition alongside `/usage`,
   which is unchanged and remains what the widget reads. Self-refreshes every 30s.
+- `GET /taskshtml` — **the task feed rendered as a page**, taking the same
+  `?project=<name>` as `/tasks`. It is a diagnostic view of the feed and NOT a
+  copy of the widget: it exists so the feed can be read without the widget, and
+  it must not grow into a second renderer of the widget's layout.
+- `GET /perf` — **the performance sampler as JSON**, always exactly seven keys:
+  `{"fps","gpu","cpu","lat","process","source","at"}`. `cpu` is total CPU
+  utilisation in percent, from `os.cpus()` deltas sampled every second; `gpu`
+  is utilisation in percent from a long-running `nvidia-smi -lms 1000`, and is
+  `null` once that process is gone. `fps`, `lat` and `process` are the
+  fvbridge fields and are `null` today, because nothing feeds them yet. A
+  reading that was not taken is `null`, never `0` (0% GPU is a real reading).
+  `source` is `"fallback"` until the FvSDK bridge exists, and that is the only
+  value the snapshot emits now. `at` is the epoch-ms timestamp of the most
+  recent successful reading, or `null` before the first one.
+- `GET /perfhtml` — the same snapshot as `/perf`, rendered as a page so it can
+  be read in a browser without the widget.
+
+  The sampler starts at boot (server.js calls `perf.start()` when it loads) and
+  is skipped entirely when `CLAUDE_USAGE_NO_REMOTE` is set, so a hermetic test
+  server spawns no `nvidia-smi`.
 
 **Testing this by hand: don't reach for `Invoke-WebRequest`/`Invoke-RestMethod`.**
 .NET's `Uri` class normalises a bare `%` to `%25` before the request ever

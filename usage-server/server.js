@@ -21,6 +21,8 @@ const official = require('./official');
 const statusline = require('./statusline');
 const tasks = require('./tasks');
 const taskshtml = require('./taskshtml');
+const perf = require('./perf');
+const perfhtml = require('./perfhtml');
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
@@ -1338,6 +1340,19 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    /* Performance sampler. Above the /usage prefix handler, which matches on
+       startsWith and so must never be given the chance to shadow these. */
+    if (req.url === '/perfhtml' || req.url.startsWith('/perfhtml?')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(perfhtml.render(perf.snapshot()));
+      return;
+    }
+    if (req.url === '/perf' || req.url.startsWith('/perf?')) {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(perf.snapshot()));
+      return;
+    }
+
     /* The HTML view of the task feed. Above /tasks for the same reason /tasks is
        above /usage: a route that matches on a prefix must never be given the
        chance to shadow a longer one. /tasks is an exact comparison today, and
@@ -1570,6 +1585,10 @@ if (process.env.CLAUDE_USAGE_NO_REMOTE) {
    next refresh. */
 rebuild();
 setInterval(rebuild, REFRESH_MS).unref();
+
+/* CLAUDE_USAGE_NO_REMOTE also keeps the sampler from spawning nvidia-smi, so
+   hermetic test servers leave no orphan process behind. */
+if (!process.env.CLAUDE_USAGE_NO_REMOTE) perf.start();
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude usage feed on http://127.0.0.1:${PORT}/usage`);

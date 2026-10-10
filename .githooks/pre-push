@@ -43,8 +43,10 @@ fi
 for f in \
   usage-server/server.js usage-server/official.js usage-server/statusline.js \
   usage-server/statusline-tee.js usage-server/usagehtml.js \
+  usage-server/taskshtml.js usage-server/perf.js usage-server/perfhtml.js \
   ClaudeUsage/scripts/widget.js C64Weather/scripts/widget.js \
-  C64Weather/scripts/petscii.js TaskQueue/scripts/widget.js
+  C64Weather/scripts/petscii.js TaskQueue/scripts/widget.js \
+  PerfOverlay/scripts/widget.js
 do
   [ -f "$f" ] || continue
   if ! out=$(node --check "$f" 2>&1); then
@@ -66,9 +68,13 @@ for suite in \
   usage-server/test/http.test.js \
   usage-server/test/tasks.test.js \
   usage-server/test/tasks-http.test.js \
+  usage-server/test/taskshtml.test.js \
+  usage-server/test/perf.test.js \
+  usage-server/test/perfhtml.test.js \
   C64Weather/test/layout.test.js \
   ClaudeUsage/test/layout.test.js \
-  TaskQueue/test/layout.test.js
+  TaskQueue/test/layout.test.js \
+  PerfOverlay/test/layout.test.js
 do
   [ -f "$suite" ] || continue
   if out=$(node "$suite" 2>&1); then

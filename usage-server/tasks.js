@@ -4,10 +4,10 @@
  *
  * Discovery reads the `projects` map in ~/.claude.json, which carries real,
  * unmangled project paths. The per-project directory names under
- * ~/.claude/projects/ are NOT usable: the mangling replaces every path
- * separator with '-', which is lossy against directory names that themselves
- * contain '-'. "C--Users-mit-claude-c64server-tdz-c64-knowledge" cannot be
- * demangled back to a path unambiguously.
+ * ~/.claude/projects/ are a second source, but the mangling replaces every
+ * non-alphanumeric with '-', so "C--Users-mit-claude-c64server-tdz-c64-knowledge"
+ * cannot be demangled from the string alone - demangle() resolves it against
+ * the real directory tree instead. See discover() for why both are needed.
  *
  * The scan this replaces (collectQueuedTasks in server.js) walked one level of
  * ~/claude and so found 3 of the 5 repos that actually have queues - it missed
@@ -22,6 +22,12 @@ const path = require('path');
 
 const REGISTRY_PATH = process.env.CLAUDE_TASKS_REGISTRY ||
   path.join(os.homedir(), '.claude.json');
+
+/* Derived from REGISTRY_PATH rather than from the home directory, so a test
+   that points CLAUDE_TASKS_REGISTRY at a temp file also gets a (normally
+   absent) temp projects dir, and never reads the real one by accident. */
+const PROJECTS_DIR = process.env.CLAUDE_TASKS_PROJECTS_DIR ||
+  path.join(path.dirname(REGISTRY_PATH), '.claude', 'projects');
 
 /* Registered paths differ only by slash style often enough to matter: the
    same project appears in ~/.claude.json as both C:\a\b and C:/a/b. */
@@ -88,17 +94,81 @@ function readPlan(repoPath, cache) {
   };
 }
 
+/* Claude Code's directory mangling: every character that is not an ASCII
+   letter or digit becomes '-'. C:\Users\mit\claude\Double_Density ->
+   C--Users-mit-claude-Double-Density. */
+function mangle(p) {
+  return p.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+/* Inverts mangle() for one ~/.claude/projects directory name by walking the
+   REAL filesystem: at each level, a child directory matches if its mangled
+   name is a prefix of what is left, followed by '-' or the end. The string
+   alone is ambiguous ('-' may have been '\', '_', '-', ' ' or '.'), but the
+   disk is not, so this never guesses - a name with no matching path (a
+   deleted repo, or one Claude Code truncated and hashed) yields nothing.
+   Every match is returned; the caller keeps those holding a whattask.json. */
+function demangle(name) {
+  let root, rest;
+  const drive = /^([A-Za-z])--(.*)$/.exec(name);
+  if (drive && process.platform === 'win32') {
+    root = drive[1] + ':\\';
+    rest = drive[2];
+  } else if (name.startsWith('-') && process.platform !== 'win32') {
+    root = '/';
+    rest = name.slice(1);
+  } else {
+    return [];
+  }
+  const out = [];
+  (function walk(dir, left) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const m = mangle(e.name);
+      if (left === m) out.push(path.join(dir, e.name));
+      else if (left.startsWith(m + '-')) walk(path.join(dir, e.name), left.slice(m.length + 1));
+    }
+  })(root, rest);
+  return out;
+}
+
+/* Two sources, because neither alone is complete:
+   - ~/.claude.json `projects` carries real paths, but a project can be absent
+     from it: Double_Density had a whattask.json and a session directory under
+     ~/.claude/projects, yet no registry entry, and so silently never showed.
+   - ~/.claude/projects/<mangled> exists for every project a session or
+     workflow ran in, but its name is lossy - resolved by demangle() against
+     the disk, and only consulted for names the registry did not already
+     account for. */
 function discover() {
-  let registry;
+  let registry = null;
   try {
     registry = JSON.parse(fs.readFileSync(REGISTRY_PATH, 'utf8'));
   } catch (err) {
-    return [];
+    registry = null;
   }
   const projects = (registry && registry.projects) || {};
+  const candidates = Object.keys(projects);
+  const registered = new Set(candidates.map(p => mangle(path.normalize(p).replace(/[\\/]+$/, '')).toLowerCase()));
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true });
+  } catch (err) {
+    dirs = [];
+  }
+  for (const d of dirs) {
+    if (!d.isDirectory() || registered.has(d.name.toLowerCase())) continue;
+    for (const p of demangle(d.name)) candidates.push(p);
+  }
   const seen = new Set();
   const found = [];
-  for (const raw of Object.keys(projects)) {
+  for (const raw of candidates) {
     const key = normalise(raw);
     if (seen.has(key)) continue;
     try {
@@ -882,7 +952,7 @@ function getGitSpawnCount() { return gitSpawnCount; }
 function resetCommitTimeCache() { commitTimeCache.clear(); gitSpawnCount = 0; }
 
 module.exports = {
-  REGISTRY_PATH, discover, readRepo, normalise, whattaskFile,
+  REGISTRY_PATH, PROJECTS_DIR, demangle, discover, readRepo, normalise, whattaskFile,
   runsFile, readRuns, commitTimes, datedHistory, readHolders, build,
   readFiles, readMutex, pidAlive, isOrphan, TASK_FILES, MUTEX_STALE_MS, THIS_HOST,
   projectTasks, TITLE_MAX, BLOCKED_MAX, DONE_MAX, doneIds,

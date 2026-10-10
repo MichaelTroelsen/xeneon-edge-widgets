@@ -104,6 +104,35 @@ fs.mkdirSync(noQueue, { recursive: true });
     tasks.discover(), []);
 }
 
+{
+  /* The Double_Density case: a repo with a whattask.json and a session dir
+     under ~/.claude/projects, but no ~/.claude.json entry. Its underscore and
+     the nested 'dash-dir' make the mangled name ambiguous on purpose, so only
+     a lookup against the disk can resolve it. A decoy sibling 'dash' with a
+     'dir-Double_Density' child mangles to the SAME name - both are real, so
+     both are found, and only the one holding a whattask.json is kept. */
+  const nested = path.join(WORK, 'dash-dir', 'Double_Density');
+  fs.mkdirSync(path.join(nested, '.claude', 'tasks'), { recursive: true });
+  fs.writeFileSync(path.join(nested, '.claude', 'tasks', 'whattask.json'),
+    JSON.stringify({ tasks: [], closed: [] }));
+  fs.mkdirSync(path.join(WORK, 'dash', 'dir-Double_Density'), { recursive: true });
+  const projectsDir = path.join(WORK, 'projects-dir');
+  const mangled = nested.replace(/[^a-zA-Z0-9]/g, '-');
+  fs.mkdirSync(path.join(projectsDir, mangled), { recursive: true });
+  /* A registered repo's session dir must not be decoded a second time. */
+  fs.mkdirSync(path.join(projectsDir, alpha.replace(/[^a-zA-Z0-9]/g, '-')), { recursive: true });
+  process.env.CLAUDE_TASKS_PROJECTS_DIR = projectsDir;
+  const tasks = load(writeRegistry([alpha]));
+  delete process.env.CLAUDE_TASKS_PROJECTS_DIR;
+  check('demangle() resolves an ambiguous name against the disk',
+    tasks.demangle(mangled).map(p => p.toLowerCase()).sort(),
+    [path.join(WORK, 'dash', 'dir-Double_Density'), nested].map(p => p.toLowerCase()).sort());
+  check('an unregistered repo with a session dir and a queue is discovered',
+    tasks.discover().map(r => r.name), ['alpha', 'Double_Density']);
+  check('a session dir for a path that does not exist yields nothing',
+    tasks.demangle('C--no-such-' + Date.now()), []);
+}
+
 console.log('reading a repo:');
 
 const counted = makeRepo('counted', {

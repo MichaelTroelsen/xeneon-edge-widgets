@@ -561,7 +561,8 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
 
 ### Open
 
-- [ ] **A browser view of the task feed, like `/usagehtml`** (medium). The
+- [x] **A browser view of the task feed, like `/usagehtml`** (shipped 2026-09-06,
+      `4b5ae7c`). The
       server has `/usagehtml` (`usagehtml.js`, ~14K) rendering the usage
       snapshot as HTML, and nothing equivalent for tasks: `/tasks` and
       `/tasks?project=<name>` are JSON only, so the feed can only be read
@@ -586,6 +587,41 @@ drizzle, rain, snow, thunderstorm — with a palette colour per condition.
       Worth checking first: `/tasks` already carries the live block that `/usage`
       computes, so a diagnostic page can show sessions, workflows and subtasks
       without recomputing anything.
+
+      SHIPPED as `usage-server/taskshtml.js` plus a route above `/tasks`:
+      `/taskshtml` renders the overview, the running block, held and stale
+      mutexes and the alarms; `?project=<name>` adds one project's task list.
+      53 checks in its own suite, 30 -> 35 in the http suite. The diagnostic
+      scope held — the page says on itself that it shows what the feed says,
+      not what the panel shows.
+
+      Worth keeping from the build: the plan's fixtures were wrong about the
+      payload THREE times, each caught only by querying the live feed before
+      writing them. `alarms` are objects rather than strings and `mutex.owner`
+      likewise, both of which would have rendered the literal `[object Object]`
+      on the page; and per-task `blocked` is free text while `waitingOn` is an
+      array, where the plan had a boolean and a string. Every one of those would
+      have passed its own checks while rendering nonsense.
+
+- [ ] **The `taskshtml` suite runs in neither gate** (low). `usage-server/test/
+      taskshtml.test.js` exists and passes 53 checks, but it is not in
+      `.github/workflows/tests.yml` and not in `.githooks/pre-push`, so it runs
+      only when somebody runs it by hand. That is precisely the condition that
+      let CI sit red here for a week: the workflow triggered on `main` only, so
+      nine commits never met it, and nobody noticed because nothing said so.
+
+      Add it to both, put the route in `usage-server/README.md` beside
+      `/usagehtml`, and say in one clause there that it is a diagnostic view of
+      the feed and NOT a copy of the widget — that sentence is what stops the
+      next person growing it into a second renderer.
+
+      The hook run costs about 70 seconds because it also runs the three layout
+      suites. That is deliberate and should not be trimmed: the failure that sat
+      unnoticed for a week was in one of them.
+
+      Task 5 of `docs/superpowers/plans/2026-09-06-taskshtml-diagnostic-view.md`
+      carries the exact lines to add, and it is queued as
+      `taskshtml-wire-into-gates-and-docs`.
 
 ## All three widgets
 

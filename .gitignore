@@ -6,7 +6,15 @@
 
 # Vendored copy of Corsair's iCUE widget documentation. Kept locally as the
 # source of truth while building, but not redistributed from this repository.
-/.claude/
+# The repo's own automations are re-included by name: a negation cannot reach
+# a file inside an ignored DIRECTORY, so the directory's CONTENTS are ignored
+# instead. The two auditor agents moved to the mit-setup plugin.
+/.claude/*
+!/.claude/settings.json
+!/.claude/hooks/
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/deploy-widget/
 
 # Local scratch
 node_modules/

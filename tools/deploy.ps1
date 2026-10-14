@@ -157,12 +157,16 @@ foreach ($w in $Selected) {
 function Get-Installed {
   param([string] $Id)
   $hits = @()
-  foreach ($dir in Get-ChildItem $WidgetRoot -Directory) {
-    $manifest = Join-Path $dir.FullName 'manifest.json'
-    if (-not (Test-Path $manifest)) { continue }
-    try { $m = Get-Content $manifest -Raw | ConvertFrom-Json } catch { continue }
+  # Older iCUE unpacked into html_widgets\<guid>\; since 2026-10 it uses
+  # html_widgets\<reverse-dns id path>\ (com\thordanielz\claudeusage). Search
+  # both, and key each hit by its path relative to the root, flattened so it
+  # still works as part of a backup folder name.
+  foreach ($manifest in Get-ChildItem $WidgetRoot -Filter manifest.json -File -Recurse -Depth 3) {
+    $dir = $manifest.Directory
+    try { $m = Get-Content $manifest.FullName -Raw | ConvertFrom-Json } catch { continue }
     if ($m.id -eq $Id) {
-      $hits += [pscustomobject]@{ Path = $dir.FullName; Guid = $dir.Name; Version = $m.version }
+      $key = $dir.FullName.Substring($WidgetRoot.Length).TrimStart('\') -replace '\\', '.'
+      $hits += [pscustomobject]@{ Path = $dir.FullName; Guid = $key; Version = $m.version }
     }
   }
   return $hits

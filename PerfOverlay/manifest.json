@@ -20,5 +20,11 @@
   ],
   "required_plugins": [
     "widgetbuilder.fpsdataprovider:Fps:1.0"
+  ],
+  "permissions": [
+    {
+      "type": "url",
+      "domain": "127.0.0.1"
+    }
   ]
 }

@@ -37,7 +37,7 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('C64Weather', 'ClaudeUsage', 'TaskQueue', 'all')]
+  [ValidateSet('C64Weather', 'ClaudeUsage', 'TaskQueue', 'PerfOverlay', 'all')]
   [string] $Widget = 'all',
 
   # Explicit version, e.g. 1.6.0. Applied to every selected widget and wins
@@ -78,9 +78,12 @@ function Fail { param([string] $Text) Write-Host "`nFAILED: $Text" -ForegroundCo
 # ---------------------------------------------------------------- the widgets
 
 $All = @(
-  [pscustomobject]@{ Name = 'C64Weather';  Id = 'com.thordanielz.c64weather';  Package = 'c64-weather.icuewidget' }
-  [pscustomobject]@{ Name = 'ClaudeUsage'; Id = 'com.thordanielz.claudeusage'; Package = 'claude-code-usage.icuewidget' }
-  [pscustomobject]@{ Name = 'TaskQueue';   Id = 'com.thordanielz.taskqueue';   Package = 'task-queue.icuewidget' }
+  [pscustomobject]@{ Name = 'C64Weather';  Id = 'com.thordanielz.c64weather';  Package = 'c64-weather.icuewidget';       ScriptVersion = $true }
+  [pscustomobject]@{ Name = 'ClaudeUsage'; Id = 'com.thordanielz.claudeusage'; Package = 'claude-code-usage.icuewidget'; ScriptVersion = $true }
+  [pscustomobject]@{ Name = 'TaskQueue';   Id = 'com.thordanielz.taskqueue';   Package = 'task-queue.icuewidget';        ScriptVersion = $true }
+  # The strip prints no version - there is no room on it - so only the manifest
+  # carries one.
+  [pscustomobject]@{ Name = 'PerfOverlay'; Id = 'com.thordanielz.perfoverlay'; Package = 'perf-overlay.icuewidget';      ScriptVersion = $false }
 )
 $Selected = if ($Widget -eq 'all') { $All } else { $All | Where-Object Name -eq $Widget }
 
@@ -115,13 +118,21 @@ function Step-Version {
 # prints the one from widget.js. They are asserted equal afterwards because a
 # drift between them means the device shows a version that no package ever had.
 function Set-WidgetVersion {
-  param([string] $Dir, [string] $New)
+  param([string] $Dir, [string] $New, [bool] $ScriptVersion = $true)
 
   $manifestPath = Join-Path $Dir 'manifest.json'
   $scriptPath = Join-Path $Dir 'scripts\widget.js'
 
   $manifest = Get-Content $manifestPath -Raw
   $manifest = [regex]::Replace($manifest, '("version"\s*:\s*")[^"]+(")', "`${1}$New`${2}", 1)
+
+  if (-not $ScriptVersion) {
+    if ($DryRun) { return }
+    Set-Content $manifestPath $manifest -NoNewline -Encoding utf8
+    $back = Get-WidgetVersion $Dir
+    if ($back -ne $New) { Fail "version did not take: manifest=$back wanted=$New" }
+    return
+  }
 
   $script = Get-Content $scriptPath -Raw
   if ($script -notmatch "var WIDGET_VERSION = '[^']+';") {
@@ -245,7 +256,7 @@ foreach ($w in $Selected) {
   } else {
     Write-Info "$($w.Name) $current -> $next$(if ($DryRun) { ' (dry run)' })"
   }
-  Set-WidgetVersion $w.Dir $next
+  Set-WidgetVersion $w.Dir $next $w.ScriptVersion
   $w | Add-Member -NotePropertyName NewVersion -NotePropertyValue $next
 }
 
